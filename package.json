@@ -1,0 +1,41 @@
+{
+  "name": "solofluck",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@irys/web-upload": "^0.0.15",
+    "@irys/web-upload-solana": "^0.1.8",
+    "@metaplex-foundation/mpl-token-metadata": "^2.13.0",
+    "@noble/curves": "^1.9.7",
+    "@raydium-io/raydium-sdk-v2": "^0.2.60-alpha",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/wallet-adapter-base": "^0.9.27",
+    "@solana/wallet-adapter-react": "^0.15.39",
+    "@solana/wallet-adapter-react-ui": "^0.9.39",
+    "@solana/wallet-adapter-wallets": "^0.19.38",
+    "@solana/web3.js": "^1.98.4",
+    "@solana/zk-sdk": "^0.5.1",
+    "@streamflow/stream": "^13.3.1",
+    "buffer": "^6.0.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "vite-plugin-node-polyfills": "^0.28.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.2.0",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "oxlint": "^1.75.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  }
+}

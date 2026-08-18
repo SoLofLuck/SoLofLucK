@@ -1,0 +1,21 @@
+[package]
+name = "locked-pool"
+version = "0.1.0"
+description = "Kendi kontrolümüzdeki basit bir sabit-çarpım (constant product) likidite havuzu: alım her zaman serbest, satış ise havuz oluşturulurken seçilen ve asla değiştirilemeyen bir süre boyunca herkes için (kurucu dahil) kapalıdır, süre dolunca otomatik ve kalıcı olarak herkese açılır."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "locked_pool"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+# NOT: sell-lock programında çalıştığı doğrulanmış sürüm kombinasyonuyla aynı.
+anchor-lang = { version = "0.30", features = ["init-if-needed"] }
+anchor-spl = { version = "0.30" }
