@@ -1,0 +1,27 @@
+[package]
+name = "sell-lock"
+version = "0.1.0"
+description = "Token-2022 Transfer Hook: bir havuzun kasasına giden transferleri (satışları) belirli bir süre reddeder, süre dolunca otomatik ve kalıcı olarak herkese açılır."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "sell_lock"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+# NOT: Bu sürüm numaraları benim bildiğim (ve bu ortamda doğrulayamadığım)
+# uyumlu bir kombinasyon. `anchor build` ilk çalıştığında sürüm
+# çakışması/uyumsuzluğu çıkarsa `cargo update -p <paket>` ile en yakın
+# uyumlu sürüme çekmemiz gerekebilir — bu normal, birlikte düzeltiriz.
+anchor-lang = { version = "0.30", features = ["init-if-needed"] }
+anchor-spl = { version = "0.30", features = ["token_2022", "token_2022_extensions"] }
+spl-tlv-account-resolution = "0.6"
+spl-transfer-hook-interface = "0.6"
+spl-type-length-value = "0.5"
