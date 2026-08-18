@@ -291,7 +291,7 @@ export async function deriveConfidentialKeys(
     )
   }
   const message = new TextEncoder().encode(
-    `0nRCoin Confidential Transfer key derivation\nToken account: ${tokenAccount.toBase58()}`,
+    `SoLofLuck Confidential Transfer key derivation\nToken account: ${tokenAccount.toBase58()}`,
   )
   const signature = await wallet.signMessage(message)
   const keys = ConfidentialKeys.fromSignature(signature)
