@@ -3,6 +3,12 @@ import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { NETWORKS, PRESALE_TIERS, PRESALE_TICKET_UNIT_SOL, PRESALE_WALLET, type NetworkId } from '../../config'
 import { calcTickets, getLocalContributions, sendPresaleContribution } from '../../lib/presale'
+import { useSolUsdPrice } from '../../lib/solPrice'
+
+function formatUsd(sol: number, solUsd: number | null): string {
+  if (!solUsd || !Number.isFinite(sol) || sol <= 0) return ''
+  return `≈ $${(sol * solUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+}
 
 interface Props {
   network: NetworkId
@@ -12,6 +18,7 @@ export function PresaleTab({ network }: Props) {
   const { connection } = useConnection()
   const wallet = useWallet()
   const cluster = NETWORKS[network].explorerCluster
+  const solUsd = useSolUsdPrice()
 
   const [flexAmount, setFlexAmount] = useState('')
   const [selectedTier, setSelectedTier] = useState<number | null>(null)
@@ -107,6 +114,9 @@ export function PresaleTab({ network }: Props) {
               onChange={(e) => setFlexAmount(e.target.value)}
               disabled={!configured || !wallet.connected}
             />
+            {solUsd && Number(flexAmount) > 0 && (
+              <small>{formatUsd(Number(flexAmount), solUsd)}</small>
+            )}
           </label>
           <button
             type="submit"
@@ -134,6 +144,7 @@ export function PresaleTab({ network }: Props) {
                 disabled={!configured || !wallet.connected}
               >
                 <span className="luck-tier-btn__amount">{tier} SOL</span>
+                {solUsd && <span className="luck-tier-btn__usd">{formatUsd(tier, solUsd)}</span>}
                 <span className="luck-tier-btn__tickets">🎟 {calcTickets(tier)}</span>
               </button>
             ))}

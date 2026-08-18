@@ -127,3 +127,11 @@ export const TOKENOMICS = [
     desc: 'Pazarlama, işbirlikleri ve borsa listeleme giderleri için ayrılır.',
   },
 ] as const
+
+// Topluluk sosyal medya linkleri — boş bırakılan bir alan SoLofLuck
+// sayfasının alt kısmında hiç gösterilmez, kırık/placeholder link olmaz.
+export const SOCIAL_LINKS = {
+  twitter: '', // ör: 'https://twitter.com/soloflucksol'
+  telegram: '', // ör: 'https://t.me/soloflucksol'
+  discord: '', // ör: 'https://discord.gg/xxxxxxx'
+}

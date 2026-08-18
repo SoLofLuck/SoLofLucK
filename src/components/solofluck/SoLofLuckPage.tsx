@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { NetworkId } from '../../config'
+import { SOCIAL_LINKS, type NetworkId } from '../../config'
 import { MatrixBackground } from './MatrixBackground'
 import { AboutTab } from './AboutTab'
 import { TokenomicsTab } from './TokenomicsTab'
@@ -16,6 +16,12 @@ const SUBTABS: { id: SubTab; label: string }[] = [
 interface Props {
   network: NetworkId
 }
+
+const SOCIAL_ITEMS = [
+  { key: 'twitter', label: 'X / Twitter', icon: '𝕏', url: SOCIAL_LINKS.twitter },
+  { key: 'telegram', label: 'Telegram', icon: '✈️', url: SOCIAL_LINKS.telegram },
+  { key: 'discord', label: 'Discord', icon: '💬', url: SOCIAL_LINKS.discord },
+].filter((s) => s.url)
 
 export function SoLofLuckPage({ network }: Props) {
   const [tab, setTab] = useState<SubTab>('about')
@@ -55,6 +61,15 @@ export function SoLofLuckPage({ network }: Props) {
         </div>
 
         <footer className="luck-footer">
+          {SOCIAL_ITEMS.length > 0 && (
+            <div className="luck-social">
+              {SOCIAL_ITEMS.map((s) => (
+                <a key={s.key} href={s.url} target="_blank" rel="noreferrer" className="luck-social__link">
+                  <span aria-hidden="true">{s.icon}</span> {s.label}
+                </a>
+              ))}
+            </div>
+          )}
           <p>
             $LUCK dahil bu sitedeki hiçbir içerik yatırım tavsiyesi değildir. Testnet (Devnet)
             aşamasındayız — gerçek değeri olan varlıkları göndermeden önce ağın Devnet olduğundan

@@ -1432,3 +1432,230 @@ button {
   margin-left: auto;
   color: var(--accent-b);
 }
+
+/* Copy button (genel amaçlı) */
+.copy-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.15s ease;
+}
+
+.copy-btn:hover {
+  border-color: var(--accent-a);
+}
+
+/* Kontrat Adresi (CA) bloğu */
+.luck-ca {
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+}
+
+.luck-ca__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.luck-ca__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.luck-ca__value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+  color: #4ade80;
+  font-size: 0.85rem;
+}
+
+.luck-ca__pending {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.luck-ca__warning {
+  margin: 10px 0 0;
+  color: #fbbf24;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+/* Bölüm başlıkları (Yol Haritası, SSS) */
+.luck-section-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 28px 0 16px;
+  color: var(--text);
+}
+
+/* Yol haritası */
+.luck-roadmap {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  position: relative;
+}
+
+.luck-roadmap__item {
+  display: flex;
+  gap: 14px;
+  position: relative;
+  padding-bottom: 22px;
+}
+
+.luck-roadmap__item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 16px;
+  bottom: 0;
+  width: 2px;
+  background: var(--panel-border);
+}
+
+.luck-roadmap__marker {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+  background: var(--panel-border);
+  z-index: 1;
+}
+
+.luck-roadmap__item--active .luck-roadmap__marker {
+  background: linear-gradient(135deg, #4ade80, #facc15);
+  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.15);
+}
+
+.luck-roadmap__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.luck-roadmap__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.luck-roadmap__phase {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.luck-roadmap__badge {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.luck-roadmap__title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.luck-roadmap__text {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* SSS */
+.luck-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.luck-faq__item {
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 4px 16px;
+}
+
+.luck-faq__q {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+  font-size: 0.9rem;
+  list-style: none;
+}
+
+.luck-faq__q::-webkit-details-marker {
+  display: none;
+}
+
+.luck-faq__q::before {
+  content: '+ ';
+  color: var(--accent-b);
+  font-weight: 800;
+}
+
+.luck-faq__item[open] .luck-faq__q::before {
+  content: '– ';
+}
+
+.luck-faq__a {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+
+/* Sosyal medya linkleri */
+.luck-social {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.luck-social__link {
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.luck-social__link:hover {
+  border-color: var(--accent-a);
+  color: var(--accent-b);
+}
+
+/* Presale tier butonlarındaki USD karşılığı */
+.luck-tier-btn__usd {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
