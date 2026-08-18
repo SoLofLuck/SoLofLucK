@@ -190,7 +190,7 @@ export function TokenForm({ network }: Props) {
           <span>Token Adı *</span>
           <input
             type="text"
-            placeholder="ör. 0nRCoin"
+            placeholder="ör. SoLofLuck"
             value={form.name}
             maxLength={32}
             onChange={(e) => update('name', e.target.value)}
@@ -202,7 +202,7 @@ export function TokenForm({ network }: Props) {
           <span>Sembol *</span>
           <input
             type="text"
-            placeholder="ör. 0NRC"
+            placeholder="ör. LUCK"
             value={form.symbol}
             maxLength={10}
             onChange={(e) => update('symbol', e.target.value.toUpperCase())}

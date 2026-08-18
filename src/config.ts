@@ -45,6 +45,22 @@ export const DEFAULT_DECIMALS = 9
 export const DEFAULT_NETWORK: NetworkId = 'devnet'
 
 // ---------------------------------------------------------------------------
+// Test aşaması: "Stay Tuned" kapısı
+// ---------------------------------------------------------------------------
+// Site test/geliştirme aşamasındayken solofluck.com kök adresine gelen
+// herkese düz siyah "Stay Tuned" sayfası gösterilir (bkz. src/main.tsx,
+// src/components/StayTuned.tsx). Gerçek uygulamaya yalnızca bu değerle
+// eşleşen gizli yoldan ulaşılır, ör. https://solofluck.com/1 .
+//
+// Bu GERÇEK bir güvenlik/erişim kontrolü DEĞİLDİR — site tamamen istemci
+// tarafında (static) çalıştığı için herkes tarayıcı geliştirici araçlarından
+// veya bu genel-kaynaklı (public) repodan gerçek yolu görebilir. Sadece
+// arama motorlarını ve meraklı gündelik ziyaretçileri test aşamasında
+// yavaşlatan bir gizleme (obscurity) katmanıdır. Site yayına hazır olunca
+// bu satırı silip App'i doğrudan render etmek yeterli (bkz. src/main.tsx).
+export const PREVIEW_ACCESS_PATH = '/1'
+
+// ---------------------------------------------------------------------------
 // $LUCK / SoLofLuck — bu siteye adanmış coin
 // ---------------------------------------------------------------------------
 // Coin, "Token Oluştur" sekmesinden bu sitenin sahibi tarafından oluşturulup
