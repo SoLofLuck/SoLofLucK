@@ -67,6 +67,22 @@ jobs:
           echo "Deploy cüzdanı: $(solana address)"
           solana balance
 
+      # anchor-cli 0.30.1, `anchor build` sırasında kendi eski Solana araç
+      # zincirini (v1.18.17) indirip kullanıyor; onun bundle ettiği eski Rust
+      # derleyicisi, host'un güncel stable Rust'ının ürettiği Cargo.lock v4
+      # formatını okuyamıyor ("lock file version 4 requires
+      # -Znext-lockfile-bump" hatası). Program kendi dependency ağacı için
+      # küçük olduğundan, lockfile'ı burada elle üretip v3'e düşürüyoruz —
+      # host cargo hâlâ güncel kalıyor (anchor-cli derlemesi için gerekli),
+      # sadece dosyanın format işareti eski araç zincirine uyumlu hale
+      # getiriliyor.
+      - name: Cargo.lock oluştur (eski lockfile formatına düşür)
+        working-directory: program/luck-game
+        run: |
+          cargo generate-lockfile
+          sed -i 's/^version = 4$/version = 3/' Cargo.lock
+          head -n 5 Cargo.lock
+
       - name: anchor build
         working-directory: program/luck-game
         run: anchor build
