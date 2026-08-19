@@ -83,6 +83,22 @@ jobs:
           sed -i 's/^version = 4$/version = 3/' Cargo.lock
           head -n 5 Cargo.lock
 
+      # rust-version MSRV fallback'i çoğu paketi eski rustc'ye uygun sürüme
+      # düşürebiliyor ama bazı paketlerde (ör. constant_time_eq, block-buffer)
+      # geriye uyumlu bir sürüm yok — bunları hangi üst bağımlılığın
+      # zorladığını görmek için loglara yazdırıyoruz (build başarısız olursa
+      # bir sonraki düzeltme bu bilgiye göre yapılacak).
+      - name: Bağımlılık zincirini incele (debug)
+        working-directory: program/luck-game
+        if: always()
+        run: |
+          echo "--- constant_time_eq ---"
+          cargo tree -i constant_time_eq 2>&1 || true
+          echo "--- block-buffer ---"
+          cargo tree -i block-buffer 2>&1 || true
+          echo "--- blake3 ---"
+          cargo tree -i blake3 2>&1 || true
+
       - name: anchor build
         working-directory: program/luck-game
         run: anchor build
