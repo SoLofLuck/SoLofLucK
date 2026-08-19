@@ -1,0 +1,78 @@
+name: luck-game — Devnet'e Derle ve Deploy Et
+
+on:
+  workflow_dispatch:
+
+# Bu iş akışı, program/luck-game (Anchor programı) için Rust/Solana/Anchor
+# araç zincirini GitHub'ın kendi runner'ında kurup Devnet'e deploy eder.
+# Neden CI üzerinden: bu depoyu geliştiren AI ajanının çalıştığı sandbox'ın
+# internet erişimi Solana ağına (hatta çoğu dış siteye) kapalı — GitHub
+# Actions runner'ları ise tam internet erişimine sahip, bu yüzden build ve
+# deploy işini burada yapıyoruz.
+#
+# Gerekli tek seferlik kurulum: repo Settings → Secrets and variables →
+# Actions → "New repository secret" → adı LUCK_GAME_DEPLOY_KEY, değeri ise
+# Devnet'e özel, deploy yetkisi için üretilmiş 64 sayılık bir JSON dizisi
+# (solana-keygen'in ürettiği formatla aynı). Bu anahtarın SADECE Devnet'te
+# değeri var, gerçek parayla hiçbir ilgisi yok.
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust kurulumu
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo önbelleği
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: program/luck-game -> target
+
+      - name: Solana CLI kurulumu
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Anchor CLI kurulumu
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/avm" install 0.30.1
+          "$HOME/.cargo/bin/avm" use 0.30.1
+
+      - name: Deploy anahtarını yaz
+        run: |
+          mkdir -p ~/.config/solana
+          cat > ~/.config/solana/id.json <<'KEYFILE'
+          ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
+          KEYFILE
+
+      - name: Devnet'i yapılandır
+        run: solana config set --url devnet --keypair ~/.config/solana/id.json
+
+      - name: Devnet SOL airdrop (deploy ücreti için)
+        run: |
+          for i in 1 2 3 4 5; do
+            if solana airdrop 2; then break; fi
+            echo "Airdrop denemesi $i başarısız, 15sn sonra tekrar denenecek..."
+            sleep 15
+          done
+          solana balance
+
+      - name: anchor build
+        working-directory: program/luck-game
+        run: anchor build
+
+      - name: anchor deploy
+        working-directory: program/luck-game
+        run: anchor deploy --provider.cluster devnet --provider.wallet ~/.config/solana/id.json
+
+      - name: Program ID'yi yazdır
+        working-directory: program/luck-game
+        run: |
+          PROGRAM_ID=$(solana address -k target/deploy/luck_game-keypair.json)
+          echo "================================================"
+          echo " PROGRAM ID: $PROGRAM_ID"
+          echo "================================================"
+          echo "Bu ID'yi declare_id!() ve site config.ts'e işlemek için kullanılacak."

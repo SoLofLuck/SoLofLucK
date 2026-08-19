@@ -1,0 +1,43 @@
+name: luck-game — Oyunu Initialize Et (Devnet)
+
+on:
+  workflow_dispatch:
+    inputs:
+      program_id:
+        description: 'deploy-luck-game workflow çıktısındaki Program ID'
+        required: true
+        type: string
+      treasury_wallet:
+        description: '%20 ücret payının gideceği hazine cüzdanı (public key)'
+        required: true
+        type: string
+
+# initialize() zaten çağrılmışsa script sessizce atlar, bu yüzden bu workflow
+# güvenle birden fazla kez tetiklenebilir.
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bağımlılıkları kur
+        run: npm ci
+
+      - name: Deploy anahtarını yaz
+        run: |
+          mkdir -p ~/.config/solana
+          cat > ~/.config/solana/id.json <<'KEYFILE'
+          ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
+          KEYFILE
+
+      - name: initialize() çağır
+        env:
+          PROGRAM_ID: ${{ inputs.program_id }}
+          TREASURY_WALLET: ${{ inputs.treasury_wallet }}
+          KEYPAIR_PATH: /home/runner/.config/solana/id.json
+          RPC_URL: https://api.devnet.solana.com
+        run: node program/luck-game/scripts/initialize.mjs
