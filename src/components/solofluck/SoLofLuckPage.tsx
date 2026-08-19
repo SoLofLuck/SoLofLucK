@@ -4,13 +4,15 @@ import { MatrixBackground } from './MatrixBackground'
 import { AboutTab } from './AboutTab'
 import { TokenomicsTab } from './TokenomicsTab'
 import { PresaleTab } from './PresaleTab'
+import { GameTab } from './GameTab'
 
-type SubTab = 'about' | 'tokenomics' | 'presale'
+type SubTab = 'about' | 'tokenomics' | 'presale' | 'game'
 
 const SUBTABS: { id: SubTab; label: string }[] = [
   { id: 'about', label: 'Hakkında' },
   { id: 'tokenomics', label: 'Tokenomics' },
   { id: 'presale', label: 'Presale' },
+  { id: 'game', label: '🎰 Oyun' },
 ]
 
 interface Props {
@@ -58,6 +60,7 @@ export function SoLofLuckPage({ network }: Props) {
           {tab === 'about' && <AboutTab />}
           {tab === 'tokenomics' && <TokenomicsTab />}
           {tab === 'presale' && <PresaleTab network={network} />}
+          {tab === 'game' && <GameTab />}
         </div>
 
         <footer className="luck-footer">

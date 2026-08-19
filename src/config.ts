@@ -135,3 +135,35 @@ export const SOCIAL_LINKS = {
   telegram: '', // ör: 'https://t.me/soloflucksol'
   discord: '', // ör: 'https://discord.gg/xxxxxxx'
 }
+
+// ---------------------------------------------------------------------------
+// Oyun: 777 Şans Çarkı (program/luck-game)
+// ---------------------------------------------------------------------------
+// Bu, ayrı bir Solana programı (akıllı kontrat) gerektirir — bkz.
+// program/luck-game/README.md. Program deploy edilip `initialize()`
+// çağrılana kadar `programId` boş kalmalı; Oyun sekmesi bu durumda
+// "yapılandırılmadı" uyarısı gösterir ve oynama butonu devre dışı kalır
+// (PRESALE_WALLET ile aynı güvenlik freni deseni).
+//
+// Buradaki ekonomi değerleri (ücret/ödül/eşik) yalnızca EKRANDA GÖSTERMEK
+// içindir — asıl geçerli/bağlayıcı değerler her zaman zincirdeki GameConfig
+// hesabından okunur (bkz. src/lib/luckGame.ts). `initialize()`'ı
+// çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
+// gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
+export const GAME_CONFIG = {
+  programId: '', // ör: deploy sonrası Solana Playground'un verdiği program ID
+  freePlays: 3,
+  entryFeeSol: 0.1,
+  prizeSol: 1,
+  vaultEasyThresholdSol: 2,
+  treasuryFeeBps: 2000, // %20 hazineye, %80 kasaya
+  normalWinBps: 50, // zor mod: %0.5
+  easyWinBps: 1000, // kolay mod (kasa ≥ eşik): %10
+  // `initialize()`'a verilecek reveal_delay_slots ile aynı olmalı.
+  revealDelaySlots: 5,
+  // Program sabiti MAX_RESOLVE_WINDOW_SLOTS ile aynı olmalı — yalnızca
+  // "sıkışan oyunu ne zaman iptal edebilirsin" mesajı için kullanılıyor.
+  maxResolveWindowSlots: 300,
+  // Ücret payının gönderildiği hazine cüzdanı.
+  treasuryWallet: '', // ör: 'YourGameTreasuryWalletAddressHere...'
+}
