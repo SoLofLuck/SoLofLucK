@@ -1,0 +1,22 @@
+[package]
+name = "luck-game"
+version = "0.1.0"
+description = "777 temalı zincir üstü şans çarkı: cüzdan başına 3 ücretsiz deneme, sonrası 0.1 SOL; commit-reveal (SlotHashes tabanlı) rastgelelik; kasa (vault) belirli bir eşiği geçince kazanma ihtimali artıyor."
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "luck_game"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+# NOT: sell-lock/locked-pool'daki gibi, bu sürüm numaraları bu ortamda
+# derlenip doğrulanamadı. `anchor build` ilk çalıştığında sürüm
+# uyumsuzluğu çıkarsa `cargo update -p <paket>` ile düzeltilebilir.
+anchor-lang = { version = "0.30", features = ["init-if-needed"] }
