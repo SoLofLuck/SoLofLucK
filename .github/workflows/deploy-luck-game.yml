@@ -52,12 +52,19 @@ jobs:
         run: solana config set --url devnet --keypair ~/.config/solana/id.json
 
       - name: Devnet SOL airdrop (deploy ücreti için)
+        # GitHub'ın paylaşımlı runner IP'leri devnet faucet'inde sık sık rate
+        # limit'e takılıyor — bu yüzden hem daha uzun/çok deneme yapıyoruz
+        # hem de burada başarısız olması job'ı durdurmuyor. Airdrop hiç
+        # tutmazsa, deploy adımı yetersiz bakiye yüzünden zaten net bir
+        # hatayla duracak; o durumda deploy anahtarına (aşağıda yazdırılan
+        # public key) manuel olarak devnet SOL göndermek gerekir.
         run: |
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6 7 8; do
             if solana airdrop 2; then break; fi
-            echo "Airdrop denemesi $i başarısız, 15sn sonra tekrar denenecek..."
-            sleep 15
+            echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar denenecek..."
+            sleep 20
           done
+          echo "Deploy cüzdanı: $(solana address)"
           solana balance
 
       - name: anchor build

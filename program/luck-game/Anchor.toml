@@ -8,10 +8,10 @@ skip-lint = false
 # sonra buradaki ID'yi ve src/lib.rs'teki declare_id!()'yi gerçek program
 # ID'siyle güncelleyin.
 [programs.devnet]
-luck_game = "11111111111111111111111111111111111111111"
+luck_game = "11111111111111111111111111111111"
 
 [programs.mainnet]
-luck_game = "11111111111111111111111111111111111111111"
+luck_game = "11111111111111111111111111111111"
 
 [registry]
 url = "https://api.apr.dev"
