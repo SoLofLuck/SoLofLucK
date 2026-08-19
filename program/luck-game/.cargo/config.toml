@@ -1,0 +1,8 @@
+# anchor-cli 0.30.1'in build sırasında indirdiği Solana v1.18.17 aracı,
+# rustc 1.75.0 bundle ediyor. Bu ayar, cargo'nun lockfile üretirken
+# `rust-version` alanına göre MSRV'ye uygun (daha eski) bağımlılık
+# sürümlerini tercih etmesini garanti ediyor — aksi halde host cargo
+# transitive bağımlılıkları (ör. block-buffer) rustc 1.75.0'ın
+# desteklemediği edition2024 gerektiren en yeni sürümlere kilitleyebiliyor.
+[resolver]
+incompatible-rust-versions = "fallback"
