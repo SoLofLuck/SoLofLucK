@@ -2,9 +2,14 @@ import { useEffect, useState } from 'react'
 
 // Saf görsel katman — gerçek kazanma/kaybetme sonucu her zaman zincirden
 // (parsePlayResolvedFromTx) okunuyor. Bu bileşen sadece o sonucu gerçek bir
-// slot makinesi kabini gibi (dikey kayan makara şeritleri, ödeme çizgisi,
-// kol) gösteriyor, oyunun adilliğiyle hiçbir ilgisi yok.
-const SYMBOLS = ['🍒', '🍋', '🔔', '⭐', '💎', '7️⃣']
+// slot makinesi kabini gibi (altın metal gövde, kalın kırmızı 7'ler, dikey
+// kayan makara şeritleri, ödeme çizgisi, kol) gösteriyor, oyunun
+// adilliğiyle hiçbir ilgisi yok.
+const SEVEN = '7'
+// Emoji "7️⃣" küçük bir uygulama simgesi gibi göründüğü için klasik slot
+// makinelerindeki gibi kalın, kırmızı/altın stilize bir "7" harfi çiziyoruz;
+// diğer semboller emoji olarak kalıyor.
+const SYMBOLS = ['🍒', '🍋', '🔔', '⭐', '💎', SEVEN]
 // CSS'teki dönen şerit görselinde kullanılan sembol havuzu — şerit iki kez
 // art arda dizilip yarısı kadar kayınca sorunsuzca döngüye giriyor.
 const REEL_STRIP = [...SYMBOLS, ...SYMBOLS]
@@ -13,14 +18,18 @@ function randomSymbol(): string {
   return SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)]
 }
 
-// Kaybedilen bir denemede üç makaranın da tesadüfen 7️⃣7️⃣7️⃣ gösterip
-// kazanma görseliyle karışmasını engeller.
+// Kaybedilen bir denemede üç makaranın da tesadüfen 777 gösterip kazanma
+// görseliyle karışmasını engeller.
 function randomLoseSymbols(): [string, string, string] {
   let symbols: [string, string, string]
   do {
     symbols = [randomSymbol(), randomSymbol(), randomSymbol()]
-  } while (symbols.every((s) => s === '7️⃣'))
+  } while (symbols.every((s) => s === SEVEN))
   return symbols
+}
+
+function renderSymbol(symbol: string) {
+  return symbol === SEVEN ? <span className="luck-slot__seven">7</span> : symbol
 }
 
 export type SlotResult = 'idle' | 'win' | 'lose'
@@ -31,11 +40,11 @@ interface Props {
 }
 
 export function SlotMachine({ spinning, result }: Props) {
-  const [symbols, setSymbols] = useState<[string, string, string]>(['7️⃣', '7️⃣', '7️⃣'])
+  const [symbols, setSymbols] = useState<[string, string, string]>([SEVEN, SEVEN, SEVEN])
 
   useEffect(() => {
     if (spinning) return
-    if (result === 'win') setSymbols(['7️⃣', '7️⃣', '7️⃣'])
+    if (result === 'win') setSymbols([SEVEN, SEVEN, SEVEN])
     else if (result === 'lose') setSymbols(randomLoseSymbols())
   }, [spinning, result])
 
@@ -43,7 +52,7 @@ export function SlotMachine({ spinning, result }: Props) {
     <div className={`luck-slot luck-slot--${result} ${spinning ? 'luck-slot--spinning' : ''}`}>
       <div className="luck-slot__marquee">
         <span className="luck-slot__bulb" />
-        <span className="luck-slot__marquee-text">777 SoLofLuck</span>
+        <span className="luck-slot__marquee-text">777 JACKPOT</span>
         <span className="luck-slot__bulb" />
       </div>
 
@@ -55,12 +64,12 @@ export function SlotMachine({ spinning, result }: Props) {
                 <div className="luck-slot__strip">
                   {REEL_STRIP.map((s, j) => (
                     <span key={j} className="luck-slot__strip-symbol">
-                      {s}
+                      {renderSymbol(s)}
                     </span>
                   ))}
                 </div>
               ) : (
-                <span className="luck-slot__symbol">{symbol}</span>
+                <span className="luck-slot__symbol">{renderSymbol(symbol)}</span>
               )}
             </div>
           ))}

@@ -1723,21 +1723,25 @@ button {
 .luck-slot__cabinet {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 22px 18px 26px;
+  gap: 14px;
+  padding: 20px 16px;
+  margin: 0 4px 4px;
+  border-radius: 20px;
+  /* Gerçek bir kumarhane kabini gibi parlak altın metal gövde. */
+  background: linear-gradient(155deg, #fff3c4 0%, #d4af37 22%, #92680f 50%, #d4af37 78%, #fff3c4 100%);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5), inset 0 2px 2px rgba(255, 255, 255, 0.7),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.35);
 }
 
 .luck-slot__reels {
   position: relative;
   display: flex;
-  gap: 10px;
-  padding: 8px;
+  gap: 8px;
+  padding: 7px;
   background: #050508;
-  border-radius: 12px;
-  border: 3px solid transparent;
-  /* Altın/krom görünümlü kasa çerçevesi. */
-  border-image: linear-gradient(135deg, #fde68a, #b8860b 45%, #fde68a) 1;
-  box-shadow: inset 0 4px 14px rgba(0, 0, 0, 0.85), 0 2px 6px rgba(0, 0, 0, 0.4);
+  border-radius: 14px;
+  border: 3px solid #3a2a06;
+  box-shadow: inset 0 4px 14px rgba(0, 0, 0, 0.9), 0 1px 2px rgba(255, 255, 255, 0.4);
 }
 
 /* Kasanın ortasından geçen, klasik slot makinelerindeki ödeme çizgisi. */
@@ -1785,6 +1789,22 @@ button {
   z-index: 2;
 }
 
+/* Klasik slot makinelerindeki gibi kalın, kırmızı/altın stilize "7" —
+   emoji "7️⃣" küçük bir uygulama simgesine benzediği için yerine bunu
+   çiziyoruz. */
+.luck-slot__seven {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 900;
+  font-size: 2.5rem;
+  font-style: italic;
+  background: linear-gradient(180deg, #ff8a8a 0%, #dc2626 45%, #7f1d1d 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 1.5px #fde68a;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.6));
+}
+
 /* Gerçek bir slot makara şeridi gibi dikey olarak kayan, tekrar eden
    sembol dizisi — tek bir sembolün titremesi yerine gerçek bir "makara"
    dönüşü hissi veriyor. */
@@ -1824,11 +1844,11 @@ button {
   animation-delay: 0.1s;
 }
 
-/* Kasanın sağındaki dekoratif krom kol ve kırmızı topuz. */
+/* Kasanın sağındaki dekoratif krom kol ve parlak kırmızı topuz. */
 .luck-slot__lever {
   position: relative;
-  width: 16px;
-  height: 84px;
+  width: 24px;
+  height: 98px;
   flex: 0 0 auto;
 }
 
@@ -1837,11 +1857,11 @@ button {
   position: absolute;
   left: 50%;
   bottom: 0;
-  width: 6px;
-  height: 62px;
+  width: 7px;
+  height: 66px;
   transform: translateX(-50%);
   border-radius: 999px;
-  background: linear-gradient(180deg, #e5e7eb, #6b7280);
+  background: linear-gradient(90deg, #fff9e0, #d4af37 45%, #92680f);
   box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.5);
 }
 
@@ -1849,12 +1869,12 @@ button {
   position: absolute;
   left: 50%;
   top: 0;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   transform: translateX(-50%);
   border-radius: 999px;
-  background: radial-gradient(circle at 35% 30%, #fca5a5, #b91c1c 75%);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  background: radial-gradient(circle at 32% 28%, #fecaca, #dc2626 55%, #7f1d1d 100%);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.55), inset 0 2px 3px rgba(255, 255, 255, 0.5);
 }
 
 .luck-slot--spinning .luck-slot__lever-knob {
