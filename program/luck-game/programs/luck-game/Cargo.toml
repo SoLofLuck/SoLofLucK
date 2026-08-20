@@ -27,3 +27,12 @@ default = []
 # derlenip doğrulanamadı. `anchor build` ilk çalıştığında sürüm
 # uyumsuzluğu çıkarsa `cargo update -p <paket>` ile düzeltilebilir.
 anchor-lang = { version = "0.30", features = ["init-if-needed"] }
+# solana-program'ı doğrudan (transitive olarak zaten anchor-lang'den
+# geliyor) burada sabitliyoruz: cargo'nun kendiliğinden çektiği daha
+# yeni bir solana-program patch'i (ör. 1.18.26), sınırsız bir blake3
+# bağımlılığı üzerinden edition2024 gerektiren en yeni blake3/
+# constant_time_eq/cpufeatures sürümlerini çekiyordu — bunlar
+# anchor-cli'nin build sırasında kullandığı eski (rustc 1.75.0 bundle
+# eden) Solana v1.18.17 araç zinciriyle derlenemiyor. Aynı v1.18.17'ye
+# sabitlemek, o dönemin (daha eski, uyumlu) blake3 sürümünü zorluyor.
+solana-program = "=1.18.17"
