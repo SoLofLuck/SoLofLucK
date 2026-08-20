@@ -34,6 +34,31 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
+      # `anchor build`, PATH'te `solana-install` isimli bir komut bulamayınca
+      # (modern Agave kurulumları bunu `agave-install` olarak yeniden
+      # adlandırdı) kendi hardcoded eski Solana sürümünü (v1.18.17,
+      # rustc 1.75.0 bundle ediyor) indirip kullanıyor — bu da modern
+      # paketlerin gerektirdiği edition2024'ü derleyemiyor. Az önce
+      # kurduğumuz güncel Solana araç zincirini zorlamak için PATH'e,
+      # gerçek `solana-install`/`agave-install`'a (o da yoksa `solana`
+      # binary'sine) işaret eden bir uyumluluk sembolik linki ekliyoruz —
+      # böylece anchor build kendi eski indirmesini atlayıp bizim
+      # kurduğumuz güncel araç zincirini kullanabilir.
+      - name: Solana araç zinciri uyumluluk shim'i
+        run: |
+          BIN_DIR="$HOME/.local/share/solana/install/active_release/bin"
+          echo "Kurulu binary'ler:"
+          ls -la "$BIN_DIR"
+          if [ ! -e "$BIN_DIR/solana-install" ]; then
+            if [ -e "$BIN_DIR/agave-install" ]; then
+              ln -s "$BIN_DIR/agave-install" "$BIN_DIR/solana-install"
+            else
+              ln -s "$BIN_DIR/solana" "$BIN_DIR/solana-install"
+            fi
+            echo "solana-install shim'i oluşturuldu -> $(readlink -f "$BIN_DIR/solana-install")"
+          fi
+          command -v solana-install && solana-install --version || echo "solana-install hâlâ bulunamadı"
+
       - name: Anchor CLI kurulumu
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
