@@ -62,3 +62,8 @@ proc-macro2 = "=1.0.81"
 # proc-macro2/syn ikilisinin bu sürümüyle uyumlu daha eski bir borsh-derive
 # sürümüne sabitliyoruz.
 borsh = "=1.5.1"
+# borsh = "=1.5.1" pini yalnızca borsh crate'ini sabitliyor; borsh-derive
+# ayrı bir paket olduğundan cargo onu yine de en yeni 1.5.2'ye
+# çözümlemeye devam ediyordu (aynı PreciseCapture hatası). borsh-derive'ı
+# da doğrudan sabitliyoruz.
+borsh-derive = "=1.5.1"
