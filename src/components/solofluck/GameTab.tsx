@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { GAME_CONFIG } from '../../config'
+import { SlotMachine } from './SlotMachine'
 import {
   fetchGameConfig,
   fetchPlayerState,
@@ -160,6 +161,9 @@ export function GameTab() {
   const windowExpired =
     slotsRemaining !== null && -slotsRemaining > GAME_CONFIG.maxResolveWindowSlots
 
+  const spinning = busy === 'play' || busy === 'resolve' || (pending && !windowExpired)
+  const slotResult = lastResult ? (lastResult.won ? 'win' : 'lose') : 'idle'
+
   return (
     <div className="luck-game">
       <p className="subtab-desc">
@@ -184,6 +188,8 @@ export function GameTab() {
         </div>
       ) : (
         <>
+          <SlotMachine spinning={spinning} result={slotResult} />
+
           <div className="luck-tokenomics__summary luck-game__stats">
             <div className="luck-tokenomics__stat">
               <span>Ücretsiz Deneme</span>
