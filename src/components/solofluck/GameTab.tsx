@@ -31,6 +31,18 @@ function fmtSol(n: number): string {
   return n.toLocaleString('tr-TR', { maximumFractionDigits: 3 })
 }
 
+// Solana'nın çiğ İngilizce RPC hatalarını anlaşılır Türkçe mesajlara çevirir.
+function friendlyErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : ''
+  if (/block height exceeded/i.test(message)) {
+    return 'İşlem çok uzun sürdüğü için blockhash süresi doldu (muhtemelen cüzdanda onaylamak biraz uzun sürdü) — tekrar dene ve cüzdan onayını mümkün olduğunca hızlı ver.'
+  }
+  if (/429|rate limit/i.test(message)) {
+    return 'RPC sunucusu şu an yoğun, birkaç saniye sonra tekrar dene.'
+  }
+  return message || 'İşlem başarısız oldu.'
+}
+
 export function GameTab() {
   const { connection } = useConnection()
   const wallet = useWallet()
@@ -85,7 +97,7 @@ export function GameTab() {
       await refresh()
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'İşlem başarısız oldu.')
+      setError(friendlyErrorMessage(err))
       setStatus('')
     } finally {
       setBusy(null)
@@ -104,7 +116,7 @@ export function GameTab() {
       await refresh()
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'İşlem başarısız oldu.')
+      setError(friendlyErrorMessage(err))
       setStatus('')
     } finally {
       setBusy(null)
@@ -120,7 +132,7 @@ export function GameTab() {
       await refresh()
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'İşlem başarısız oldu.')
+      setError(friendlyErrorMessage(err))
       setStatus('')
     } finally {
       setBusy(null)
@@ -190,32 +202,6 @@ export function GameTab() {
         <>
           <SlotMachine spinning={spinning} result={slotResult} />
 
-          <div className="luck-tokenomics__summary luck-game__stats">
-            <div className="luck-tokenomics__stat">
-              <span>Ücretsiz Deneme</span>
-              <strong>
-                {freeLeft} / {freePlays}
-              </strong>
-            </div>
-            <div className="luck-tokenomics__stat">
-              <span>Toplam Deneme</span>
-              <strong>{playsCount}</strong>
-            </div>
-            <div className="luck-tokenomics__stat">
-              <span>Toplam Kazanım</span>
-              <strong>{winsCount}</strong>
-            </div>
-            <div className="luck-tokenomics__stat">
-              <span>Kasa</span>
-              <strong>
-                {vaultSol !== null ? `${fmtSol(vaultSol)} SOL` : '...'}{' '}
-                <span className={`luck-game__mode luck-game__mode--${easyMode ? 'easy' : 'hard'}`}>
-                  {easyMode ? 'Kolay Mod' : 'Zor Mod'}
-                </span>
-              </strong>
-            </div>
-          </div>
-
           {error && <div className="alert alert--error">{error}</div>}
           {!error && status && <div className="alert alert--info">{status}</div>}
 
@@ -280,6 +266,32 @@ export function GameTab() {
               </button>
             </div>
           )}
+
+          <div className="luck-tokenomics__summary luck-game__stats">
+            <div className="luck-tokenomics__stat">
+              <span>Ücretsiz Deneme</span>
+              <strong>
+                {freeLeft} / {freePlays}
+              </strong>
+            </div>
+            <div className="luck-tokenomics__stat">
+              <span>Toplam Deneme</span>
+              <strong>{playsCount}</strong>
+            </div>
+            <div className="luck-tokenomics__stat">
+              <span>Toplam Kazanım</span>
+              <strong>{winsCount}</strong>
+            </div>
+            <div className="luck-tokenomics__stat">
+              <span>Kasa</span>
+              <strong>
+                {vaultSol !== null ? `${fmtSol(vaultSol)} SOL` : '...'}{' '}
+                <span className={`luck-game__mode luck-game__mode--${easyMode ? 'easy' : 'hard'}`}>
+                  {easyMode ? 'Kolay Mod' : 'Zor Mod'}
+                </span>
+              </strong>
+            </div>
+          </div>
         </>
       )}
 

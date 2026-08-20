@@ -43,11 +43,18 @@ export function SlotMachine({ spinning, result }: Props) {
 
   return (
     <div className={`luck-slot luck-slot--${result}`}>
-      {symbols.map((symbol, i) => (
-        <div key={i} className={`luck-slot__reel ${spinning ? 'luck-slot__reel--spin' : ''}`}>
-          <span className="luck-slot__symbol">{symbol}</span>
-        </div>
-      ))}
+      <div className="luck-slot__marquee">
+        <span className="luck-slot__bulb" />
+        <span className="luck-slot__marquee-text">777 SoLofLuck</span>
+        <span className="luck-slot__bulb" />
+      </div>
+      <div className="luck-slot__reels">
+        {symbols.map((symbol, i) => (
+          <div key={i} className={`luck-slot__reel ${spinning ? 'luck-slot__reel--spin' : ''}`}>
+            <span className="luck-slot__symbol">{symbol}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
