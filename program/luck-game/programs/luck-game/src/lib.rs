@@ -266,8 +266,8 @@ pub mod luck_game {
         preimage.extend_from_slice(&target_hash);
         preimage.extend_from_slice(ctx.accounts.player.key.as_ref());
         preimage.extend_from_slice(&player_state.plays_count.to_le_bytes());
-        let digest = anchor_lang::solana_program::hash::hash(&preimage);
-        let roll = (u16::from_le_bytes([digest.0[0], digest.0[1]]) as u32) % BPS_DENOMINATOR;
+        let digest = anchor_lang::solana_program::hash::hash(&preimage).to_bytes();
+        let roll = (u16::from_le_bytes([digest[0], digest[1]]) as u32) % BPS_DENOMINATOR;
 
         let rent_exempt = Rent::get()?.minimum_balance(0);
         let vault_balance = ctx
