@@ -245,6 +245,15 @@ function buildForfeitStuckPlayIx(player: PublicKey): TransactionInstruction {
   })
 }
 
+// Bir blockhash yalnızca ~60-90 saniye (150 blok) geçerli. Cüzdan onayı
+// (özellikle mobilde uygulama geçişleriyle) bu süreyi aşarsa, o ana kadar
+// imzalanmış işlem artık geçersiz bir blockhash taşıyor — withRetry ile
+// AYNI imzayı tekrar göndermek işe yaramaz, çünkü sorun ağ gecikmesi değil,
+// blockhash'in gerçekten süresinin dolmuş olması. Böyle bir durumda tüm
+// hazırla→imzala→gönder döngüsünü YENİ bir blockhash ve YENİ bir cüzdan
+// onayıyla en baştan tekrarlıyoruz (en fazla birkaç kez) — bu, kullanıcının
+// "block height exceeded" hatasıyla karşılaşıp elle "tekrar dene"ye
+// basmasından daha güvenilir.
 async function sendSingleIx(
   connection: Connection,
   wallet: WalletContextState,
@@ -255,37 +264,49 @@ async function sendSingleIx(
     throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
   }
 
-  const tx = new Transaction().add(ix)
+  const maxCycles = 3
+  for (let cycle = 0; cycle < maxCycles; cycle++) {
+    const tx = new Transaction().add(ix)
 
-  onStatus?.('İşlem hazırlanıyor...')
-  const { blockhash, lastValidBlockHeight } = await withRetry(() => connection.getLatestBlockhash())
-  tx.recentBlockhash = blockhash
-  tx.feePayer = wallet.publicKey
+    onStatus?.(cycle === 0 ? 'İşlem hazırlanıyor...' : `İşlem yeniden hazırlanıyor (${cycle + 1}. deneme)...`)
+    const { blockhash, lastValidBlockHeight } = await withRetry(() => connection.getLatestBlockhash())
+    tx.recentBlockhash = blockhash
+    tx.feePayer = wallet.publicKey
 
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
-  const signedTx = await wallet.signTransaction(tx)
+    onStatus?.('Cüzdanınızda onay bekleniyor...')
+    const signedTx = await wallet.signTransaction(tx)
 
-  // skipPreflight: Helius'un yük dengelemeli düğümleri arasında kısa süreli
-  // state gecikmesi yüzünden preflight simülasyonu, gönderilen düğümde henüz
-  // görünmeyen (ama geçerli) bir blockhash'i reddedebiliyor ("Blockhash not
-  // found") — withRetry ile tekrar denemek bazen düğüm gecikmesinin süresini
-  // aşamıyor. Preflight'ı atlayıp gerçek sonucu confirmTransaction'ın
-  // döndürdüğü err alanından okuyoruz; maxRetries ağın kendi ilettiği
-  // işlemi birkaç kez yeniden yayınlamasını sağlıyor.
-  onStatus?.('İşlem ağa gönderiliyor...')
-  const signature = await withRetry(() =>
-    connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true, maxRetries: 5 }),
-  )
+    try {
+      // skipPreflight: Helius'un yük dengelemeli düğümleri arasında kısa
+      // süreli state gecikmesi yüzünden preflight simülasyonu, gönderilen
+      // düğümde henüz görünmeyen (ama geçerli) bir blockhash'i
+      // reddedebiliyor ("Blockhash not found") — withRetry ile tekrar
+      // denemek bazen düğüm gecikmesinin süresini aşamıyor. Preflight'ı
+      // atlayıp gerçek sonucu confirmTransaction'ın döndürdüğü err
+      // alanından okuyoruz; maxRetries ağın kendi ilettiği işlemi birkaç
+      // kez yeniden yayınlamasını sağlıyor.
+      onStatus?.('İşlem ağa gönderiliyor...')
+      const signature = await withRetry(() =>
+        connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true, maxRetries: 5 }),
+      )
 
-  onStatus?.('Onay bekleniyor...')
-  const confirmation = await withRetry(() =>
-    connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
-  )
-  if (confirmation.value.err) {
-    throw new Error(`İşlem zincirde başarısız oldu: ${JSON.stringify(confirmation.value.err)}`)
+      onStatus?.('Onay bekleniyor...')
+      const confirmation = await withRetry(() =>
+        connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
+      )
+      if (confirmation.value.err) {
+        throw new Error(`İşlem zincirde başarısız oldu: ${JSON.stringify(confirmation.value.err)}`)
+      }
+
+      return signature
+    } catch (err) {
+      const isBlockhashExpiry =
+        err instanceof Error && /block height exceeded|blockhash not found/i.test(err.message)
+      if (!isBlockhashExpiry || cycle === maxCycles - 1) throw err
+      onStatus?.('Onay çok uzun sürdü, blockhash süresi doldu — yeni bir onay isteniyor...')
+    }
   }
-
-  return signature
+  throw new Error('unreachable')
 }
 
 /** Oyuna katılır ("commit" adımı) — bkz. program/luck-game/README.md. */
