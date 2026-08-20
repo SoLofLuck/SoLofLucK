@@ -54,3 +54,11 @@ arrayref = ">=0.3.5, <0.3.10"
 # anchor-syn 0.30.1'in yayınlandığı (Nisan 2024) döneme ait eski bir
 # proc-macro2 sürümüne sabitliyoruz.
 proc-macro2 = "=1.0.81"
+# proc-macro2'yi eski sürüme sabitlemek, ona bağlı syn'i de eski tutuyor —
+# ama borsh-derive 1.5.2 (anchor-lang'in sınırsız borsh bağımlılığı
+# üzerinden gelen, unconstrained en yeni sürüm), syn'in yalnızca yeni
+# sürümlerinde eklenen TypeParamBound::PreciseCapture varyantını
+# kullanıyor ("no variant ... PreciseCapture found"). borsh'u
+# proc-macro2/syn ikilisinin bu sürümüyle uyumlu daha eski bir borsh-derive
+# sürümüne sabitliyoruz.
+borsh = "=1.5.1"
