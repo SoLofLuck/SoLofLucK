@@ -18,6 +18,34 @@ export function isLuckGameConfigured(): boolean {
 }
 
 /**
+ * Bir promise'i, verilen süre içinde ne sonuçlanır ne de hata verirse
+ * belirtilen mesajla reddeden bir zaman aşımına bağlar. Mobil cüzdanlarda
+ * (özellikle Phantom'ın deep-link ile uygulama arasında geçiş yapan onay
+ * akışında) uygulama geçişi başarısız olursa `wallet.signTransaction()`
+ * SONSUZA KADAR ne çözülüyor ne reddediliyor — bu da tüm oyun ekranını
+ * "İşlem bekleniyor" durumunda kalıcı olarak kilitliyordu (kullanıcının
+ * bildirdiği "takılı kalma" sorununun asıl nedeni buydu, blockhash süresi
+ * dolması değil). Her ağ/cüzdan adımını bu sarmalayıcıyla sınırlıyoruz ki
+ * en kötü ihtimalle net bir hata mesajıyla sonuçlansın, sonsuza dek
+ * donmasın.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+}
+
+/**
  * İki bilinen geçici RPC hatası sınıfına karşı kısa backoff'lu tekrar
  * deneme: (1) public/paylaşımlı RPC'lerin IP başına hız sınırı ("429
  * Connection rate limits exceeded"); (2) yük dengelemeli sağlayıcılarda
@@ -26,14 +54,18 @@ export function isLuckGameConfigured(): boolean {
  * düğümden yanıt alabiliyor ("Blockhash not found") — birkaç yüz ms
  * içinde düğümler arası state senkronize oluyor, aynı imzalı işlemi
  * tekrar göndermek genelde yeterli. İkisi de kullanıcıya çiğ RPC hatası
- * göstermek yerine burada sessizce tekrar deneniyor.
+ * göstermek yerine burada sessizce tekrar deneniyor. Her deneme ayrıca
+ * bir zaman aşımına bağlı — bir RPC çağrısı hiç yanıt vermezse (ağ
+ * sorunu) burada sonsuza dek asılı kalmak yerine 20sn'de hataya düşüp
+ * bir sonraki denemeye geçiyor.
  */
 async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelayMs = 800): Promise<T> {
   for (let i = 0; i < attempts; i++) {
     try {
-      return await fn()
+      return await withTimeout(fn(), 20_000, 'RPC isteği zaman aşımına uğradı.')
     } catch (err) {
-      const isTransient = err instanceof Error && /429|rate limit|blockhash not found/i.test(err.message)
+      const isTransient =
+        err instanceof Error && /429|rate limit|blockhash not found|zaman aşımına uğradı/i.test(err.message)
       if (!isTransient || i === attempts - 1) throw err
       await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** i))
     }
@@ -274,7 +306,16 @@ async function sendSingleIx(
     tx.feePayer = wallet.publicKey
 
     onStatus?.('Cüzdanınızda onay bekleniyor...')
-    const signedTx = await wallet.signTransaction(tx)
+    // Mobil cüzdanlarda uygulama geçişi (deep link) bazen hiç geri
+    // dönmüyor — bu durumda signTransaction sonsuza dek asılı kalırdı.
+    // 75sn içinde onay gelmezse net bir hatayla bırakıyoruz (otomatik
+    // döngü tekrarına girmiyor — muhtemelen cüzdan/uygulama geçişinin
+    // kendisi bozuk, aynı şeyi tekrar denemek yardımcı olmaz).
+    const signedTx = await withTimeout(
+      wallet.signTransaction(tx),
+      75_000,
+      'Cüzdan onayı 75 saniye içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
+    )
 
     try {
       // skipPreflight: Helius'un yük dengelemeli düğümleri arasında kısa
