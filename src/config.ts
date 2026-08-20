@@ -151,7 +151,7 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  programId: '', // ör: deploy sonrası Solana Playground'un verdiği program ID
+  programId: 'FoQuLzFc4r6r778SEsb65kAfqTsHrnj5Rj6Q6MQ5bXUw', // Devnet'te deploy edildi ve initialize() çağrıldı
   freePlays: 3,
   entryFeeSol: 0.1,
   prizeSol: 1,
@@ -165,5 +165,5 @@ export const GAME_CONFIG = {
   // "sıkışan oyunu ne zaman iptal edebilirsin" mesajı için kullanılıyor.
   maxResolveWindowSlots: 300,
   // Ücret payının gönderildiği hazine cüzdanı.
-  treasuryWallet: '', // ör: 'YourGameTreasuryWalletAddressHere...'
+  treasuryWallet: '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
 }
