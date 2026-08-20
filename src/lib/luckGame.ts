@@ -265,13 +265,25 @@ async function sendSingleIx(
   onStatus?.('Cüzdanınızda onay bekleniyor...')
   const signedTx = await wallet.signTransaction(tx)
 
+  // skipPreflight: Helius'un yük dengelemeli düğümleri arasında kısa süreli
+  // state gecikmesi yüzünden preflight simülasyonu, gönderilen düğümde henüz
+  // görünmeyen (ama geçerli) bir blockhash'i reddedebiliyor ("Blockhash not
+  // found") — withRetry ile tekrar denemek bazen düğüm gecikmesinin süresini
+  // aşamıyor. Preflight'ı atlayıp gerçek sonucu confirmTransaction'ın
+  // döndürdüğü err alanından okuyoruz; maxRetries ağın kendi ilettiği
+  // işlemi birkaç kez yeniden yayınlamasını sağlıyor.
   onStatus?.('İşlem ağa gönderiliyor...')
-  const signature = await withRetry(() => connection.sendRawTransaction(signedTx.serialize()))
+  const signature = await withRetry(() =>
+    connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true, maxRetries: 5 }),
+  )
 
   onStatus?.('Onay bekleniyor...')
-  await withRetry(() =>
+  const confirmation = await withRetry(() =>
     connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
   )
+  if (confirmation.value.err) {
+    throw new Error(`İşlem zincirde başarısız oldu: ${JSON.stringify(confirmation.value.err)}`)
+  }
 
   return signature
 }
