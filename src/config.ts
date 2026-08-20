@@ -13,17 +13,17 @@ export interface NetworkOption {
 // public endpoint'leri kendi URL'lerinizle değiştirmeniz önerilir; public
 // RPC'ler hız sınırlıdır.
 //
-// Devnet'te Solana Vakfı'nın resmi public endpoint'i (clusterApiUrl('devnet')
-// -> api.devnet.solana.com) tüm dünyadan gelen dapp trafiğiyle sürekli dolu
-// ve IP başına çok sert hız sınırı uyguluyor ("429 Connection rate limits
-// exceeded") — özellikle mobil operatör NAT'ı gibi paylaşımlı IP'lerin
-// arkasından neredeyse hep tetikleniyor. Anahtar gerektirmeyen, genelde daha
-// müsait olan Ankr'ın public devnet RPC'sini kullanıyoruz.
+// Not: Ankr'ın public devnet RPC'si denendi ama @solana/web3.js'in RPC
+// yanıt şeması doğrulamasıyla uyumsuz çıktı (getAccountInfo anında
+// "Expected the value to satisfy a union of type|type" hatası verdi —
+// hız sınırıyla ilgisiz, kalıcı bir uyumsuzluk). Şemaya kesin uyumlu tek
+// seçenek Solana Vakfı'nın resmi public endpoint'i; hız sınırına karşı
+// lib/luckGame.ts'te retry/backoff var (bkz. withRetry).
 export const NETWORKS: Record<NetworkId, NetworkOption> = {
   devnet: {
     id: 'devnet',
     label: 'Devnet (Test Ağı)',
-    endpoint: 'https://rpc.ankr.com/solana_devnet',
+    endpoint: clusterApiUrl('devnet'),
     explorerCluster: '?cluster=devnet',
   },
   'mainnet-beta': {
