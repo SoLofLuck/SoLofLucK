@@ -47,3 +47,10 @@ blake3 = "~1.5"
 # aralık veriyoruz ki cargo yayından kaldırılmamış (yanked) bir sürüm
 # seçebilsin (=0.3.7 denendi ama o da yanked çıktı).
 arrayref = ">=0.3.5, <0.3.10"
+# Anchor'ın IDL üretim adımı (host toolchain ile, SBF build'inden ayrı
+# çalışıyor) anchor-syn 0.30.1'i derliyor; o da
+# proc_macro2::Span::call_site().source_file() çağırıyor. Bu metod
+# proc-macro2'nin en yeni sürümlerinde kaldırılmış/değişmiş —
+# anchor-syn 0.30.1'in yayınlandığı (Nisan 2024) döneme ait eski bir
+# proc-macro2 sürümüne sabitliyoruz.
+proc-macro2 = "=1.0.81"
