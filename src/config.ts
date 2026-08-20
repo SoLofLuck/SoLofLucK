@@ -9,27 +9,33 @@ export interface NetworkOption {
   explorerCluster: string
 }
 
-// Kendi RPC sağlayıcınız varsa (Helius, QuickNode, Alchemy vb.) buradaki
-// public endpoint'leri kendi URL'lerinizle değiştirmeniz önerilir; public
-// RPC'ler hız sınırlıdır.
-//
-// Not: Ankr'ın public devnet RPC'si denendi ama @solana/web3.js'in RPC
-// yanıt şeması doğrulamasıyla uyumsuz çıktı (getAccountInfo anında
-// "Expected the value to satisfy a union of type|type" hatası verdi —
-// hız sınırıyla ilgisiz, kalıcı bir uyumsuzluk). Şemaya kesin uyumlu tek
-// seçenek Solana Vakfı'nın resmi public endpoint'i; hız sınırına karşı
-// lib/luckGame.ts'te retry/backoff var (bkz. withRetry).
+// Solana Vakfı'nın resmi public RPC'leri (clusterApiUrl) tüm dünyadan gelen
+// dapp trafiğiyle dolu ve IP başına sert hız sınırı uyguluyor — özellikle
+// mobil operatör NAT'ı gibi paylaşımlı IP'lerin arkasından "429 Connection
+// rate limits exceeded" sık tetikleniyor. Ankr'ın anahtarsız public devnet
+// RPC'si de denendi ama @solana/web3.js'in RPC yanıt şeması doğrulamasıyla
+// uyumsuz çıktı (kalıcı bir hata, hız sınırıyla ilgisiz). Build sırasında
+// bir Helius API anahtarı sağlanırsa (VITE_HELIUS_API_KEY, GitHub Actions
+// secret'ı HELIUS_API_KEY'den geliyor — bkz. .github/workflows/deploy.yml)
+// onu kullanıyoruz; yoksa resmi public endpoint'e düşüyoruz. Hız sınırına
+// karşı ayrıca lib/luckGame.ts'te retry/backoff var (bkz. withRetry).
+const heliusApiKey: string | undefined = import.meta.env.VITE_HELIUS_API_KEY
+
 export const NETWORKS: Record<NetworkId, NetworkOption> = {
   devnet: {
     id: 'devnet',
     label: 'Devnet (Test Ağı)',
-    endpoint: clusterApiUrl('devnet'),
+    endpoint: heliusApiKey
+      ? `https://devnet.helius-rpc.com/?api-key=${heliusApiKey}`
+      : clusterApiUrl('devnet'),
     explorerCluster: '?cluster=devnet',
   },
   'mainnet-beta': {
     id: 'mainnet-beta',
     label: 'Mainnet (Gerçek Ağ)',
-    endpoint: clusterApiUrl('mainnet-beta'),
+    endpoint: heliusApiKey
+      ? `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`
+      : clusterApiUrl('mainnet-beta'),
     explorerCluster: '',
   },
 }

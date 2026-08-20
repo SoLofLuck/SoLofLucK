@@ -31,6 +31,12 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          # Solana Vakfı'nın public RPC'leri hız sınırlı; varsa Helius API
+          # anahtarını build'e enjekte ediyoruz (bkz. src/config.ts).
+          # Repo Settings → Secrets and variables → Actions → HELIUS_API_KEY
+          # secret'ı olarak eklenmeli. Yoksa build public endpoint'e düşer.
+          VITE_HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
         run: npm run build
 
       - name: Pages'i yapılandır
