@@ -40,8 +40,9 @@ anchor-lang = { version = "0.30", features = ["init-if-needed"] }
 # bu zinciri kesiyor.
 blake3 = "~1.5"
 # blake3 1.5.0'ın çektiği arrayref 0.3.10, crates.io'da artık bulunmayan
-# ("no matching package") çok eski/yayından kaldırılmış bir "proc-macro1"
-# paketine ihtiyaç duyuyor gibi görünüyor — bu blake3/edition2024 sorunuyla
-# ilgisiz, ayrı bir bozuk kayıt. arrayref'i uzun süredir yaygın kullanılan
-# eski bir sürüme sabitleyip bunu atlıyoruz.
-arrayref = "=0.3.7"
+# ("no matching package") çok eski bir "proc-macro1" paketine ihtiyaç
+# duyuyor gibi görünüyor — bu blake3/edition2024 sorunuyla ilgisiz, ayrı
+# bir bozuk kayıt. Tek bir sürüme sabitlemek yerine 0.3.10'u dışlayan bir
+# aralık veriyoruz ki cargo yayından kaldırılmamış (yanked) bir sürüm
+# seçebilsin (=0.3.7 denendi ama o da yanked çıktı).
+arrayref = ">=0.3.5, <0.3.10"
