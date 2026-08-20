@@ -124,9 +124,18 @@ jobs:
           echo "--- blake3 ---"
           cargo tree -i blake3 2>&1 || true
 
+      # Anchor'ın ayrı "IDL üretim" adımı (host toolchain ile, on-chain SBF
+      # derlemesinden bağımsız — istemci SDK'ları için target/idl/*.json
+      # üretiyor, deploy'un kendisi için gerekli değil) anchor-syn/
+      # proc-macro2 sürüm çakışmalarına saplanıp kaldı: proc-macro2'yi
+      # eski sürüme sabitlemek anchor-syn'i düzeltti ama sonra kendi içindeki
+      # nightly-uyum kodu, host rustc'nin GERÇEK proc_macro::Span API'siyle
+      # çakıştı ("no method named source_file found for &proc_macro::Span").
+      # On-chain SBF derlemesi zaten sorunsuz çalışıyor — IDL'i tamamen
+      # atlayarak bu ayrı, gereksiz sorun kaynağını devre dışı bırakıyoruz.
       - name: anchor build
         working-directory: program/luck-game
-        run: anchor build
+        run: anchor build --no-idl
 
       - name: anchor deploy
         working-directory: program/luck-game
