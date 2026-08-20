@@ -12,11 +12,18 @@ export interface NetworkOption {
 // Kendi RPC sağlayıcınız varsa (Helius, QuickNode, Alchemy vb.) buradaki
 // public endpoint'leri kendi URL'lerinizle değiştirmeniz önerilir; public
 // RPC'ler hız sınırlıdır.
+//
+// Devnet'te Solana Vakfı'nın resmi public endpoint'i (clusterApiUrl('devnet')
+// -> api.devnet.solana.com) tüm dünyadan gelen dapp trafiğiyle sürekli dolu
+// ve IP başına çok sert hız sınırı uyguluyor ("429 Connection rate limits
+// exceeded") — özellikle mobil operatör NAT'ı gibi paylaşımlı IP'lerin
+// arkasından neredeyse hep tetikleniyor. Anahtar gerektirmeyen, genelde daha
+// müsait olan Ankr'ın public devnet RPC'sini kullanıyoruz.
 export const NETWORKS: Record<NetworkId, NetworkOption> = {
   devnet: {
     id: 'devnet',
     label: 'Devnet (Test Ağı)',
-    endpoint: clusterApiUrl('devnet'),
+    endpoint: 'https://rpc.ankr.com/solana_devnet',
     explorerCluster: '?cluster=devnet',
   },
   'mainnet-beta': {
