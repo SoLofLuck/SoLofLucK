@@ -18,7 +18,10 @@ import {
   type PlayResolvedResult,
 } from '../../lib/luckGame'
 
-const POLL_MS = 3000
+// Public devnet RPC'si (api.devnet.solana.com) IP başına sıkı hız sınırı
+// uyguluyor — arka plan polling'i çok sık olursa gerçek bir işlem
+// gönderirken (Oyna/Sonucu Gör) 429'a takılma ihtimali artıyor.
+const POLL_MS = 8000
 // Solana'da ortalama slot süresi ~400-500ms — bu yalnızca kullanıcıya
 // kabaca bir bekleme süresi göstermek için, kesin bir taahhüt değil.
 const APPROX_SECONDS_PER_SLOT = 0.45

@@ -17,6 +17,26 @@ export function isLuckGameConfigured(): boolean {
   return Boolean(GAME_CONFIG.programId)
 }
 
+/**
+ * Public devnet RPC'si (api.devnet.solana.com) IP başına sıkı hız sınırı
+ * uyguluyor (429 "Connection rate limits exceeded") — özellikle mobil
+ * operatör NAT'ı gibi paylaşımlı IP'lerin arkasından. İşlem gönderirken bu
+ * geçici hataya takılıp kullanıcıya çiğ RPC hatası göstermek yerine kısa bir
+ * backoff ile birkaç kez tekrar deniyoruz.
+ */
+async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelayMs = 800): Promise<T> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      const isRateLimit = err instanceof Error && /429|rate limit/i.test(err.message)
+      if (!isRateLimit || i === attempts - 1) throw err
+      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** i))
+    }
+  }
+  throw new Error('unreachable')
+}
+
 function programId(): PublicKey {
   if (!GAME_CONFIG.programId) {
     throw new Error('Oyun programı henüz yapılandırılmadı (GAME_CONFIG.programId boş).')
@@ -234,7 +254,7 @@ async function sendSingleIx(
   const tx = new Transaction().add(ix)
 
   onStatus?.('İşlem hazırlanıyor...')
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
+  const { blockhash, lastValidBlockHeight } = await withRetry(() => connection.getLatestBlockhash())
   tx.recentBlockhash = blockhash
   tx.feePayer = wallet.publicKey
 
@@ -242,10 +262,12 @@ async function sendSingleIx(
   const signedTx = await wallet.signTransaction(tx)
 
   onStatus?.('İşlem ağa gönderiliyor...')
-  const signature = await connection.sendRawTransaction(signedTx.serialize())
+  const signature = await withRetry(() => connection.sendRawTransaction(signedTx.serialize()))
 
   onStatus?.('Onay bekleniyor...')
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+  await withRetry(() =>
+    connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
+  )
 
   return signature
 }
@@ -259,7 +281,7 @@ export async function playGame(
   if (!wallet.publicKey) {
     throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
   }
-  const config = await fetchGameConfig(connection)
+  const config = await withRetry(() => fetchGameConfig(connection))
   if (!config) {
     throw new Error('Oyun henüz kurulmadı (GameConfig bulunamadı).')
   }
