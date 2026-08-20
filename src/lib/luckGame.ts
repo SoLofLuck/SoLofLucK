@@ -18,19 +18,23 @@ export function isLuckGameConfigured(): boolean {
 }
 
 /**
- * Public devnet RPC'si (api.devnet.solana.com) IP başına sıkı hız sınırı
- * uyguluyor (429 "Connection rate limits exceeded") — özellikle mobil
- * operatör NAT'ı gibi paylaşımlı IP'lerin arkasından. İşlem gönderirken bu
- * geçici hataya takılıp kullanıcıya çiğ RPC hatası göstermek yerine kısa bir
- * backoff ile birkaç kez tekrar deniyoruz.
+ * İki bilinen geçici RPC hatası sınıfına karşı kısa backoff'lu tekrar
+ * deneme: (1) public/paylaşımlı RPC'lerin IP başına hız sınırı ("429
+ * Connection rate limits exceeded"); (2) yük dengelemeli sağlayıcılarda
+ * (Helius dahil) getLatestBlockhash() bir düğümden, ardından gönderilen
+ * işlemin preflight simülasyonu farklı, henüz o blockhash'i görmemiş bir
+ * düğümden yanıt alabiliyor ("Blockhash not found") — birkaç yüz ms
+ * içinde düğümler arası state senkronize oluyor, aynı imzalı işlemi
+ * tekrar göndermek genelde yeterli. İkisi de kullanıcıya çiğ RPC hatası
+ * göstermek yerine burada sessizce tekrar deneniyor.
  */
 async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelayMs = 800): Promise<T> {
   for (let i = 0; i < attempts; i++) {
     try {
       return await fn()
     } catch (err) {
-      const isRateLimit = err instanceof Error && /429|rate limit/i.test(err.message)
-      if (!isRateLimit || i === attempts - 1) throw err
+      const isTransient = err instanceof Error && /429|rate limit|blockhash not found/i.test(err.message)
+      if (!isTransient || i === attempts - 1) throw err
       await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** i))
     }
   }
