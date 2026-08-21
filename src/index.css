@@ -1726,10 +1726,6 @@ button {
   animation: luck-reels-held-pulse 1.6s ease-in-out infinite;
 }
 
-.luck-slot__reels--held .luck-slot__reel-strip {
-  animation-play-state: paused;
-}
-
 /* İndikten sonra (landed): net, bulanıklıksız, hafif bir "pop" ile beliriyor. */
 .luck-slot__reels--landed .luck-slot__reel {
   animation: luck-reel-landed-pop 0.35s ease-out;
@@ -1782,13 +1778,11 @@ button {
   animation-duration: 0.58s;
 }
 
-.luck-slot__reel-landed {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
+/* .luck-slot__sym: hem kayan şeritteki her kare, hem "held" bekleme
+   sembolü (❔), hem de "landed" son sembol için AYNI kutu modeli —
+   height:100%, flex ile dikey ortalanmış. Böylece 3 makara, gösterilen
+   glif ne olursa olsun (emoji ile stilize "7" glifinin yazı tipi
+   metrikleri farklı olabiliyor) tam olarak aynı yatay çizgide durur. */
 .luck-slot__sym {
   height: 100%;
   min-height: 100%;
@@ -1798,11 +1792,6 @@ button {
   justify-content: center;
   font-size: 13cqw;
   line-height: 1;
-}
-
-.luck-slot__reel-landed .luck-slot__sym {
-  height: auto;
-  min-height: 0;
 }
 
 .luck-slot__sym--seven {

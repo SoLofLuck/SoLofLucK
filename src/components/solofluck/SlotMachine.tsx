@@ -68,12 +68,15 @@ function ReelStrip() {
   )
 }
 
-function LandedSym({ sym }: { sym: string }) {
-  return (
-    <div className="luck-slot__reel-landed">
-      <span className={sym === '7' ? 'luck-slot__sym luck-slot__sym--seven' : 'luck-slot__sym'}>{sym}</span>
-    </div>
-  )
+// Bir makaranın üstünde tek, sabit bir sembol gösterir — hem "held"
+// (sonuç henüz gelmedi, bekleme) hem "landed" (gerçek sonuç) durumunda
+// kullanılıyor. .luck-slot__sym'in KENDİSİ (scroll şeridindeki ile
+// birebir aynı kutu modeli: height:100%, flex, ortalanmış) burada da
+// doğrudan kullanılıyor ki üç makara, hangi sembol/glif olursa olsun
+// (emoji ile stilize "7" arasında yazı tipi metrikleri farklı olabiliyor)
+// tam olarak aynı yatay çizgide hizalı dursun.
+function StaticSym({ sym }: { sym: string }) {
+  return <span className={sym === '7' ? 'luck-slot__sym luck-slot__sym--seven' : 'luck-slot__sym'}>{sym}</span>
 }
 
 type Phase = 'idle' | 'scrolling' | 'held' | 'revealing' | 'landed'
@@ -149,7 +152,13 @@ export function SlotMachine({ spinning, result, bigWin = false }: Props) {
         >
           {[0, 1, 2].map((i) => (
             <div className="luck-slot__reel" key={i}>
-              {phase === 'landed' && combo ? <LandedSym sym={combo[i]} /> : isScrollingVisual || phase === 'held' ? <ReelStrip /> : null}
+              {phase === 'landed' && combo ? (
+                <StaticSym sym={combo[i]} />
+              ) : phase === 'held' ? (
+                <StaticSym sym="❔" />
+              ) : isScrollingVisual ? (
+                <ReelStrip />
+              ) : null}
             </div>
           ))}
         </div>
