@@ -1808,3 +1808,24 @@ button {
 .luck-game__disclaimer {
   margin-top: 20px;
 }
+
+.luck-game__test-hint {
+  font-size: 0.85rem;
+  margin-top: 14px !important;
+}
+
+.luck-game__test-banner {
+  margin-bottom: 18px;
+  line-height: 1.6;
+}
+
+.luck-game__test-banner code {
+  word-break: break-all;
+}
+
+.luck-game__test-banner div {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

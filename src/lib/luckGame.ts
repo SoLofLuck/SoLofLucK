@@ -7,8 +7,15 @@ import {
   TransactionInstruction,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js'
-import type { WalletContextState } from '@solana/wallet-adapter-react'
 import { GAME_CONFIG } from '../config'
+
+// Gerçek cüzdan adaptörü (Phantom vb.) ve yerel test cüzdanı
+// (localTestWallet.ts) için ortak, minimal imzalama arayüzü — sendSingleIx
+// ve oyun fonksiyonları hangi imzalayıcıyı kullandığını bilmek zorunda değil.
+export interface TxSigner {
+  publicKey: PublicKey
+  signTransaction: (tx: Transaction) => Promise<Transaction>
+}
 
 // Kaynak kodu ve deploy talimatları: program/luck-game/README.md.
 // `GAME_CONFIG.programId` boşken bu modülün fonksiyonları çağrılmamalı —
@@ -288,14 +295,10 @@ function buildForfeitStuckPlayIx(player: PublicKey): TransactionInstruction {
 // basmasından daha güvenilir.
 async function sendSingleIx(
   connection: Connection,
-  wallet: WalletContextState,
+  signer: TxSigner,
   ix: TransactionInstruction,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
-  }
-
   const maxCycles = 3
   for (let cycle = 0; cycle < maxCycles; cycle++) {
     const tx = new Transaction().add(ix)
@@ -303,7 +306,7 @@ async function sendSingleIx(
     onStatus?.(cycle === 0 ? 'İşlem hazırlanıyor...' : `İşlem yeniden hazırlanıyor (${cycle + 1}. deneme)...`)
     const { blockhash, lastValidBlockHeight } = await withRetry(() => connection.getLatestBlockhash())
     tx.recentBlockhash = blockhash
-    tx.feePayer = wallet.publicKey
+    tx.feePayer = signer.publicKey
 
     onStatus?.('Cüzdanınızda onay bekleniyor...')
     // Mobil cüzdanlarda uygulama geçişi (deep link) bazen hiç geri
@@ -312,7 +315,7 @@ async function sendSingleIx(
     // döngü tekrarına girmiyor — muhtemelen cüzdan/uygulama geçişinin
     // kendisi bozuk, aynı şeyi tekrar denemek yardımcı olmaz).
     const signedTx = await withTimeout(
-      wallet.signTransaction(tx),
+      signer.signTransaction(tx),
       75_000,
       'Cüzdan onayı 75 saniye içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
     )
@@ -353,41 +356,32 @@ async function sendSingleIx(
 /** Oyuna katılır ("commit" adımı) — bkz. program/luck-game/README.md. */
 export async function playGame(
   connection: Connection,
-  wallet: WalletContextState,
+  signer: TxSigner,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  if (!wallet.publicKey) {
-    throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
-  }
   const config = await withRetry(() => fetchGameConfig(connection))
   if (!config) {
     throw new Error('Oyun henüz kurulmadı (GameConfig bulunamadı).')
   }
-  return sendSingleIx(connection, wallet, buildPlayIx(wallet.publicKey, config.treasury), onStatus)
+  return sendSingleIx(connection, signer, buildPlayIx(signer.publicKey, config.treasury), onStatus)
 }
 
 /** Bekleyen oyunu sonuçlandırır ("resolve" adımı) — kendi oyununuz için çağrılır. */
 export async function resolveGame(
   connection: Connection,
-  wallet: WalletContextState,
+  signer: TxSigner,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  if (!wallet.publicKey) {
-    throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
-  }
-  return sendSingleIx(connection, wallet, buildResolveIx(wallet.publicKey), onStatus)
+  return sendSingleIx(connection, signer, buildResolveIx(signer.publicKey), onStatus)
 }
 
 /** Resolve penceresi kapandıktan sonra sıkışan denemeyi temizler. */
 export async function forfeitStuckPlay(
   connection: Connection,
-  wallet: WalletContextState,
+  signer: TxSigner,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  if (!wallet.publicKey) {
-    throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
-  }
-  return sendSingleIx(connection, wallet, buildForfeitStuckPlayIx(wallet.publicKey), onStatus)
+  return sendSingleIx(connection, signer, buildForfeitStuckPlayIx(signer.publicKey), onStatus)
 }
 
 export function lamportsToSol(lamports: bigint | number): number {

@@ -17,7 +17,13 @@ import {
   type OnChainGameConfig,
   type OnChainPlayerState,
   type PlayResolvedResult,
+  type TxSigner,
 } from '../../lib/luckGame'
+import { ensureTestWalletFunded, loadOrCreateTestWallet, toTxSigner } from '../../lib/localTestWallet'
+
+// Test cüzdanının minimum devnet bakiyesi: ~birkaç işlem ücreti + PlayerState
+// hesabının ilk kayıt (rent) maliyeti için yeterli küçük bir tampon.
+const TEST_WALLET_MIN_LAMPORTS = 50_000_000 // 0.05 SOL
 
 // Public devnet RPC'si (api.devnet.solana.com) IP başına sıkı hız sınırı
 // uyguluyor — arka plan polling'i çok sık olursa gerçek bir işlem
@@ -59,6 +65,24 @@ export function GameTab() {
   const [error, setError] = useState('')
   const [lastResult, setLastResult] = useState<PlayResolvedResult | null>(null)
 
+  // Devnet-only hata ayıklama modu: Phantom'ın mobil onay/deep-link akışı
+  // yavaş kaldığında (blockhash süresi dolmasına yol açıyor) kullanıcının
+  // gerçek cüzdan olmadan, anında imzalayan yerel bir cüzdanla oyunu
+  // tamamlayıp oyun mantığının kendisinin çalıştığını doğrulamasını sağlar.
+  const [testKeypair] = useState(() => loadOrCreateTestWallet())
+  const [testWalletOn, setTestWalletOn] = useState(false)
+  const [testBalance, setTestBalance] = useState<number | null>(null)
+  const [testFunding, setTestFunding] = useState(false)
+  const [testFundError, setTestFundError] = useState('')
+
+  const activePublicKey = testWalletOn ? testKeypair.publicKey : wallet.publicKey
+  const activeSigner: TxSigner | null = testWalletOn
+    ? toTxSigner(testKeypair)
+    : wallet.publicKey && wallet.signTransaction
+      ? { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction }
+      : null
+  const isActive = testWalletOn || wallet.connected
+
   const refresh = useCallback(async () => {
     if (!configured) return
     try {
@@ -70,16 +94,19 @@ export function GameTab() {
         const vault = await fetchVaultBalanceLamports(connection, getConfigPda())
         setVaultLamports(vault)
       }
-      if (wallet.publicKey) {
-        const ps = await fetchPlayerState(connection, wallet.publicKey)
+      if (activePublicKey) {
+        const ps = await fetchPlayerState(connection, activePublicKey)
         setPlayerState(ps)
+        if (testWalletOn) {
+          setTestBalance(await connection.getBalance(activePublicKey))
+        }
       } else {
         setPlayerState(null)
       }
     } catch (err) {
       console.error('Oyun durumu okunamadı:', err)
     }
-  }, [connection, wallet.publicKey, configured])
+  }, [connection, activePublicKey, testWalletOn, configured])
 
   useEffect(() => {
     refresh()
@@ -87,12 +114,38 @@ export function GameTab() {
     return () => clearInterval(id)
   }, [refresh])
 
+  async function handleEnableTestWallet() {
+    setTestFundError('')
+    setTestWalletOn(true)
+    setTestFunding(true)
+    try {
+      const balance = await ensureTestWalletFunded(connection, testKeypair.publicKey, TEST_WALLET_MIN_LAMPORTS)
+      setTestBalance(balance)
+    } catch (err) {
+      console.error(err)
+      setTestFundError(
+        `Otomatik devnet airdrop başarısız oldu (muhtemelen faucet hız sınırına takıldı). Test cüzdanı adresine (${testKeypair.publicKey.toBase58()}) https://faucet.solana.com üzerinden elle biraz devnet SOL gönderebilirsin, ya da birkaç dakika sonra tekrar dene.`,
+      )
+    } finally {
+      setTestFunding(false)
+    }
+  }
+
+  function handleDisableTestWallet() {
+    setTestWalletOn(false)
+    setTestFundError('')
+    setLastResult(null)
+    setError('')
+    setStatus('')
+  }
+
   async function handlePlay() {
+    if (!activeSigner) return
     setError('')
     setLastResult(null)
     setBusy('play')
     try {
-      await playGame(connection, wallet, setStatus)
+      await playGame(connection, activeSigner, setStatus)
       setStatus('Oyun başladı — sonuç birkaç saniye içinde açığa çıkacak.')
       await refresh()
     } catch (err) {
@@ -105,10 +158,11 @@ export function GameTab() {
   }
 
   async function handleResolve() {
+    if (!activeSigner) return
     setError('')
     setBusy('resolve')
     try {
-      const sig = await resolveGame(connection, wallet, setStatus)
+      const sig = await resolveGame(connection, activeSigner, setStatus)
       setStatus('Sonuç okunuyor...')
       const result = await parsePlayResolvedFromTx(connection, sig)
       setLastResult(result)
@@ -124,10 +178,11 @@ export function GameTab() {
   }
 
   async function handleForfeit() {
+    if (!activeSigner) return
     setError('')
     setBusy('forfeit')
     try {
-      await forfeitStuckPlay(connection, wallet, setStatus)
+      await forfeitStuckPlay(connection, activeSigner, setStatus)
       setStatus('Sıkışan deneme temizlendi, tekrar oynayabilirsin.')
       await refresh()
     } catch (err) {
@@ -193,13 +248,38 @@ export function GameTab() {
         </div>
       )}
 
-      {!wallet.connected ? (
+      {!isActive ? (
         <div className="luck-presale__connect">
           <p>Oynamak için önce cüzdanını bağla.</p>
           <WalletMultiButton />
+          <p className="luck-game__test-hint">
+            Cüzdan onayında sorun mu yaşıyorsun?{' '}
+            <button type="button" className="btn btn--secondary" onClick={handleEnableTestWallet} disabled={testFunding}>
+              {testFunding ? 'Test cüzdanı hazırlanıyor...' : '🧪 Devnet test cüzdanı ile dene (onaysız, hızlı)'}
+            </button>
+          </p>
+          {testFundError && <div className="alert alert--warning">{testFundError}</div>}
         </div>
       ) : (
         <>
+          {testWalletOn && (
+            <div className="alert alert--info luck-game__test-banner">
+              🧪 Devnet test cüzdanı aktif — imzalama anında ve onaysız yapılıyor, cüzdan uygulamasına hiç geçmiyor.
+              Bu, gerçek para/coin İÇERMEZ, sadece devnet SOL. Adres:{' '}
+              <code>{testKeypair.publicKey.toBase58()}</code>{' '}
+              {testBalance !== null && <>({fmtSol(lamportsToSol(testBalance))} SOL)</>}
+              <div>
+                <button type="button" className="btn btn--secondary" onClick={handleEnableTestWallet} disabled={testFunding}>
+                  {testFunding ? 'Airdrop isteniyor...' : 'Airdrop iste'}
+                </button>{' '}
+                <button type="button" className="btn btn--secondary" onClick={handleDisableTestWallet}>
+                  Gerçek cüzdana dön
+                </button>
+              </div>
+              {testFundError && <div className="alert alert--warning">{testFundError}</div>}
+            </div>
+          )}
+
           <SlotMachine spinning={spinning} result={slotResult} />
 
           {error && <div className="alert alert--error">{error}</div>}
