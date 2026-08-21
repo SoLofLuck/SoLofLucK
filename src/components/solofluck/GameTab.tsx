@@ -407,7 +407,14 @@ export function GameTab() {
   const playsCount = playerState?.playsCount ?? 0
   const winsCount = playerState?.winsCount ?? 0
   const totalWonSol = playerState ? lamportsToSol(playerState.totalWonLamports) : 0
-  const spinsRemaining = playerState?.spinsSeeded ? playerState.spinsRemaining : freePlays
+  // Zincirde spins_remaining, ücretsiz haklar henüz "seed" edilmediyse
+  // (ilk play() çağrılmadan önce) satın alınmış bakiyeyi İÇERİR ama
+  // ücretsiz hakları henüz İÇERMEZ (bunlar play()'de eklenir) — ekranda
+  // doğru toplamı göstermek için burada aynı toplamayı client tarafında
+  // yapıyoruz.
+  const spinsRemaining = playerState
+    ? playerState.spinsRemaining + (playerState.spinsSeeded ? 0 : freePlays)
+    : freePlays
   const pending = playerState?.pending ?? false
   const needsDelegateSetup = isActive && !testWalletOn && !delegateActive
   const canPlay = spinAuthoritySigner !== null && spinsRemaining > 0
