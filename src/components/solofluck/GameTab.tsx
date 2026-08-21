@@ -219,25 +219,6 @@ export function GameTab() {
     setStatus('')
   }
 
-  async function handleActivateDelegate() {
-    if (!realWalletSigner) return
-    setError('')
-    setBusy('activate')
-    try {
-      // Artık oyuncudan SOL istenmiyor — delegenin gaz bakiyesi ilk kayıtta
-      // zincir tarafından kasadan (vault) sponsor ediliyor (bkz. lib.rs).
-      await registerAndFundDelegate(connection, realWalletSigner, delegateKeypair.publicKey, setStatus)
-      setStatus('Oyun cüzdanı etkinleştirildi — artık spinler onaysız, anında oynanacak.')
-      await refresh()
-    } catch (err) {
-      console.error(err)
-      setError(friendlyErrorMessage(err))
-      setStatus('')
-    } finally {
-      setBusy(null)
-    }
-  }
-
   // Delegenin gaz bakiyesi normalde satın alımlarla (bkz. handleBuySpins/
   // handleConvert) kasadan otomatik tazeleniyor — bu, oyuncunun kendi
   // cüzdanından yaptığı gerçek bir transfer gerektiren, yalnızca çok uzun
@@ -347,6 +328,14 @@ export function GameTab() {
     setPurchaseNotice('')
     setBusy(`buy-${tierIndex}`)
     try {
+      // Delegate henüz register değilse (ilk satın alma), önce register et
+      const needsDelegate = !playerState || !playerState.delegate.equals(delegateKeypair.publicKey)
+      if (needsDelegate) {
+        setStatus('Oyun cüzdanı kuruluyor (1/2)...')
+        await registerAndFundDelegate(connection, paymentSigner, delegateKeypair.publicKey, setStatus)
+        setStatus('Spinler satın alınıyor (2/2)...')
+      }
+
       const sig = await buySpins(
         connection,
         paymentSigner,
@@ -517,26 +506,6 @@ export function GameTab() {
                 </button>
               </div>
               {testFundError && <div className="alert alert--warning">{testFundError}</div>}
-            </div>
-          )}
-
-          {needsDelegateSetup && (
-            <div className="alert alert--info luck-game__delegate-setup">
-              🔑 Spinlerin sırasında her seferinde cüzdan onayı istememesi için, bir kereliğine küçük bir
-              "oyun cüzdanı" etkinleştirmemiz gerekiyor. Bu tamamen ÜCRETSİZ bir işlem — senden HİÇBİR SOL
-              istenmiyor, gaz ihtiyacı zincir tarafından karşılanıyor. Sadece bir imza yeterli. Bu adımdan
-              sonra ücretsiz denemeler ve satın aldığın spinler anında, onaysız oynanır — cüzdanın yalnızca
-              gerçek bir ödeme yaparken devreye girer.
-              <div>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={handleActivateDelegate}
-                  disabled={busy !== null || !realWalletSigner}
-                >
-                  {busy === 'activate' ? 'Etkinleştiriliyor...' : '🔑 Oyun Cüzdanını Etkinleştir (1 kerelik onay)'}
-                </button>
-              </div>
             </div>
           )}
 
