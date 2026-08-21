@@ -84,6 +84,10 @@ type Phase = 'idle' | 'scrolling' | 'held' | 'revealing' | 'landed'
 export function SlotMachine({ spinning, result, bigWin = false }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [combo, setCombo] = useState<Combo | null>(null)
+  // "held" (bekleme) karesinde soru işareti yerine gerçek bir makara
+  // sembolü gösteriyoruz — üç makara da AYNI sembolü gösteriyor ki hizalı
+  // dursun, ama hangi sembol olduğu her bekleyişte rastgele değişiyor.
+  const [waitingSym, setWaitingSym] = useState<string>('🍀')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const clearTimer = () => {
@@ -104,6 +108,7 @@ export function SlotMachine({ spinning, result, bigWin = false }: Props) {
           // Sonuç hâlâ gelmediyse (zincir/cüzdan onayı sürüyor) dönmeyi
           // durdurup bekleme karesine geç — "sürekli dönüyor" hissini
           // burada kesiyoruz.
+          setWaitingSym(REEL_SYMBOLS[Math.floor(Math.random() * REEL_SYMBOLS.length)])
           setPhase((p) => (p === 'scrolling' ? 'held' : p))
         }, randMs(4000, 7000))
       } else {
@@ -155,7 +160,7 @@ export function SlotMachine({ spinning, result, bigWin = false }: Props) {
               {phase === 'landed' && combo ? (
                 <StaticSym sym={combo[i]} />
               ) : phase === 'held' ? (
-                <StaticSym sym="❔" />
+                <StaticSym sym={waitingSym} />
               ) : isScrollingVisual ? (
                 <ReelStrip />
               ) : null}
