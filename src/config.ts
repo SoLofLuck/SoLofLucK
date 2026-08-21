@@ -164,7 +164,7 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  programId: '4ZawbVhMU6H8277vxYBNr2UfZnPg4mfDzhuJdFuWQ7VQ', // Devnet'te deploy edildi (spin-kredisi/delegate mimarisi)
+  programId: '9bnx9R9NzexuY18WepPf1i5PhQhegtsRjYzG3NTGL5Kt', // Devnet'te deploy edildi (spin-kredisi/delegate mimarisi)
   freePlays: 3,
   // Spin-kredisi tarifesi: 3 ücretsiz deneme bitince (+1 bonus spin
   // hediye), her paket bir defada satın alınıp bakiyeye eklenir. Sırayla

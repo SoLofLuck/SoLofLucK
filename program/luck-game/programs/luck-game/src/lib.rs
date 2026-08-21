@@ -5,11 +5,10 @@ use anchor_lang::system_program::{self, Transfer as SolTransfer};
 // Spin-kredisi/delegate mimarisine geçişte GameConfig/PlayerState hesap
 // düzeni değiştiği için taze bir Program ID ile deploy edildi (devnet).
 // NOT: rust-cache CI önbelleği program keypair'ini run'lar arasında
-// korumadı, bu yüzden "normal" (force_new_program_id=false) redeploy'da
-// bile beklenmedik biçimde YENİ bir keypair üretildi — anchor build bunu
-// otomatik algılayıp bu satırı CI checkout'unda güncelledi, gerçek deploy
-// edilen adres bu.
-declare_id!("4ZawbVhMU6H8277vxYBNr2UfZnPg4mfDzhuJdFuWQ7VQ");
+// korumadı, bu yüzden fresh-keypair redeploy'lar `anchor keys sync`
+// adımıyla (bkz. deploy-luck-game.yml) bu satırı CI checkout'unda otomatik
+// güncelledi — gerçek deploy edilen ve kendi içinde tutarlı adres bu.
+declare_id!("9bnx9R9NzexuY18WepPf1i5PhQhegtsRjYzG3NTGL5Kt");
 
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";
