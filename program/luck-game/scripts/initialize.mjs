@@ -5,10 +5,11 @@
 //   TREASURY_WALLET=...   (zorunlu — %20 ücret payının gideceği cüzdan)
 //   KEYPAIR_PATH=~/.config/solana/id.json  (varsayılan)
 //   RPC_URL=https://api.devnet.solana.com  (varsayılan)
-//   ENTRY_FEE_SOL=0.1  FREE_PLAYS=3
+//   FREE_PLAYS=3
 //   SMALL_PRIZE_SOL=0.5  BIG_PRIZE_SOL=1  BIG_PRIZE_BPS=3000  VAULT_THRESHOLD_SOL=2
 //   NORMAL_WIN_BPS=50  EASY_WIN_BPS=1000  TREASURY_FEE_BPS=2000
 //   REVEAL_DELAY_SLOTS=5
+//   SPIN_TIER_COUNTS=1,5,10,20,50,100  SPIN_TIER_PRICES_SOL=0.1,0.3,0.5,0.8,1.5,2.5
 //
 // Bu değerlerin varsayılanları src/config.ts içindeki GAME_CONFIG ile
 // birebir eşleşir. Program zaten initialize edilmişse (config PDA'sı
@@ -52,7 +53,6 @@ const KEYPAIR_PATH =
 const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 
 const LAMPORTS_PER_SOL = 1_000_000_000
-const entryFeeLamports = BigInt(Math.round(envFloat('ENTRY_FEE_SOL', 0.1) * LAMPORTS_PER_SOL))
 const freePlays = envInt('FREE_PLAYS', 3)
 const smallPrizeLamports = BigInt(Math.round(envFloat('SMALL_PRIZE_SOL', 0.5) * LAMPORTS_PER_SOL))
 const bigPrizeLamports = BigInt(Math.round(envFloat('BIG_PRIZE_SOL', 1) * LAMPORTS_PER_SOL))
@@ -64,6 +64,24 @@ const normalWinBps = envInt('NORMAL_WIN_BPS', 50)
 const easyWinBps = envInt('EASY_WIN_BPS', 1000)
 const treasuryFeeBps = envInt('TREASURY_FEE_BPS', 2000)
 const revealDelaySlots = BigInt(envInt('REVEAL_DELAY_SLOTS', 5))
+
+// Spin paket tarifesi: N adet spin, X SOL karşılığında. Varsayılanlar
+// kullanıcının belirlediği tarifeyle birebir eşleşir: 1/0.1, 5/0.3,
+// 10/0.5, 20/0.8, 50/1.5, 100/2.5 SOL.
+const DEFAULT_SPIN_TIER_COUNTS = [1, 5, 10, 20, 50, 100]
+const DEFAULT_SPIN_TIER_PRICES_SOL = [0.1, 0.3, 0.5, 0.8, 1.5, 2.5]
+const spinTierCounts = (process.env.SPIN_TIER_COUNTS
+  ? process.env.SPIN_TIER_COUNTS.split(',').map((s) => Number.parseInt(s.trim(), 10))
+  : DEFAULT_SPIN_TIER_COUNTS)
+const spinTierPricesLamports = (process.env.SPIN_TIER_PRICES_SOL
+  ? process.env.SPIN_TIER_PRICES_SOL.split(',').map((s) => Number.parseFloat(s.trim()))
+  : DEFAULT_SPIN_TIER_PRICES_SOL
+).map((sol) => BigInt(Math.round(sol * LAMPORTS_PER_SOL)))
+
+if (spinTierCounts.length !== 6 || spinTierPricesLamports.length !== 6) {
+  console.error('SPIN_TIER_COUNTS ve SPIN_TIER_PRICES_SOL tam olarak 6 değer içermeli')
+  process.exit(1)
+}
 
 function anchorDiscriminator(name) {
   return createHash('sha256').update(`global:${name}`).digest().subarray(0, 8)
@@ -100,7 +118,6 @@ async function main() {
 
   const data = Buffer.concat([
     anchorDiscriminator('initialize'),
-    u64(entryFeeLamports),
     u8(freePlays),
     u64(smallPrizeLamports),
     u64(bigPrizeLamports),
@@ -110,6 +127,10 @@ async function main() {
     u16(easyWinBps),
     u16(treasuryFeeBps),
     u64(revealDelaySlots),
+    // [u16; 6] ve [u64; 6] — sabit boyutlu diziler, Vec<T>'nin aksine
+    // uzunluk ön eki OLMADAN art arda ham değerler olarak serileşir.
+    ...spinTierCounts.map((n) => u16(n)),
+    ...spinTierPricesLamports.map((n) => u64(n)),
   ])
 
   const ix = new TransactionInstruction({

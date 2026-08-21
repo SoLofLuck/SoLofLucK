@@ -9,6 +9,7 @@ declare_id!("6oxR8J5QhV2RvQzVB2kNKQ8XrZJt7AZF3eCnQXuGuydp");
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";
 const PLAYER_SEED: &[u8] = b"player";
+const SPIN_TIERS: usize = 6;
 
 // resolve() en erken commit_slot + reveal_delay_slots'ta, en geç
 // commit_slot + reveal_delay_slots + MAX_RESOLVE_WINDOW_SLOTS'ta çağrılabilir.
@@ -27,13 +28,13 @@ const BPS_DENOMINATOR: u32 = 10_000;
 pub mod luck_game {
     use super::*;
 
-    /// Oyunu bir kez kurar: ücret/ödül/ihtimal parametrelerini ve hazine
-    /// (treasury) cüzdanını GameConfig PDA'sına yazar. Kasa (vault) için ayrı
-    /// bir "oluşturma" adımı yok — locked-pool'daki pool_authority'de olduğu
-    /// gibi, ilk `play()` çağrısındaki transfer onu zaten var edecek.
+    /// Oyunu bir kez kurar: ödül/ihtimal parametrelerini, spin paket
+    /// tarifesini ve hazine (treasury) cüzdanını GameConfig PDA'sına yazar.
+    /// Kasa (vault) için ayrı bir "oluşturma" adımı yok — locked-pool'daki
+    /// pool_authority'de olduğu gibi, ilk `buy_spins()` çağrısındaki
+    /// transfer onu zaten var edecek.
     pub fn initialize(
         ctx: Context<Initialize>,
-        entry_fee_lamports: u64,
         free_plays: u8,
         small_prize_lamports: u64,
         big_prize_lamports: u64,
@@ -43,8 +44,9 @@ pub mod luck_game {
         easy_win_bps: u16,
         treasury_fee_bps: u16,
         reveal_delay_slots: u64,
+        spin_tier_counts: [u16; SPIN_TIERS],
+        spin_tier_prices: [u64; SPIN_TIERS],
     ) -> Result<()> {
-        require!(entry_fee_lamports > 0, GameError::InvalidParam);
         require!(small_prize_lamports > 0, GameError::InvalidParam);
         // Büyük ödül küçük ödülden az olamaz — "büyük" adının bir anlamı
         // kalmalı (eşit olması, yani tek katmanlı davranış, buna izin verilir).
@@ -67,9 +69,15 @@ pub mod luck_game {
             vault_easy_threshold_lamports >= big_prize_lamports,
             GameError::InvalidParam
         );
+        for i in 0..SPIN_TIERS {
+            require!(
+                spin_tier_counts[i] > 0 && spin_tier_prices[i] > 0,
+                GameError::InvalidParam
+            );
+        }
 
         // Vault PDA'sının bump'ını burada bir kez hesaplayıp saklıyoruz ki
-        // sonraki her play()/resolve() çağrısında tekrar tekrar
+        // sonraki her buy_spins()/resolve() çağrısında tekrar tekrar
         // `find_program_address` aramasıyla (göreceli olarak pahalı) yeniden
         // hesaplamak yerine doğrudan kullanılabilsin — locked-pool'daki
         // `authority_bump` ile aynı optimizasyon.
@@ -80,7 +88,6 @@ pub mod luck_game {
         let config = &mut ctx.accounts.config;
         config.authority = ctx.accounts.authority.key();
         config.treasury = ctx.accounts.treasury.key();
-        config.entry_fee_lamports = entry_fee_lamports;
         config.free_plays = free_plays;
         config.small_prize_lamports = small_prize_lamports;
         config.big_prize_lamports = big_prize_lamports;
@@ -90,22 +97,23 @@ pub mod luck_game {
         config.easy_win_bps = easy_win_bps;
         config.treasury_fee_bps = treasury_fee_bps;
         config.reveal_delay_slots = reveal_delay_slots;
+        config.spin_tier_counts = spin_tier_counts;
+        config.spin_tier_prices = spin_tier_prices;
         config.vault_bump = vault_bump;
         config.bump = ctx.bumps.config;
 
         Ok(())
     }
 
-    /// Parametreleri sonradan ayarlamak için (ör. ücreti/oranları güncelleme).
-    /// Yalnızca `config.authority` çağırabilir. Devam eden (pending) oyunları
-    /// etkilemez — onlar zaten commit anındaki kurallara göre resolve olur
-    /// çünkü resolve() ihtimalleri GÜNCEL config'ten okur; bu kasıtlı basit
-    /// bir tasarım, kritik değilse (ör. sadece ücret güncellemesi) sorun
-    /// değil, ama oran değişikliklerinin bekleyen oyunları etkileyebileceğini
-    /// unutmayın.
+    /// Parametreleri sonradan ayarlamak için (ör. paket tarifesini/oranları
+    /// güncelleme). Yalnızca `config.authority` çağırabilir. Devam eden
+    /// (pending) oyunları etkilemez — onlar zaten commit anındaki kurallara
+    /// göre resolve olur çünkü resolve() ihtimalleri GÜNCEL config'ten
+    /// okur; bu kasıtlı basit bir tasarım, kritik değilse (ör. sadece
+    /// tarife güncellemesi) sorun değil, ama oran değişikliklerinin
+    /// bekleyen oyunları etkileyebileceğini unutmayın.
     pub fn update_config(
         ctx: Context<UpdateConfig>,
-        entry_fee_lamports: u64,
         free_plays: u8,
         small_prize_lamports: u64,
         big_prize_lamports: u64,
@@ -114,8 +122,9 @@ pub mod luck_game {
         normal_win_bps: u16,
         easy_win_bps: u16,
         treasury_fee_bps: u16,
+        spin_tier_counts: [u16; SPIN_TIERS],
+        spin_tier_prices: [u64; SPIN_TIERS],
     ) -> Result<()> {
-        require!(entry_fee_lamports > 0, GameError::InvalidParam);
         require!(small_prize_lamports > 0, GameError::InvalidParam);
         require!(big_prize_lamports >= small_prize_lamports, GameError::InvalidParam);
         require!(
@@ -130,9 +139,14 @@ pub mod luck_game {
             vault_easy_threshold_lamports >= big_prize_lamports,
             GameError::InvalidParam
         );
+        for i in 0..SPIN_TIERS {
+            require!(
+                spin_tier_counts[i] > 0 && spin_tier_prices[i] > 0,
+                GameError::InvalidParam
+            );
+        }
 
         let config = &mut ctx.accounts.config;
-        config.entry_fee_lamports = entry_fee_lamports;
         config.free_plays = free_plays;
         config.small_prize_lamports = small_prize_lamports;
         config.big_prize_lamports = big_prize_lamports;
@@ -141,14 +155,101 @@ pub mod luck_game {
         config.normal_win_bps = normal_win_bps;
         config.easy_win_bps = easy_win_bps;
         config.treasury_fee_bps = treasury_fee_bps;
+        config.spin_tier_counts = spin_tier_counts;
+        config.spin_tier_prices = spin_tier_prices;
 
         Ok(())
     }
 
-    /// Oyuna katılır ("commit" adımı). İlk `config.free_plays` deneme
-    /// ücretsizdir (yalnızca ağ işlem ücreti); sonrasında `entry_fee_lamports`
-    /// SOL gerekir ve aynı işlemde ikiye bölünerek gönderilir: bir payı
-    /// hazineye (treasury), kalanı oyun kasasına (vault).
+    /// Bir spin paketi satın alır — İSTER İSTEMEZ oyuncunun GERÇEK
+    /// cüzdanıyla imzalanmalı (delege burada kullanılamaz, çünkü delege
+    /// yalnızca küçük bir gaz bakiyesi taşır, gerçek ödeme SOL'u değil).
+    /// Tutar aynı `play()`'in eski davranışındaki gibi ikiye bölünüyor:
+    /// bir payı hazineye (treasury), kalanı oyun kasasına (vault). Satın
+    /// alınan spin sayısı `player_state.spins_remaining`'e ekleniyor.
+    pub fn buy_spins(ctx: Context<BuySpins>, tier_index: u8) -> Result<()> {
+        let config = &ctx.accounts.config;
+        require!((tier_index as usize) < SPIN_TIERS, GameError::InvalidParam);
+        let spin_count = config.spin_tier_counts[tier_index as usize] as u32;
+        let price = config.spin_tier_prices[tier_index as usize];
+
+        let treasury_amount = (price as u128)
+            .checked_mul(config.treasury_fee_bps as u128)
+            .ok_or(GameError::MathOverflow)?
+            .checked_div(BPS_DENOMINATOR as u128)
+            .ok_or(GameError::MathOverflow)? as u64;
+        let vault_amount = price
+            .checked_sub(treasury_amount)
+            .ok_or(GameError::MathOverflow)?;
+
+        system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                SolTransfer {
+                    from: ctx.accounts.player.to_account_info(),
+                    to: ctx.accounts.treasury.to_account_info(),
+                },
+            ),
+            treasury_amount,
+        )?;
+
+        system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                SolTransfer {
+                    from: ctx.accounts.player.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                },
+            ),
+            vault_amount,
+        )?;
+
+        let owner = ctx.accounts.player.key();
+        let player_state = &mut ctx.accounts.player_state;
+        ensure_owner(player_state, owner)?;
+        player_state.spins_remaining = player_state
+            .spins_remaining
+            .checked_add(spin_count)
+            .ok_or(GameError::MathOverflow)?;
+        player_state.bump = ctx.bumps.player_state;
+
+        emit!(SpinsPurchased {
+            player: owner,
+            tier_index,
+            spin_count,
+            price_lamports: price,
+            spins_remaining: player_state.spins_remaining,
+        });
+
+        Ok(())
+    }
+
+    /// Oyuncunun tarayıcıda tuttuğu, tek seferlik (bir kez) gerçek
+    /// cüzdanla yetkilendirilmiş yerel bir "delege" anahtarını kaydeder —
+    /// bundan sonraki `play()` çağrıları bu delege ile de imzalanabilir,
+    /// böylece her çevirişte cüzdan uygulamasına geçmeye gerek kalmaz.
+    /// Delege sadece bu oyuncunun ÖNCEDEN SATIN ALDIĞI spin kredisini
+    /// harcayabilir; kazanç her zaman `player_state.player`'a (gerçek
+    /// cüzdana) gider, delegenin kendisine asla gitmez.
+    pub fn register_delegate(ctx: Context<RegisterDelegate>, delegate: Pubkey) -> Result<()> {
+        let owner = ctx.accounts.player.key();
+        let player_state = &mut ctx.accounts.player_state;
+        ensure_owner(player_state, owner)?;
+        player_state.delegate = delegate;
+        player_state.bump = ctx.bumps.player_state;
+        Ok(())
+    }
+
+    /// Oyuna katılır ("commit" adımı) — bir spin kredisi harcar. İlk
+    /// çağrıda `config.free_plays` kadar ücretsiz kredi otomatik yükleniyor;
+    /// bitince (ve daha önce hiç bonus verilmediyse) tek seferlik +1 bonus
+    /// spin ekleniyor. Kredi biterse `NoSpinsRemaining` hatası döner —
+    /// oyuncu `buy_spins()` ile paket almalı.
+    ///
+    /// Oyuncunun kendisi (`owner` == imzalayan) VEYA `register_delegate()`
+    /// ile kaydedilmiş yerel delege anahtarı imzalayabilir — böylece
+    /// oyuncu bir kez cüzdanıyla onay verip spin paketini/delegeyi
+    /// kaydettikten sonra, her çevirişte tekrar cüzdan onayı gerekmez.
     ///
     /// Sonuç burada BELLİ OLMAZ — yalnızca "şu an bu oyuncu, şu slot'ta bir
     /// oyun başlattı" diye zincire yazılır. Kazanıp kazanmadığı, henüz var
@@ -157,59 +258,53 @@ pub mod luck_game {
     /// neden gerekli olduğunu (simülasyonla "önizleyip" hile yapmayı
     /// engellemek için) anlatıyor.
     pub fn play(ctx: Context<Play>) -> Result<()> {
+        let owner = ctx.accounts.owner.key();
+        let authority = ctx.accounts.authority.key();
+
         let player_state = &mut ctx.accounts.player_state;
         require!(!player_state.pending, GameError::PlayAlreadyPending);
 
+        ensure_owner(player_state, owner)?;
+        require!(
+            authority == player_state.player || authority == player_state.delegate,
+            GameError::UnauthorizedSigner
+        );
+
         let config = &ctx.accounts.config;
-        let is_paid = player_state.plays_count >= config.free_plays as u32;
-
-        if is_paid {
-            let treasury_amount = (config.entry_fee_lamports as u128)
-                .checked_mul(config.treasury_fee_bps as u128)
-                .ok_or(GameError::MathOverflow)?
-                .checked_div(BPS_DENOMINATOR as u128)
-                .ok_or(GameError::MathOverflow)? as u64;
-            let vault_amount = config
-                .entry_fee_lamports
-                .checked_sub(treasury_amount)
-                .ok_or(GameError::MathOverflow)?;
-
-            system_program::transfer(
-                CpiContext::new(
-                    ctx.accounts.system_program.to_account_info(),
-                    SolTransfer {
-                        from: ctx.accounts.player.to_account_info(),
-                        to: ctx.accounts.treasury.to_account_info(),
-                    },
-                ),
-                treasury_amount,
-            )?;
-
-            system_program::transfer(
-                CpiContext::new(
-                    ctx.accounts.system_program.to_account_info(),
-                    SolTransfer {
-                        from: ctx.accounts.player.to_account_info(),
-                        to: ctx.accounts.vault.to_account_info(),
-                    },
-                ),
-                vault_amount,
-            )?;
+        if !player_state.spins_seeded {
+            player_state.spins_remaining = config.free_plays as u32;
+            player_state.spins_seeded = true;
         }
+        require!(player_state.spins_remaining > 0, GameError::NoSpinsRemaining);
 
-        player_state.player = ctx.accounts.player.key();
+        player_state.spins_remaining -= 1;
         player_state.plays_count = player_state
             .plays_count
             .checked_add(1)
             .ok_or(GameError::MathOverflow)?;
+
+        // Ücretsiz haklar tam bitince (ve daha önce bonus verilmediyse) tek
+        // seferlik +1 bonus deneme veriyoruz — frontend bunu bildirimle
+        // gösterir (bkz. PlayCommitted.bonus_granted).
+        let mut bonus_granted = false;
+        if player_state.spins_remaining == 0
+            && !player_state.bonus_granted
+            && player_state.plays_count == config.free_plays as u32
+        {
+            player_state.spins_remaining = 1;
+            player_state.bonus_granted = true;
+            bonus_granted = true;
+        }
+
         player_state.pending = true;
         player_state.commit_slot = Clock::get()?.slot;
         player_state.bump = ctx.bumps.player_state;
 
         emit!(PlayCommitted {
-            player: ctx.accounts.player.key(),
+            player: owner,
             plays_count: player_state.plays_count,
-            is_paid,
+            spins_remaining: player_state.spins_remaining,
+            bonus_granted,
             commit_slot: player_state.commit_slot,
         });
 
@@ -217,10 +312,11 @@ pub mod luck_game {
     }
 
     /// Bekleyen oyunu sonuçlandırır ("reveal" adımı). İzinsiz (permissionless)
-    /// — oyuncunun kendisi ya da başka biri/bir "keeper" çağırabilir; sonucu
-    /// kimin gönderdiği önemli değil çünkü sonuç zaten `commit_slot +
-    /// reveal_delay_slots` slot'unun hash'iyle DETERMİNİSTİK olarak belirli,
-    /// çağıran taraf hiçbir şeyi etkileyemez.
+    /// — oyuncunun kendisi, delegesi ya da başka biri/bir "keeper"
+    /// çağırabilir; sonucu kimin gönderdiği önemli değil çünkü sonuç zaten
+    /// `commit_slot + reveal_delay_slots` slot'unun hash'iyle DETERMİNİSTİK
+    /// olarak belirli, çağıran taraf hiçbir şeyi etkileyemez. Kazanç HER
+    /// ZAMAN `player_state.player`'a (gerçek cüzdana) ödenir, çağırana değil.
     ///
     /// Neden commit'ten `reveal_delay_slots` sonraki bir slot'un hash'i
     /// kullanılıyor: `play()` anında bu slot henüz gerçekleşmediği için
@@ -345,6 +441,10 @@ pub mod luck_game {
                 .wins_count
                 .checked_add(1)
                 .ok_or(GameError::MathOverflow)?;
+            player_state.total_won_lamports = player_state
+                .total_won_lamports
+                .checked_add(prize_paid)
+                .ok_or(GameError::MathOverflow)?;
         }
 
         player_state.pending = false;
@@ -367,9 +467,9 @@ pub mod luck_game {
     /// bu da oyuncunun `pending = true` durumunda sıkışıp bir daha
     /// oynayamamasına yol açardı. Bu fonksiyon SADECE oyuncunun kendisi
     /// tarafından, pencere gerçekten kapandıktan SONRA çağrılabilir; o
-    /// denemeyi kaybedilmiş sayıp (ücret iadesi yok — normal bir kayıp gibi
-    /// muamele) `pending`'i temizler ve oyuncunun tekrar oynamasına izin
-    /// verir.
+    /// denemeyi kaybedilmiş sayıp (harcanan spin kredisi iade edilmez —
+    /// normal bir kayıp gibi muamele) `pending`'i temizler ve oyuncunun
+    /// tekrar oynamasına izin verir.
     pub fn forfeit_stuck_play(ctx: Context<ForfeitStuckPlay>) -> Result<()> {
         let player_state = &mut ctx.accounts.player_state;
         require!(player_state.pending, GameError::NoPendingPlay);
@@ -389,6 +489,20 @@ pub mod luck_game {
 
         Ok(())
     }
+}
+
+/// Bir PlayerState PDA'sının ilk kez dokunulduğu anda `player` alanını
+/// yazar; sonraki her çağrıda o alanın gerçekten aynı sahibe ait olduğunu
+/// doğrular. `play()`, `buy_spins()` ve `register_delegate()` arasından
+/// hangisi PDA'ya önce dokunursa dokunsun aynı davranışı garantiler.
+fn ensure_owner(player_state: &mut PlayerState, owner: Pubkey) -> Result<()> {
+    if !player_state.initialized {
+        player_state.player = owner;
+        player_state.initialized = true;
+    } else {
+        require_keys_eq!(player_state.player, owner, GameError::PlayerMismatch);
+    }
+    Ok(())
 }
 
 /// SlotHashes sysvar'ının ham hesap verisini elle çözümler. Bu sysvar
@@ -426,7 +540,6 @@ fn find_slot_hash(sysvar_data: &[u8], target_slot: u64) -> Option<[u8; 32]> {
 pub struct GameConfig {
     pub authority: Pubkey,
     pub treasury: Pubkey,
-    pub entry_fee_lamports: u64,
     pub free_plays: u8,
     pub small_prize_lamports: u64,
     pub big_prize_lamports: u64,
@@ -438,13 +551,19 @@ pub struct GameConfig {
     pub easy_win_bps: u16,
     pub treasury_fee_bps: u16,
     pub reveal_delay_slots: u64,
+    // Spin paketi tarifesi: spin_tier_counts[i] adet spin, spin_tier_prices[i]
+    // lamport karşılığında satın alınır (bkz. buy_spins). Örn. varsayılan:
+    // 1/0.1 SOL, 5/0.3, 10/0.5, 20/0.8, 50/1.5, 100/2.5.
+    pub spin_tier_counts: [u16; SPIN_TIERS],
+    pub spin_tier_prices: [u64; SPIN_TIERS],
     pub vault_bump: u8,
     pub bump: u8,
 }
 
 impl GameConfig {
-    // 8 (disc) + 32*2 (pubkeys) + 8 + 1 + 8 + 8 + 2 + 8 + 2*3 + 8 + 1 + 1
-    pub const LEN: usize = 8 + 32 * 2 + 8 + 1 + 8 + 8 + 2 + 8 + 2 * 3 + 8 + 1 + 1;
+    // 8 (disc) + 32*2 (pubkeys) + 1 + 8 + 8 + 2 + 8 + 2*3 + 8 + (2*6) + (8*6) + 1 + 1
+    pub const LEN: usize =
+        8 + 32 * 2 + 1 + 8 + 8 + 2 + 8 + 2 * 3 + 8 + (2 * SPIN_TIERS) + (8 * SPIN_TIERS) + 1 + 1;
 }
 
 #[account]
@@ -455,11 +574,24 @@ pub struct PlayerState {
     pub pending: bool,
     pub commit_slot: u64,
     pub bump: u8,
+    // `player` alanı yazıldı mı (play/buy_spins/register_delegate'tan hangisi
+    // önce dokunursa).
+    pub initialized: bool,
+    // Ücretsiz haklar spins_remaining'e yüklendi mi (ilk play() çağrısında).
+    pub spins_seeded: bool,
+    pub spins_remaining: u32,
+    // Tarayıcıda saklanan, bu oyuncunun spin kredisini onun adına harcamaya
+    // yetkili yerel anahtar (bkz. register_delegate). Kayıtlı değilse
+    // Pubkey::default().
+    pub delegate: Pubkey,
+    pub total_won_lamports: u64,
+    // Ücretsiz haklar bitince verilen tek seferlik +1 bonus spin kullanıldı mı.
+    pub bonus_granted: bool,
 }
 
 impl PlayerState {
-    // 8 (disc) + 32 + 4 + 4 + 1 + 8 + 1
-    pub const LEN: usize = 8 + 32 + 4 + 4 + 1 + 8 + 1;
+    // 8 (disc) + 32 + 4 + 4 + 1 + 8 + 1 + 1 + 1 + 4 + 32 + 8 + 1
+    pub const LEN: usize = 8 + 32 + 4 + 4 + 1 + 8 + 1 + 1 + 1 + 4 + 32 + 8 + 1;
 }
 
 #[derive(Accounts)]
@@ -497,7 +629,7 @@ pub struct UpdateConfig<'info> {
 }
 
 #[derive(Accounts)]
-pub struct Play<'info> {
+pub struct BuySpins<'info> {
     #[account(mut)]
     pub player: Signer<'info>,
 
@@ -526,6 +658,56 @@ pub struct Play<'info> {
     /// payının gönderildiği adres.
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RegisterDelegate<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+
+    #[account(
+        init_if_needed,
+        payer = player,
+        space = PlayerState::LEN,
+        seeds = [PLAYER_SEED, player.key().as_ref()],
+        bump,
+    )]
+    pub player_state: Account<'info, PlayerState>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Play<'info> {
+    /// Gerçek oyuncunun adresi — PlayerState PDA'sı bu adresten türetilir.
+    /// İmzalamak ZORUNDA değil; aşağıdaki `authority` (kendisi ya da
+    /// kayıtlı delegesi) imzalar. Gerçek kimlik eşleşmesi gövdede
+    /// (`ensure_owner`) ve `player_state.delegate` karşılaştırmasıyla
+    /// sağlanıyor.
+    /// CHECK: yalnızca PDA türetmek için kullanılan bir adres.
+    pub owner: UncheckedAccount<'info>,
+
+    /// Bu işlemi gerçekten imzalayan taraf — oyuncunun kendisi ya da
+    /// `register_delegate()` ile kaydedilmiş yerel delegesi olabilir
+    /// (gövdede doğrulanıyor). PlayerState ilk kez bu çağrıda
+    /// oluşturuluyorsa (daha önce hiç buy_spins/register_delegate
+    /// çağrılmadıysa) rent bedelini de bu hesap öder.
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, GameConfig>,
+
+    #[account(
+        init_if_needed,
+        payer = authority,
+        space = PlayerState::LEN,
+        seeds = [PLAYER_SEED, owner.key().as_ref()],
+        bump,
+    )]
+    pub player_state: Account<'info, PlayerState>,
 
     pub system_program: Program<'info, System>,
 }
@@ -583,10 +765,20 @@ pub struct ForfeitStuckPlay<'info> {
 }
 
 #[event]
+pub struct SpinsPurchased {
+    pub player: Pubkey,
+    pub tier_index: u8,
+    pub spin_count: u32,
+    pub price_lamports: u64,
+    pub spins_remaining: u32,
+}
+
+#[event]
 pub struct PlayCommitted {
     pub player: Pubkey,
     pub plays_count: u32,
-    pub is_paid: bool,
+    pub spins_remaining: u32,
+    pub bonus_granted: bool,
     pub commit_slot: u64,
 }
 
@@ -611,6 +803,10 @@ pub enum GameError {
     NoPendingPlay,
     #[msg("player hesabı bu player_state'in sahibiyle eşleşmiyor.")]
     PlayerMismatch,
+    #[msg("Bu işlemi imzalayan ne oyuncunun kendisi ne de kayıtlı delegesi.")]
+    UnauthorizedSigner,
+    #[msg("Kalan spin kredisi yok — önce buy_spins() ile paket satın alın.")]
+    NoSpinsRemaining,
     #[msg("Henüz resolve edilemez — hedef slot'a ulaşılmadı.")]
     TooEarlyToResolve,
     #[msg("Resolve penceresi kapandı, bkz. forfeit_stuck_play.")]
