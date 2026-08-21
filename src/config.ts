@@ -195,17 +195,16 @@ export const GAME_CONFIG = {
   maxResolveWindowSlots: 300,
   // Ücret payının gönderildiği hazine cüzdanı.
   treasuryWallet: '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
-  // Yeni bir cüzdan ilk kez "oyun cüzdanını" (delegate) etkinleştirirken ona
-  // gönderilen tek seferlik gaz tamponu. Bu bir ÜCRET DEĞİL — oyuncunun
-  // kendi cüzdanından kendi yerel delegate anahtarına yapılan bir transfer,
-  // tamamen kendisinde kalır. PlayerState hesabının rent'i zaten
-  // register_delegate() içinde GERÇEK cüzdan tarafından ödeniyor (bkz.
-  // program/luck-game/src/lib.rs RegisterDelegate::player payer alanı) —
-  // delegate'in tek ihtiyacı sonraki play()/resolve() işlemlerinin ağ
-  // ücreti (~0.000005 SOL/işlem). 0.001 SOL, ücretsiz deneme + çok sayıda
-  // spin için (~100 tur) fazlasıyla yeter; bittiğinde topUpDelegateGas ile
-  // küçük bir ek transferle (yine tek onay) doldurulabilir.
-  delegateFundSol: 0.001,
+  // "Oyun cüzdanı" (delegate) artık GERÇEKTEN ücretsiz etkinleştiriliyor:
+  // gaz bakiyesi oyuncudan değil, ilk register_delegate() çağrısında
+  // zincirin kendisi tarafından kasadan (vault) sponsor ediliyor (bkz.
+  // program/luck-game/src/lib.rs DELEGATE_GAS_SPONSOR_LAMPORTS), her
+  // buy_spins() çağrısında da sessizce tazeleniyor
+  // (DELEGATE_GAS_TOPUP_LAMPORTS). Aşağıdaki değer SADECE nadir bir yedek
+  // için: eğer delegate hiç satın alım yapılmadan çok uzun süre oynanıp
+  // gazı biterse, oyuncunun kendi cüzdanından elle doldurabileceği miktar
+  // (bkz. handleTopUpDelegate / topUpDelegateGas).
+  delegateTopUpSol: 0.001,
   // Delegate bakiyesi bunun altına düşünce "gaz doldur" uyarısı gösterilir.
   delegateLowBalanceSol: 0.0002,
 }

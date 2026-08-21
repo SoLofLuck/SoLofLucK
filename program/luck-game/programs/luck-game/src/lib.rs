@@ -28,6 +28,19 @@ const MAX_RESOLVE_WINDOW_SLOTS: u64 = 300;
 // birimle ifade ediliyor — ör. 200 bps = %2.
 const BPS_DENOMINATOR: u32 = 10_000;
 
+// Oyuncunun yerel delege anahtarının play()/resolve() işlem ücretlerini
+// ödeyebilmesi için gereken küçük SOL bakiyesi — OYUNCUDAN değil, KASADAN
+// (vault) karşılanır: ücretsiz deneme gerçekten ücretsiz olsun diye, ilk
+// register_delegate() çağrısında (yeni oyuncu) bir kereliğine kasa
+// sponsorluğu yapılır. Kasa zaten her satın alımın %80'ini topladığından
+// bu, oynanan oyunların doğal bir müşteri kazanma maliyeti sayılabilir.
+const DELEGATE_GAS_SPONSOR_LAMPORTS: u64 = 200_000; // ~0.0002 SOL, ~20 tur
+// Her buy_spins() çağrısında, eğer arayan kendi kayıtlı delegesini
+// hesap listesinde verdiyse, kasadan delegeye eklenen küçük bir ek gaz
+// payı — oyuncu zaten imzaladığı ödeme işleminin İÇİNDE, ayrı bir "gazı
+// doldur" onayına gerek kalmadan gaz bakiyesi tazelenmiş olur.
+const DELEGATE_GAS_TOPUP_LAMPORTS: u64 = 50_000; // ~0.00005 SOL
+
 #[program]
 pub mod luck_game {
     use super::*;
@@ -216,6 +229,7 @@ pub mod luck_game {
             .checked_add(spin_count)
             .ok_or(GameError::MathOverflow)?;
         player_state.bump = ctx.bumps.player_state;
+        let registered_delegate = player_state.delegate;
 
         emit!(SpinsPurchased {
             player: owner,
@@ -224,6 +238,35 @@ pub mod luck_game {
             price_lamports: price,
             spins_remaining: player_state.spins_remaining,
         });
+
+        // Arayan, kendi kayıtlı delegesini `delegate` hesabı olarak verdiyse
+        // (client her zaman verir), kasadan delegeye küçük bir gaz payı
+        // daha ekliyoruz — böylece uzun süre oynayan bir oyuncunun gaz
+        // bakiyesi, zaten yaptığı ödemelerin İÇİNDE sessizce tazelenir,
+        // ayrı bir "doldur" onayı istemeye gerek kalmaz. Kasa yeterli
+        // bakiyeye sahip değilse (aşırı uç durum) sessizce atlanır — bir
+        // gaz tamponu eksikliği yüzünden asıl satın alma başarısız olmamalı.
+        if registered_delegate != Pubkey::default() && registered_delegate == ctx.accounts.delegate.key() {
+            let rent_exempt = Rent::get()?.minimum_balance(0);
+            let vault_balance = ctx.accounts.vault.lamports().saturating_sub(rent_exempt);
+            let topup = DELEGATE_GAS_TOPUP_LAMPORTS.min(vault_balance);
+            if topup > 0 {
+                let config_key = ctx.accounts.config.key();
+                let vault_bump = ctx.accounts.config.vault_bump;
+                let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
+                system_program::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.system_program.to_account_info(),
+                        SolTransfer {
+                            from: ctx.accounts.vault.to_account_info(),
+                            to: ctx.accounts.delegate.to_account_info(),
+                        },
+                        &[signer_seeds],
+                    ),
+                    topup,
+                )?;
+            }
+        }
 
         Ok(())
     }
@@ -235,12 +278,55 @@ pub mod luck_game {
     /// Delege sadece bu oyuncunun ÖNCEDEN SATIN ALDIĞI spin kredisini
     /// harcayabilir; kazanç her zaman `player_state.player`'a (gerçek
     /// cüzdana) gider, delegenin kendisine asla gitmez.
-    pub fn register_delegate(ctx: Context<RegisterDelegate>, delegate: Pubkey) -> Result<()> {
+    ///
+    /// Delegenin play()/resolve() işlem ücretlerini ödeyebilmesi için
+    /// gereken küçük gaz bakiyesi, OYUNCUDAN DEĞİL, bu ilk kayıtta bir
+    /// kereliğine KASADAN (vault) sponsor edilir — ücretsiz deneme
+    /// gerçekten ücretsiz kalsın diye (bkz. DELEGATE_GAS_SPONSOR_LAMPORTS).
+    pub fn register_delegate(ctx: Context<RegisterDelegate>) -> Result<()> {
         let owner = ctx.accounts.player.key();
+        // `ensure_owner`'dan (aşağıda) ÖNCE okunuyor: bu, player_state'e
+        // gerçekten hiç dokunulmamış mı (ilk kez play/buy_spins/
+        // register_delegate) sorusunun cevabı — kasa sponsorluğunun tek
+        // seferlik olmasını garanti eden bayrak bu.
+        let is_first_touch = !ctx.accounts.player_state.initialized;
+        let delegate_key = ctx.accounts.delegate.key();
+
         let player_state = &mut ctx.accounts.player_state;
         ensure_owner(player_state, owner)?;
-        player_state.delegate = delegate;
+        player_state.delegate = delegate_key;
         player_state.bump = ctx.bumps.player_state;
+
+        // Yeni bir oyuncu (player_state'e hiç dokunulmamışken) delege
+        // anahtarını kaydettiğinde, kasadan (vault) bir kereliğine küçük
+        // bir gaz sponsorluğu yapılır — ücretsiz deneme GERÇEKTEN ücretsiz
+        // olsun diye oyuncudan ayrı bir SOL transferi istenmiyor.
+        // `is_first_touch` yukarıda `ensure_owner`'dan ÖNCE hesaplandığı
+        // için, aynı oyuncu register_delegate()'i tekrar tekrar çağırarak
+        // (ör. yeni bir yerel delege anahtarına geçerken) kasadan tekrar
+        // tekrar sponsorluk çekemez — yalnızca gerçekten ilk temasta verilir.
+        if is_first_touch {
+            let rent_exempt = Rent::get()?.minimum_balance(0);
+            let vault_balance = ctx.accounts.vault.lamports().saturating_sub(rent_exempt);
+            let sponsor = DELEGATE_GAS_SPONSOR_LAMPORTS.min(vault_balance);
+            if sponsor > 0 {
+                let config_key = ctx.accounts.config.key();
+                let vault_bump = ctx.accounts.config.vault_bump;
+                let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
+                system_program::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.system_program.to_account_info(),
+                        SolTransfer {
+                            from: ctx.accounts.vault.to_account_info(),
+                            to: ctx.accounts.delegate.to_account_info(),
+                        },
+                        &[signer_seeds],
+                    ),
+                    sponsor,
+                )?;
+            }
+        }
+
         Ok(())
     }
 
@@ -672,6 +758,15 @@ pub struct BuySpins<'info> {
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
 
+    /// Arayanın kayıtlı delegesi (varsa) — sadece gaz tamponunu tazelemek
+    /// için gövdede `player_state.delegate` ile karşılaştırılıyor, kayıtlı
+    /// delege yoksa/eşleşmiyorsa top-up sessizce atlanır. Client, oyuncunun
+    /// yerel delege anahtarını her zaman buraya geçirir.
+    /// CHECK: kimliği gövdede karşılaştırılıyor, olası bir uyuşmazlıkta
+    /// sadece top-up atlanır, işlem başarısız olmaz.
+    #[account(mut)]
+    pub delegate: UncheckedAccount<'info>,
+
     pub system_program: Program<'info, System>,
 }
 
@@ -679,6 +774,9 @@ pub struct BuySpins<'info> {
 pub struct RegisterDelegate<'info> {
     #[account(mut)]
     pub player: Signer<'info>,
+
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, GameConfig>,
 
     #[account(
         init_if_needed,
@@ -688,6 +786,23 @@ pub struct RegisterDelegate<'info> {
         bump,
     )]
     pub player_state: Account<'info, PlayerState>,
+
+    /// CHECK: Sadece SOL tutan, veri içermeyen bir PDA — ilk kasa
+    /// sponsorluğunun (ücretsiz denemenin gerçekten ücretsiz olması için)
+    /// kaynağı.
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, config.key().as_ref()],
+        bump = config.vault_bump,
+    )]
+    pub vault: UncheckedAccount<'info>,
+
+    /// Yetkilendirilecek yerel delege anahtarı — ilk kayıtta kasa
+    /// sponsorluğunun hedefi.
+    /// CHECK: sadece SOL transferinin hedefi, program tarafından ayrıca
+    /// doğrulanmıyor (oyuncunun kendi seçimi, kendi imzasıyla).
+    #[account(mut)]
+    pub delegate: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
 }

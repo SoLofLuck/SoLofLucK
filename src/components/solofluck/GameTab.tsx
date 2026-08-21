@@ -15,15 +15,19 @@ import {
   getConfigPda,
   isLuckGameConfigured,
   lamportsToSol,
+  loadFreeSpinsState,
   maskWalletForLeaderboard,
   parsePlayCommittedFromTx,
   parsePlayResolvedFromTx,
   parseSpinsPurchasedFromTx,
+  playFreeSpin,
   playGame,
   registerAndFundDelegate,
   resolveGame,
+  saveFreeSpinsState,
   solToLamports,
   topUpDelegateGas,
+  type FreeSpinsState,
   type LeaderboardEntry,
   type OnChainGameConfig,
   type OnChainPlayerState,
@@ -93,6 +97,9 @@ export function GameTab() {
   // yerel bir cüzdanla oyunu tamamlayıp oyun mantığının kendisinin
   // çalıştığını doğrulamayı sağlar. Bu modda ayrıca oyuncu == imzalayıcı
   // olduğundan delegate kaydına hiç gerek yok.
+  // Ücretsiz spinler: blockchain yok, tamamen istemci tarafında, localStorage'da tutulur
+  const [freeSpinsState, setFreeSpinsState] = useState<FreeSpinsState>(() => loadFreeSpinsState())
+
   const [testKeypair] = useState(() => loadOrCreateTestWallet())
   const [testWalletOn, setTestWalletOn] = useState(false)
   const [testBalance, setTestBalance] = useState<number | null>(null)
@@ -212,30 +219,16 @@ export function GameTab() {
     setStatus('')
   }
 
-  async function handleActivateDelegate() {
-    if (!realWalletSigner) return
-    setError('')
-    setBusy('activate')
-    try {
-      const fundLamports = Number(solToLamports(GAME_CONFIG.delegateFundSol))
-      await registerAndFundDelegate(connection, realWalletSigner, delegateKeypair.publicKey, fundLamports, setStatus)
-      setStatus('Oyun cüzdanı etkinleştirildi — artık spinler onaysız, anında oynanacak.')
-      await refresh()
-    } catch (err) {
-      console.error(err)
-      setError(friendlyErrorMessage(err))
-      setStatus('')
-    } finally {
-      setBusy(null)
-    }
-  }
-
+  // Delegenin gaz bakiyesi normalde satın alımlarla (bkz. handleBuySpins/
+  // handleConvert) kasadan otomatik tazeleniyor — bu, oyuncunun kendi
+  // cüzdanından yaptığı gerçek bir transfer gerektiren, yalnızca çok uzun
+  // süre hiç satın alım yapmadan oynanmışsa gerekebilecek nadir bir yedek.
   async function handleTopUpDelegate() {
     if (!realWalletSigner) return
     setError('')
     setBusy('topup')
     try {
-      const lamports = Number(solToLamports(GAME_CONFIG.delegateFundSol))
+      const lamports = Number(solToLamports(GAME_CONFIG.delegateTopUpSol))
       await topUpDelegateGas(connection, realWalletSigner, delegateKeypair.publicKey, lamports, setStatus)
       setStatus('Oyun cüzdanı bakiyesi dolduruldu.')
       await refresh()
@@ -249,19 +242,37 @@ export function GameTab() {
   }
 
   async function handlePlay() {
-    if (!spinAuthoritySigner || !activeOwnerPublicKey) return
     setError('')
     setLastResult(null)
     setBonusNotice(false)
     setBusy('play')
     try {
-      const sig = await playGame(connection, activeOwnerPublicKey, spinAuthoritySigner, setStatus, {
-        confirmMessage: null,
-      })
-      const committed = await parsePlayCommittedFromTx(connection, sig)
-      if (committed?.bonusGranted) setBonusNotice(true)
-      setStatus('Oyun başladı — sonuç birkaç saniye içinde açığa çıkacak.')
-      await refresh()
+      // Ücretsiz spinler mevcut mu?
+      if (freeSpinsState.spinsRemaining > 0) {
+        // Blockchain yok, tamamen istemci tarafında
+        const { newState } = playFreeSpin(freeSpinsState)
+        setFreeSpinsState(newState)
+        saveFreeSpinsState(newState)
+
+        // Bonus spin verildi mi?
+        if (newState.bonusGranted && newState.spinsRemaining > 0 && newState.playsCount === GAME_CONFIG.freePlays + 1) {
+          setBonusNotice(true)
+        }
+
+        setStatus('Ücretsiz oyun oynandı — ekranda slot döndü!')
+        setLastResult({ won: false, prizePaidLamports: BigInt(0), isBigWin: false, easyMode: false })
+        await refresh()
+      } else {
+        // Satın alınan spinler için blockchain oyunu
+        if (!spinAuthoritySigner || !activeOwnerPublicKey) return
+        const sig = await playGame(connection, activeOwnerPublicKey, spinAuthoritySigner, setStatus, {
+          confirmMessage: null,
+        })
+        const committed = await parsePlayCommittedFromTx(connection, sig)
+        if (committed?.bonusGranted) setBonusNotice(true)
+        setStatus('Oyun başladı — sonuç birkaç saniye içinde açığa çıkacak.')
+        await refresh()
+      }
     } catch (err) {
       console.error(err)
       setError(friendlyErrorMessage(err))
@@ -317,7 +328,22 @@ export function GameTab() {
     setPurchaseNotice('')
     setBusy(`buy-${tierIndex}`)
     try {
-      const sig = await buySpins(connection, paymentSigner, tierIndex, gameConfig.treasury, setStatus)
+      // Delegate henüz register değilse (ilk satın alma), önce register et
+      const needsDelegate = !playerState || !playerState.delegate.equals(delegateKeypair.publicKey)
+      if (needsDelegate) {
+        setStatus('Oyun cüzdanı kuruluyor (1/2)...')
+        await registerAndFundDelegate(connection, paymentSigner, delegateKeypair.publicKey, setStatus)
+        setStatus('Spinler satın alınıyor (2/2)...')
+      }
+
+      const sig = await buySpins(
+        connection,
+        paymentSigner,
+        tierIndex,
+        gameConfig.treasury,
+        delegateKeypair.publicKey,
+        setStatus,
+      )
       const purchased = await parseSpinsPurchasedFromTx(connection, sig)
       setPurchaseNotice(purchased ? `+${purchased.spinCount} spin eklendi!` : 'Paket satın alındı.')
       setStatus('')
@@ -357,6 +383,7 @@ export function GameTab() {
         budget,
         effectiveSpinTiers,
         gameConfig.treasury,
+        delegateKeypair.publicKey,
         setStatus,
       )
       const totalSpins = result.purchases.reduce(
@@ -479,27 +506,6 @@ export function GameTab() {
                 </button>
               </div>
               {testFundError && <div className="alert alert--warning">{testFundError}</div>}
-            </div>
-          )}
-
-          {needsDelegateSetup && (
-            <div className="alert alert--info luck-game__delegate-setup">
-              🔑 Spinlerin sırasında her seferinde cüzdan onayı istememesi için, bir kereliğine küçük bir
-              "oyun cüzdanı" etkinleştirmemiz gerekiyor. Bu ÜCRETSİZ bir işlem — sana bir bedel çıkmıyor,
-              sadece cüzdanından, yine sana ait yerel bir anahtara {GAME_CONFIG.delegateFundSol} SOL'luk
-              (~kuruşun altında) minik bir ağ işlem ücreti tamponu aktarılıyor, o kadar. Bu adımdan sonra
-              ücretsiz denemeler ve satın aldığın spinler anında, onaysız oynanır — cüzdanın yalnızca
-              gerçek bir ödeme yaparken devreye girer.
-              <div>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={handleActivateDelegate}
-                  disabled={busy !== null || !realWalletSigner}
-                >
-                  {busy === 'activate' ? 'Etkinleştiriliyor...' : '🔑 Oyun Cüzdanını Etkinleştir (1 kerelik onay)'}
-                </button>
-              </div>
             </div>
           )}
 
