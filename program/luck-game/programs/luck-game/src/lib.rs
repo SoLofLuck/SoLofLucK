@@ -272,7 +272,16 @@ pub mod luck_game {
 
         let config = &ctx.accounts.config;
         if !player_state.spins_seeded {
-            player_state.spins_remaining = config.free_plays as u32;
+            // Toplama (ADD) — üzerine YAZMA: oyuncu ilk hiç oynamadan önce
+            // paket satın almış olabilir (buy_spins zaten spins_remaining'i
+            // artırır), bu durumda ücretsiz hakları o bakiyenin ÜZERİNE
+            // eklemek gerekir, üzerine yazıp satın alınan spinleri
+            // silmemek gerekir. `spins_seeded` bayrağı bu eklemenin yalnızca
+            // bir kez olmasını garanti eder.
+            player_state.spins_remaining = player_state
+                .spins_remaining
+                .checked_add(config.free_plays as u32)
+                .ok_or(GameError::MathOverflow)?;
             player_state.spins_seeded = true;
         }
         require!(player_state.spins_remaining > 0, GameError::NoSpinsRemaining);
