@@ -35,7 +35,9 @@ pub mod luck_game {
         ctx: Context<Initialize>,
         entry_fee_lamports: u64,
         free_plays: u8,
-        prize_lamports: u64,
+        small_prize_lamports: u64,
+        big_prize_lamports: u64,
+        big_prize_bps: u16,
         vault_easy_threshold_lamports: u64,
         normal_win_bps: u16,
         easy_win_bps: u16,
@@ -43,22 +45,26 @@ pub mod luck_game {
         reveal_delay_slots: u64,
     ) -> Result<()> {
         require!(entry_fee_lamports > 0, GameError::InvalidParam);
-        require!(prize_lamports > 0, GameError::InvalidParam);
+        require!(small_prize_lamports > 0, GameError::InvalidParam);
+        // Büyük ödül küçük ödülden az olamaz — "büyük" adının bir anlamı
+        // kalmalı (eşit olması, yani tek katmanlı davranış, buna izin verilir).
+        require!(big_prize_lamports >= small_prize_lamports, GameError::InvalidParam);
         require!(reveal_delay_slots > 0, GameError::InvalidParam);
         require!(
             (normal_win_bps as u32) <= BPS_DENOMINATOR
                 && (easy_win_bps as u32) <= BPS_DENOMINATOR
-                && (treasury_fee_bps as u32) <= BPS_DENOMINATOR,
+                && (treasury_fee_bps as u32) <= BPS_DENOMINATOR
+                && (big_prize_bps as u32) <= BPS_DENOMINATOR,
             GameError::InvalidParam
         );
         // "Kolay mod" normal moddan daha kolay olmalı, yoksa eşiğin hiç
         // anlamı kalmaz.
         require!(easy_win_bps >= normal_win_bps, GameError::InvalidParam);
-        // Kasa eşiği, ödülü ödeyebilecek kadar büyük olmalı — aksi halde
-        // "kolay mod" tetiklenip de kasada ödül için para olmayan bir durum
-        // tasarım hatası olurdu.
+        // Kasa eşiği, en büyük olası ödülü (jackpot) ödeyebilecek kadar
+        // büyük olmalı — aksi halde "kolay mod" tetiklenip de kasada ödül
+        // için para olmayan bir durum tasarım hatası olurdu.
         require!(
-            vault_easy_threshold_lamports >= prize_lamports,
+            vault_easy_threshold_lamports >= big_prize_lamports,
             GameError::InvalidParam
         );
 
@@ -76,7 +82,9 @@ pub mod luck_game {
         config.treasury = ctx.accounts.treasury.key();
         config.entry_fee_lamports = entry_fee_lamports;
         config.free_plays = free_plays;
-        config.prize_lamports = prize_lamports;
+        config.small_prize_lamports = small_prize_lamports;
+        config.big_prize_lamports = big_prize_lamports;
+        config.big_prize_bps = big_prize_bps;
         config.vault_easy_threshold_lamports = vault_easy_threshold_lamports;
         config.normal_win_bps = normal_win_bps;
         config.easy_win_bps = easy_win_bps;
@@ -99,30 +107,36 @@ pub mod luck_game {
         ctx: Context<UpdateConfig>,
         entry_fee_lamports: u64,
         free_plays: u8,
-        prize_lamports: u64,
+        small_prize_lamports: u64,
+        big_prize_lamports: u64,
+        big_prize_bps: u16,
         vault_easy_threshold_lamports: u64,
         normal_win_bps: u16,
         easy_win_bps: u16,
         treasury_fee_bps: u16,
     ) -> Result<()> {
         require!(entry_fee_lamports > 0, GameError::InvalidParam);
-        require!(prize_lamports > 0, GameError::InvalidParam);
+        require!(small_prize_lamports > 0, GameError::InvalidParam);
+        require!(big_prize_lamports >= small_prize_lamports, GameError::InvalidParam);
         require!(
             (normal_win_bps as u32) <= BPS_DENOMINATOR
                 && (easy_win_bps as u32) <= BPS_DENOMINATOR
-                && (treasury_fee_bps as u32) <= BPS_DENOMINATOR,
+                && (treasury_fee_bps as u32) <= BPS_DENOMINATOR
+                && (big_prize_bps as u32) <= BPS_DENOMINATOR,
             GameError::InvalidParam
         );
         require!(easy_win_bps >= normal_win_bps, GameError::InvalidParam);
         require!(
-            vault_easy_threshold_lamports >= prize_lamports,
+            vault_easy_threshold_lamports >= big_prize_lamports,
             GameError::InvalidParam
         );
 
         let config = &mut ctx.accounts.config;
         config.entry_fee_lamports = entry_fee_lamports;
         config.free_plays = free_plays;
-        config.prize_lamports = prize_lamports;
+        config.small_prize_lamports = small_prize_lamports;
+        config.big_prize_lamports = big_prize_lamports;
+        config.big_prize_bps = big_prize_bps;
         config.vault_easy_threshold_lamports = vault_easy_threshold_lamports;
         config.normal_win_bps = normal_win_bps;
         config.easy_win_bps = easy_win_bps;
@@ -268,6 +282,11 @@ pub mod luck_game {
         preimage.extend_from_slice(&player_state.plays_count.to_le_bytes());
         let digest = anchor_lang::solana_program::hash::hash(&preimage).to_bytes();
         let roll = (u16::from_le_bytes([digest[0], digest[1]]) as u32) % BPS_DENOMINATOR;
+        // İkinci, bağımsız bir zar: SADECE kazanıldığında hangi ödül
+        // katmanının (küçük/büyük) ödeneceğine karar verir. Aynı digest'in
+        // farklı baytlarını kullanmak (0-1 win/lose için, 2-3 burada) ayrı
+        // bir hash hesaplamaya gerek bırakmıyor.
+        let tier_roll = (u16::from_le_bytes([digest[2], digest[3]]) as u32) % BPS_DENOMINATOR;
 
         let rent_exempt = Rent::get()?.minimum_balance(0);
         let vault_balance = ctx
@@ -282,19 +301,29 @@ pub mod luck_game {
             config.normal_win_bps
         };
         // `normal_win_bps` sıfırdan büyük ayarlanırsa (yani "zor modda" da
-        // küçük bir kazanma ihtimali varsa), kasa henüz `prize_lamports`
+        // küçük bir kazanma ihtimali varsa), kasa henüz `big_prize_lamports`
         // kadar dolmamışken bile nadiren kazanma şartı tutabilir. Bu durumda
         // ödemeyi REDDEDİP TÜM İŞLEMİ GERİ ALMAK yerine (ki bu, oyuncuyu
         // kalıcı olarak `pending = true` durumunda, forfeit_stuck_play
         // penceresi açılana kadar sıkıştırırdı) sessizce kayıp say —
         // oyuncu parasını kaybeder ama en azından tekrar oynayabilir.
-        // `vault_easy_threshold_lamports >= prize_lamports` zaten
+        // Kasanın en büyük olası ödülü (jackpot) karşılayabildiğini burada
+        // kontrol ediyoruz ki hangi katman tutarsa tutsun ödeme garantili
+        // olsun; `vault_easy_threshold_lamports >= big_prize_lamports` zaten
         // initialize/update_config'te zorunlu kılındığı için "kolay modda"
         // bu dala hiç girilmemesi beklenir; bu tamamen savunma amaçlı.
-        let won = roll < win_bps as u32 && vault_balance >= config.prize_lamports;
+        let won = roll < win_bps as u32 && vault_balance >= config.big_prize_lamports;
 
         let mut prize_paid: u64 = 0;
+        let mut is_big_win = false;
         if won {
+            is_big_win = tier_roll < config.big_prize_bps as u32;
+            let prize_amount = if is_big_win {
+                config.big_prize_lamports
+            } else {
+                config.small_prize_lamports
+            };
+
             let config_key = ctx.accounts.config.key();
             let vault_bump = config.vault_bump;
             let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
@@ -308,10 +337,10 @@ pub mod luck_game {
                     },
                     &[signer_seeds],
                 ),
-                config.prize_lamports,
+                prize_amount,
             )?;
 
-            prize_paid = config.prize_lamports;
+            prize_paid = prize_amount;
             player_state.wins_count = player_state
                 .wins_count
                 .checked_add(1)
@@ -324,6 +353,7 @@ pub mod luck_game {
             player: ctx.accounts.player.key(),
             won,
             prize_paid,
+            is_big_win,
             easy_mode,
         });
 
@@ -398,7 +428,11 @@ pub struct GameConfig {
     pub treasury: Pubkey,
     pub entry_fee_lamports: u64,
     pub free_plays: u8,
-    pub prize_lamports: u64,
+    pub small_prize_lamports: u64,
+    pub big_prize_lamports: u64,
+    // Kazanılan bir oyunda büyük (jackpot) ödülün ödenme ihtimali (bps);
+    // geri kalanı küçük ödül olarak ödenir.
+    pub big_prize_bps: u16,
     pub vault_easy_threshold_lamports: u64,
     pub normal_win_bps: u16,
     pub easy_win_bps: u16,
@@ -409,8 +443,8 @@ pub struct GameConfig {
 }
 
 impl GameConfig {
-    // 8 (disc) + 32*2 (pubkeys) + 8 + 1 + 8 + 8 + 2*3 + 8 + 1 + 1
-    pub const LEN: usize = 8 + 32 * 2 + 8 + 1 + 8 + 8 + 2 * 3 + 8 + 1 + 1;
+    // 8 (disc) + 32*2 (pubkeys) + 8 + 1 + 8 + 8 + 2 + 8 + 2*3 + 8 + 1 + 1
+    pub const LEN: usize = 8 + 32 * 2 + 8 + 1 + 8 + 8 + 2 + 8 + 2 * 3 + 8 + 1 + 1;
 }
 
 #[account]
@@ -561,6 +595,7 @@ pub struct PlayResolved {
     pub player: Pubkey,
     pub won: bool,
     pub prize_paid: u64,
+    pub is_big_win: bool,
     pub easy_mode: bool,
 }
 

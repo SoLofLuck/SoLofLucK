@@ -2,6 +2,12 @@ name: luck-game — Devnet'e Derle ve Deploy Et
 
 on:
   workflow_dispatch:
+    inputs:
+      force_new_program_id:
+        description: 'true: önbellekteki eski program keypair'"'"'ini sil, YENİ bir Program ID üret (ör. GameConfig hesap boyutu değiştiğinde gerekir — ardından declare_id!()/Anchor.toml/site config.ts yeni ID ile güncellenip bu workflow tekrar false ile çalıştırılmalı ki asıl deploy o adrese doğru binary ile yapılsın)'
+        required: false
+        type: boolean
+        default: false
 
 # Bu iş akışı, program/luck-game (Anchor programı) için Rust/Solana/Anchor
 # araç zincirini GitHub'ın kendi runner'ında kurup Devnet'e deploy eder.
@@ -75,6 +81,20 @@ jobs:
 
       - name: Devnet'i yapılandır
         run: solana config set --url devnet --keypair ~/.config/solana/id.json
+
+      # GameConfig hesabının boyutu değiştiğinde (ör. küçük/büyük ödül
+      # alanları eklendiğinde), ÖNCEKİ deploy'un rust-cache'te önbelleklenmiş
+      # program keypair'ini (target/deploy/luck_game-keypair.json) tekrar
+      # kullanmak tehlikelidir: aynı Program ID'de zaten eski (küçük)
+      # boyutlu bir GameConfig hesabı var, yeni kod onu daha büyük struct
+      # olarak okumaya çalışınca deserialize hatası verir. Bu adım SADECE
+      # `force_new_program_id=true` ile elle tetiklendiğinde eski keypair'i
+      # silip yeni bir Program ID üretilmesini zorluyor — normal
+      # (upgrade) deploy'larda bu adım atlanır ki mevcut adres korunsun.
+      - name: Önbellekteki eski program keypair'ini temizle (yalnızca force_new_program_id=true ise)
+        if: inputs.force_new_program_id == true
+        working-directory: program/luck-game
+        run: rm -f target/deploy/luck_game-keypair.json
 
       - name: Devnet SOL airdrop (deploy ücreti için)
         # GitHub'ın paylaşımlı runner IP'leri devnet faucet'inde sık sık rate

@@ -5,7 +5,8 @@
 //   TREASURY_WALLET=...   (zorunlu — %20 ücret payının gideceği cüzdan)
 //   KEYPAIR_PATH=~/.config/solana/id.json  (varsayılan)
 //   RPC_URL=https://api.devnet.solana.com  (varsayılan)
-//   ENTRY_FEE_SOL=0.1  FREE_PLAYS=3  PRIZE_SOL=1  VAULT_THRESHOLD_SOL=2
+//   ENTRY_FEE_SOL=0.1  FREE_PLAYS=3
+//   SMALL_PRIZE_SOL=0.5  BIG_PRIZE_SOL=1  BIG_PRIZE_BPS=3000  VAULT_THRESHOLD_SOL=2
 //   NORMAL_WIN_BPS=50  EASY_WIN_BPS=1000  TREASURY_FEE_BPS=2000
 //   REVEAL_DELAY_SLOTS=5
 //
@@ -53,7 +54,9 @@ const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 const LAMPORTS_PER_SOL = 1_000_000_000
 const entryFeeLamports = BigInt(Math.round(envFloat('ENTRY_FEE_SOL', 0.1) * LAMPORTS_PER_SOL))
 const freePlays = envInt('FREE_PLAYS', 3)
-const prizeLamports = BigInt(Math.round(envFloat('PRIZE_SOL', 1) * LAMPORTS_PER_SOL))
+const smallPrizeLamports = BigInt(Math.round(envFloat('SMALL_PRIZE_SOL', 0.5) * LAMPORTS_PER_SOL))
+const bigPrizeLamports = BigInt(Math.round(envFloat('BIG_PRIZE_SOL', 1) * LAMPORTS_PER_SOL))
+const bigPrizeBps = envInt('BIG_PRIZE_BPS', 3000)
 const vaultThresholdLamports = BigInt(
   Math.round(envFloat('VAULT_THRESHOLD_SOL', 2) * LAMPORTS_PER_SOL),
 )
@@ -99,7 +102,9 @@ async function main() {
     anchorDiscriminator('initialize'),
     u64(entryFeeLamports),
     u8(freePlays),
-    u64(prizeLamports),
+    u64(smallPrizeLamports),
+    u64(bigPrizeLamports),
+    u16(bigPrizeBps),
     u64(vaultThresholdLamports),
     u16(normalWinBps),
     u16(easyWinBps),
