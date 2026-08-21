@@ -640,6 +640,12 @@ button {
   color: #fbbf24;
 }
 
+.alert--success {
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  color: #4ade80;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -677,6 +683,12 @@ button {
 
 .btn--block {
   width: 100%;
+}
+
+.btn--small {
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  border-radius: 8px;
 }
 
 /* Result card */
@@ -1971,4 +1983,164 @@ button {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.luck-game__delegate-setup {
+  line-height: 1.6;
+}
+
+.luck-game__delegate-setup div {
+  margin-top: 12px;
+}
+
+.luck-game__delegate-status {
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.luck-game__tariff {
+  margin-top: 24px;
+  margin-bottom: 24px;
+}
+
+.luck-game__tariff h3,
+.luck-game__leaderboard h3 {
+  font-size: 1rem;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+
+.luck-game__tariff-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.luck-game__tariff-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 14px 8px;
+  cursor: pointer;
+  color: var(--text);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.luck-game__tariff-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-b);
+}
+
+.luck-game__tariff-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.luck-game__tariff-card strong {
+  font-size: 0.95rem;
+}
+
+.luck-game__tariff-card span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.luck-game__tariff-card em {
+  font-style: normal;
+  font-size: 0.7rem;
+  color: var(--accent-b);
+}
+
+.luck-game__convert {
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.luck-game__convert label {
+  display: block;
+  font-weight: 700;
+  font-size: 0.88rem;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.luck-game__convert-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.luck-game__convert-row input {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.luck-game__convert-preview {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.luck-game__convert-hint {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.luck-game__leaderboard {
+  margin-top: 24px;
+}
+
+.luck-game__leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.luck-game__leaderboard-table th,
+.luck-game__leaderboard-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.luck-game__leaderboard-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.luck-game__leaderboard-table td:first-child {
+  color: var(--text-muted);
+  width: 32px;
+}
+
+.luck-game__leaderboard-table td:last-child {
+  font-weight: 700;
+  color: #4ade80;
 }

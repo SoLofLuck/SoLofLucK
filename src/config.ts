@@ -164,9 +164,20 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  programId: '6oxR8J5QhV2RvQzVB2kNKQ8XrZJt7AZF3eCnQXuGuydp', // Devnet'te deploy edildi ve initialize() çağrıldı (küçük/büyük ödül katmanıyla)
+  programId: '', // deploy-luck-game.yml (force_new_program_id=true) tamamlanınca yeni Program ID buraya girilecek
   freePlays: 3,
-  entryFeeSol: 0.1,
+  // Spin-kredisi tarifesi: 3 ücretsiz deneme bitince (+1 bonus spin
+  // hediye), her paket bir defada satın alınıp bakiyeye eklenir. Sırayla
+  // GameConfig.spin_tier_counts / spin_tier_prices ile birebir eşleşmeli
+  // (initialize.mjs'teki SPIN_TIER_COUNTS/SPIN_TIER_PRICES_SOL varsayılanları).
+  spinTiers: [
+    { count: 1, priceSol: 0.1 },
+    { count: 5, priceSol: 0.3 },
+    { count: 10, priceSol: 0.5 },
+    { count: 20, priceSol: 0.8 },
+    { count: 50, priceSol: 1.5 },
+    { count: 100, priceSol: 2.5 },
+  ],
   // İki katmanlı ödül: kazanan denemelerin %(bigPrizeBps/100)'i büyük
   // ödülü (jackpot), geri kalanı küçük ödülü kazanır — hangisi tutacağı
   // resolve() içinde ikinci, bağımsız bir zarla belirleniyor.
@@ -184,4 +195,10 @@ export const GAME_CONFIG = {
   maxResolveWindowSlots: 300,
   // Ücret payının gönderildiği hazine cüzdanı.
   treasuryWallet: '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
+  // Yeni bir cüzdan ilk kez "oyun cüzdanını" (delegate) etkinleştirirken
+  // ona gönderilen tek seferlik gaz tamponu — birkaç düzine play()/
+  // resolve() işlem ücretine yeter (~0.000005 SOL/işlem).
+  delegateFundSol: 0.02,
+  // Delegate bakiyesi bunun altına düşünce "gaz doldur" uyarısı gösterilir.
+  delegateLowBalanceSol: 0.004,
 }

@@ -1,25 +1,38 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { GAME_CONFIG } from '../../config'
 import { SlotMachine } from './SlotMachine'
 import {
+  buyBestFitSpins,
+  buySpins,
+  computeBestFitSpinPurchase,
   fetchGameConfig,
+  fetchLeaderboard,
   fetchPlayerState,
   fetchVaultBalanceLamports,
   forfeitStuckPlay,
   getConfigPda,
   isLuckGameConfigured,
   lamportsToSol,
+  maskWalletForLeaderboard,
+  parsePlayCommittedFromTx,
   parsePlayResolvedFromTx,
+  parseSpinsPurchasedFromTx,
   playGame,
+  registerAndFundDelegate,
   resolveGame,
+  solToLamports,
+  topUpDelegateGas,
+  type LeaderboardEntry,
   type OnChainGameConfig,
   type OnChainPlayerState,
   type PlayResolvedResult,
+  type SpinTier,
   type TxSigner,
 } from '../../lib/luckGame'
 import { ensureTestWalletFunded, loadOrCreateTestWallet, toTxSigner } from '../../lib/localTestWallet'
+import { delegateToTxSigner, loadOrCreateDelegate } from '../../lib/gameDelegate'
 
 // Test cüzdanının minimum devnet bakiyesi: ~birkaç işlem ücreti + PlayerState
 // hesabının ilk kayıt (rent) maliyeti için yeterli küçük bir tampon.
@@ -29,6 +42,9 @@ const TEST_WALLET_MIN_LAMPORTS = 50_000_000 // 0.05 SOL
 // uyguluyor — arka plan polling'i çok sık olursa gerçek bir işlem
 // gönderirken (Oyna/Sonucu Gör) 429'a takılma ihtimali artıyor.
 const POLL_MS = 8000
+// Liderlik tablosu getProgramAccounts kullanıyor (tüm PlayerState
+// hesaplarını tarar) — bu POLL_MS'den daha ağır, o yüzden daha seyrek.
+const LEADERBOARD_POLL_MS = 30_000
 // Solana'da ortalama slot süresi ~400-500ms — bu yalnızca kullanıcıya
 // kabaca bir bekleme süresi göstermek için, kesin bir taahhüt değil.
 const APPROX_SECONDS_PER_SLOT = 0.45
@@ -46,6 +62,9 @@ function friendlyErrorMessage(err: unknown): string {
   if (/429|rate limit/i.test(message)) {
     return 'RPC sunucusu şu an yoğun, birkaç saniye sonra tekrar dene.'
   }
+  if (/NoSpinsRemaining|0x1776|insufficient/i.test(message)) {
+    return 'Spin hakkın kalmadı — önce bir paket satın al.'
+  }
   return message || 'İşlem başarısız oldu.'
 }
 
@@ -59,29 +78,66 @@ export function GameTab() {
   const [playerState, setPlayerState] = useState<OnChainPlayerState | null>(null)
   const [currentSlot, setCurrentSlot] = useState<number | null>(null)
   const [initialized, setInitialized] = useState<boolean | null>(null)
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+  const [delegateBalance, setDelegateBalance] = useState<number | null>(null)
 
-  const [busy, setBusy] = useState<'play' | 'resolve' | 'forfeit' | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [lastResult, setLastResult] = useState<PlayResolvedResult | null>(null)
+  const [bonusNotice, setBonusNotice] = useState(false)
+  const [purchaseNotice, setPurchaseNotice] = useState('')
+  const [convertAmount, setConvertAmount] = useState('')
 
-  // Devnet-only hata ayıklama modu: Phantom'ın mobil onay/deep-link akışı
-  // yavaş kaldığında (blockhash süresi dolmasına yol açıyor) kullanıcının
-  // gerçek cüzdan olmadan, anında imzalayan yerel bir cüzdanla oyunu
-  // tamamlayıp oyun mantığının kendisinin çalıştığını doğrulamasını sağlar.
+  // Devnet-only hata ayıklama modu: gerçek cüzdan olmadan, anında imzalayan
+  // yerel bir cüzdanla oyunu tamamlayıp oyun mantığının kendisinin
+  // çalıştığını doğrulamayı sağlar. Bu modda ayrıca oyuncu == imzalayıcı
+  // olduğundan delegate kaydına hiç gerek yok.
   const [testKeypair] = useState(() => loadOrCreateTestWallet())
   const [testWalletOn, setTestWalletOn] = useState(false)
   const [testBalance, setTestBalance] = useState<number | null>(null)
   const [testFunding, setTestFunding] = useState(false)
   const [testFundError, setTestFundError] = useState('')
 
-  const activePublicKey = testWalletOn ? testKeypair.publicKey : wallet.publicKey
-  const activeSigner: TxSigner | null = testWalletOn
-    ? toTxSigner(testKeypair)
-    : wallet.publicKey && wallet.signTransaction
+  // Gerçek cüzdan modunda kullanılan yerel "oyun cüzdanı" (delegate/
+  // session-key) — bir kez zincirde yetkilendirildikten sonra tüm
+  // play()/resolve() çağrılarını onaysız imzalar. Kazanç her zaman gerçek
+  // cüzdana gider (bkz. lib/gameDelegate.ts, program/luck-game/src/lib.rs).
+  const [delegateKeypair] = useState(() => loadOrCreateDelegate())
+
+  const activeOwnerPublicKey = testWalletOn ? testKeypair.publicKey : wallet.publicKey
+  const isActive = testWalletOn || wallet.connected
+
+  const realWalletSigner: TxSigner | null =
+    wallet.publicKey && wallet.signTransaction
       ? { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction }
       : null
-  const isActive = testWalletOn || wallet.connected
+
+  const delegateActive =
+    !testWalletOn && playerState !== null && playerState.delegate.equals(delegateKeypair.publicKey)
+
+  // play()/resolve() imzalayıcısı — HER ZAMAN yerel bir anahtar (test
+  // cüzdanı ya da etkin delegate), asla gerçek cüzdan popup'ı açmaz.
+  const spinAuthoritySigner: TxSigner | null = testWalletOn
+    ? toTxSigner(testKeypair)
+    : delegateActive
+      ? delegateToTxSigner(delegateKeypair)
+      : null
+
+  // Para hareketi olan işlemler (paket satın alma, delegate kaydı/gaz
+  // doldurma) — gerçek modda GERÇEK cüzdan onayı gerekir.
+  const paymentSigner: TxSigner | null = testWalletOn ? toTxSigner(testKeypair) : realWalletSigner
+
+  // forfeit_stuck_play program tarafında `has_one = player` ile GERÇEK
+  // oyuncunun (test modunda test cüzdanının) imzasını zorunlu kılıyor.
+  const forfeitSigner: TxSigner | null = testWalletOn ? toTxSigner(testKeypair) : realWalletSigner
+
+  const effectiveSpinTiers: SpinTier[] = useMemo(
+    () =>
+      gameConfig?.spinTiers ??
+      GAME_CONFIG.spinTiers.map((t) => ({ count: t.count, priceLamports: solToLamports(t.priceSol) })),
+    [gameConfig],
+  )
 
   const refresh = useCallback(async () => {
     if (!configured) return
@@ -94,11 +150,13 @@ export function GameTab() {
         const vault = await fetchVaultBalanceLamports(connection, getConfigPda())
         setVaultLamports(vault)
       }
-      if (activePublicKey) {
-        const ps = await fetchPlayerState(connection, activePublicKey)
+      if (activeOwnerPublicKey) {
+        const ps = await fetchPlayerState(connection, activeOwnerPublicKey)
         setPlayerState(ps)
         if (testWalletOn) {
-          setTestBalance(await connection.getBalance(activePublicKey))
+          setTestBalance(await connection.getBalance(activeOwnerPublicKey))
+        } else {
+          setDelegateBalance(await connection.getBalance(delegateKeypair.publicKey))
         }
       } else {
         setPlayerState(null)
@@ -106,13 +164,28 @@ export function GameTab() {
     } catch (err) {
       console.error('Oyun durumu okunamadı:', err)
     }
-  }, [connection, activePublicKey, testWalletOn, configured])
+  }, [connection, activeOwnerPublicKey, testWalletOn, configured, delegateKeypair])
+
+  const refreshLeaderboard = useCallback(async () => {
+    if (!configured) return
+    try {
+      setLeaderboard(await fetchLeaderboard(connection, 10))
+    } catch (err) {
+      console.error('Liderlik tablosu okunamadı:', err)
+    }
+  }, [connection, configured])
 
   useEffect(() => {
     refresh()
     const id = setInterval(refresh, POLL_MS)
     return () => clearInterval(id)
   }, [refresh])
+
+  useEffect(() => {
+    refreshLeaderboard()
+    const id = setInterval(refreshLeaderboard, LEADERBOARD_POLL_MS)
+    return () => clearInterval(id)
+  }, [refreshLeaderboard])
 
   async function handleEnableTestWallet() {
     setTestFundError('')
@@ -139,13 +212,54 @@ export function GameTab() {
     setStatus('')
   }
 
+  async function handleActivateDelegate() {
+    if (!realWalletSigner) return
+    setError('')
+    setBusy('activate')
+    try {
+      const fundLamports = Number(solToLamports(GAME_CONFIG.delegateFundSol))
+      await registerAndFundDelegate(connection, realWalletSigner, delegateKeypair.publicKey, fundLamports, setStatus)
+      setStatus('Oyun cüzdanı etkinleştirildi — artık spinler onaysız, anında oynanacak.')
+      await refresh()
+    } catch (err) {
+      console.error(err)
+      setError(friendlyErrorMessage(err))
+      setStatus('')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleTopUpDelegate() {
+    if (!realWalletSigner) return
+    setError('')
+    setBusy('topup')
+    try {
+      const lamports = Number(solToLamports(GAME_CONFIG.delegateFundSol))
+      await topUpDelegateGas(connection, realWalletSigner, delegateKeypair.publicKey, lamports, setStatus)
+      setStatus('Oyun cüzdanı bakiyesi dolduruldu.')
+      await refresh()
+    } catch (err) {
+      console.error(err)
+      setError(friendlyErrorMessage(err))
+      setStatus('')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function handlePlay() {
-    if (!activeSigner) return
+    if (!spinAuthoritySigner || !activeOwnerPublicKey) return
     setError('')
     setLastResult(null)
+    setBonusNotice(false)
     setBusy('play')
     try {
-      await playGame(connection, activeSigner, setStatus)
+      const sig = await playGame(connection, activeOwnerPublicKey, spinAuthoritySigner, setStatus, {
+        confirmMessage: null,
+      })
+      const committed = await parsePlayCommittedFromTx(connection, sig)
+      if (committed?.bonusGranted) setBonusNotice(true)
       setStatus('Oyun başladı — sonuç birkaç saniye içinde açığa çıkacak.')
       await refresh()
     } catch (err) {
@@ -158,14 +272,54 @@ export function GameTab() {
   }
 
   async function handleResolve() {
-    if (!activeSigner) return
+    if (!spinAuthoritySigner || !activeOwnerPublicKey) return
     setError('')
     setBusy('resolve')
     try {
-      const sig = await resolveGame(connection, activeSigner, setStatus)
+      const sig = await resolveGame(connection, activeOwnerPublicKey, spinAuthoritySigner, setStatus, {
+        confirmMessage: null,
+      })
       setStatus('Sonuç okunuyor...')
       const result = await parsePlayResolvedFromTx(connection, sig)
       setLastResult(result)
+      setStatus('')
+      await refresh()
+      if (result?.won) refreshLeaderboard()
+    } catch (err) {
+      console.error(err)
+      setError(friendlyErrorMessage(err))
+      setStatus('')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleForfeit() {
+    if (!forfeitSigner) return
+    setError('')
+    setBusy('forfeit')
+    try {
+      await forfeitStuckPlay(connection, forfeitSigner, setStatus)
+      setStatus('Sıkışan deneme temizlendi, tekrar oynayabilirsin.')
+      await refresh()
+    } catch (err) {
+      console.error(err)
+      setError(friendlyErrorMessage(err))
+      setStatus('')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function handleBuySpins(tierIndex: number) {
+    if (!paymentSigner || !gameConfig) return
+    setError('')
+    setPurchaseNotice('')
+    setBusy(`buy-${tierIndex}`)
+    try {
+      const sig = await buySpins(connection, paymentSigner, tierIndex, gameConfig.treasury, setStatus)
+      const purchased = await parseSpinsPurchasedFromTx(connection, sig)
+      setPurchaseNotice(purchased ? `+${purchased.spinCount} spin eklendi!` : 'Paket satın alındı.')
       setStatus('')
       await refresh()
     } catch (err) {
@@ -177,13 +331,47 @@ export function GameTab() {
     }
   }
 
-  async function handleForfeit() {
-    if (!activeSigner) return
+  const convertPreview = useMemo(() => {
+    const amountSol = Number.parseFloat(convertAmount)
+    if (!Number.isFinite(amountSol) || amountSol <= 0 || effectiveSpinTiers.length === 0) return null
+    const budget = solToLamports(amountSol)
+    const combo = computeBestFitSpinPurchase(budget, effectiveSpinTiers)
+    if (combo.purchases.length === 0) return null
+    const totalSpins = combo.purchases.reduce(
+      (sum, p) => sum + effectiveSpinTiers[p.tierIndex].count * p.count,
+      0,
+    )
+    return { ...combo, totalSpins }
+  }, [convertAmount, effectiveSpinTiers])
+
+  async function handleConvert() {
+    if (!paymentSigner || !gameConfig || !convertPreview) return
     setError('')
-    setBusy('forfeit')
+    setPurchaseNotice('')
+    setBusy('convert')
     try {
-      await forfeitStuckPlay(connection, activeSigner, setStatus)
-      setStatus('Sıkışan deneme temizlendi, tekrar oynayabilirsin.')
+      const budget = solToLamports(Number.parseFloat(convertAmount))
+      const result = await buyBestFitSpins(
+        connection,
+        paymentSigner,
+        budget,
+        effectiveSpinTiers,
+        gameConfig.treasury,
+        setStatus,
+      )
+      const totalSpins = result.purchases.reduce(
+        (sum, p) => sum + effectiveSpinTiers[p.tierIndex].count * p.count,
+        0,
+      )
+      setPurchaseNotice(
+        `${totalSpins} spin eklendi (${fmtSol(lamportsToSol(result.totalCostLamports))} SOL kullanıldı${
+          result.leftoverLamports > 0n
+            ? `, ${fmtSol(lamportsToSol(result.leftoverLamports))} SOL küçük kaldığı için kullanılamadı`
+            : ''
+        }).`,
+      )
+      setConvertAmount('')
+      setStatus('')
       await refresh()
     } catch (err) {
       console.error(err)
@@ -208,7 +396,6 @@ export function GameTab() {
 
   const revealDelaySlots = gameConfig?.revealDelaySlots ?? BigInt(GAME_CONFIG.revealDelaySlots)
   const freePlays = gameConfig?.freePlays ?? GAME_CONFIG.freePlays
-  const entryFeeSol = gameConfig ? lamportsToSol(gameConfig.entryFeeLamports) : GAME_CONFIG.entryFeeSol
   const smallPrizeSol = gameConfig ? lamportsToSol(gameConfig.smallPrizeLamports) : GAME_CONFIG.smallPrizeSol
   const bigPrizeSol = gameConfig ? lamportsToSol(gameConfig.bigPrizeLamports) : GAME_CONFIG.bigPrizeSol
   const thresholdSol = gameConfig
@@ -219,8 +406,13 @@ export function GameTab() {
 
   const playsCount = playerState?.playsCount ?? 0
   const winsCount = playerState?.winsCount ?? 0
-  const freeLeft = Math.max(0, freePlays - playsCount)
+  const totalWonSol = playerState ? lamportsToSol(playerState.totalWonLamports) : 0
+  const spinsRemaining = playerState?.spinsSeeded ? playerState.spinsRemaining : freePlays
   const pending = playerState?.pending ?? false
+  const needsDelegateSetup = isActive && !testWalletOn && !delegateActive
+  const canPlay = spinAuthoritySigner !== null && spinsRemaining > 0
+  const delegateLowBalance =
+    delegateActive && delegateBalance !== null && lamportsToSol(delegateBalance) < GAME_CONFIG.delegateLowBalanceSol
 
   const targetSlot = playerState ? playerState.commitSlot + revealDelaySlots : null
   const slotsRemaining =
@@ -236,11 +428,12 @@ export function GameTab() {
     <div className="luck-game">
       <p className="subtab-desc">
         Zincir üzerinde çalışan gerçekten zor bir şans çarkı — kaynak kodu ve nasıl adil olduğu{' '}
-        <code>program/luck-game</code> içinde. Her cüzdana <strong>{freePlays} ücretsiz deneme</strong>,
-        sonrası <strong>{fmtSol(entryFeeSol)} SOL</strong>. Kasa{' '}
+        <code>program/luck-game</code> içinde. Her cüzdana <strong>{freePlays} ücretsiz deneme</strong>{' '}
+        (bitince <strong>+1 bonus deneme</strong> hediye), sonrası paket satın alarak. Kasa{' '}
         <strong>{fmtSol(thresholdSol)} SOL'a</strong> ulaşınca oyun biraz kolaylaşır. Kazananların çoğu{' '}
         <strong>{fmtSol(smallPrizeSol)} SOL</strong> küçük ödül alır, şanslı bir azınlık ise{' '}
-        <strong>{fmtSol(bigPrizeSol)} SOL</strong> büyük ödülü/jackpot'u kazanır.
+        <strong>{fmtSol(bigPrizeSol)} SOL</strong> büyük ödülü/jackpot'u kazanır — kazanç her zaman doğrudan
+        cüzdanına gönderilir.
       </p>
 
       {initialized === false && (
@@ -282,10 +475,56 @@ export function GameTab() {
             </div>
           )}
 
+          {needsDelegateSetup && (
+            <div className="alert alert--info luck-game__delegate-setup">
+              🔑 Spinlerin sırasında her seferinde cüzdan onayı istememesi için, bir kereliğine küçük bir
+              "oyun cüzdanı" etkinleştirmemiz gerekiyor (küçük bir işlem ücreti tamponuyla birlikte,{' '}
+              {GAME_CONFIG.delegateFundSol} SOL). Bu adımdan sonra ücretsiz denemeler ve satın aldığın
+              spinler anında, onaysız oynanır — cüzdanın yalnızca ödeme yaparken devreye girer.
+              <div>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={handleActivateDelegate}
+                  disabled={busy !== null || !realWalletSigner}
+                >
+                  {busy === 'activate' ? 'Etkinleştiriliyor...' : '🔑 Oyun Cüzdanını Etkinleştir (1 kerelik onay)'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {delegateActive && (
+            <div className="luck-game__delegate-status">
+              🔑 Oyun cüzdanı aktif — spinler onaysız oynanıyor.{' '}
+              {delegateBalance !== null && <>Gaz bakiyesi: {fmtSol(lamportsToSol(delegateBalance))} SOL.</>}
+              {delegateLowBalance && (
+                <>
+                  {' '}
+                  Bakiye düşük —{' '}
+                  <button
+                    type="button"
+                    className="btn btn--secondary btn--small"
+                    onClick={handleTopUpDelegate}
+                    disabled={busy !== null || !realWalletSigner}
+                  >
+                    {busy === 'topup' ? 'Dolduruluyor...' : 'Doldur'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
           <SlotMachine spinning={spinning} result={slotResult} bigWin={lastResult?.isBigWin ?? false} />
 
           {error && <div className="alert alert--error">{error}</div>}
           {!error && status && <div className="alert alert--info">{status}</div>}
+          {bonusNotice && (
+            <div className="alert alert--success">
+              🎁 Tebrikler! Ücretsiz denemelerini tamamladın, <strong>+1 bonus deneme hakkı</strong> kazandın!
+            </div>
+          )}
+          {purchaseNotice && <div className="alert alert--success">{purchaseNotice}</div>}
 
           {lastResult && (
             <div
@@ -308,13 +547,15 @@ export function GameTab() {
               type="button"
               className="btn btn--primary btn--block luck-game__play-btn"
               onClick={handlePlay}
-              disabled={busy !== null}
+              disabled={busy !== null || !canPlay}
             >
               {busy === 'play'
                 ? 'Gönderiliyor...'
-                : freeLeft > 0
-                  ? `🎰 Oyna (Ücretsiz, ${freeLeft} hakkın kaldı)`
-                  : `🎰 Oyna (${entryFeeSol} SOL)`}
+                : needsDelegateSetup
+                  ? '🔒 Önce oyun cüzdanını etkinleştir'
+                  : spinsRemaining > 0
+                    ? `🎰 Çevir (Kalan: ${spinsRemaining} spin)`
+                    : '🔒 Spin hakkın kalmadı — paket satın al'}
             </button>
           )}
 
@@ -346,7 +587,7 @@ export function GameTab() {
                 type="button"
                 className="btn btn--secondary btn--block"
                 onClick={handleForfeit}
-                disabled={busy !== null}
+                disabled={busy !== null || !forfeitSigner}
               >
                 {busy === 'forfeit' ? 'Temizleniyor...' : 'Denemeyi Temizle ve Tekrar Oyna'}
               </button>
@@ -355,10 +596,8 @@ export function GameTab() {
 
           <div className="luck-tokenomics__summary luck-game__stats">
             <div className="luck-tokenomics__stat">
-              <span>Ücretsiz Deneme</span>
-              <strong>
-                {freeLeft} / {freePlays}
-              </strong>
+              <span>Kalan Spin</span>
+              <strong>{spinsRemaining}</strong>
             </div>
             <div className="luck-tokenomics__stat">
               <span>Toplam Deneme</span>
@@ -367,6 +606,10 @@ export function GameTab() {
             <div className="luck-tokenomics__stat">
               <span>Toplam Kazanım</span>
               <strong>{winsCount}</strong>
+            </div>
+            <div className="luck-tokenomics__stat">
+              <span>Oyun Bakiyesi (Toplam Kazanç)</span>
+              <strong>{fmtSol(totalWonSol)} SOL</strong>
             </div>
             <div className="luck-tokenomics__stat">
               <span>Kasa</span>
@@ -378,13 +621,96 @@ export function GameTab() {
               </strong>
             </div>
           </div>
+
+          <div className="luck-game__tariff">
+            <h3>Spin Paketleri</h3>
+            <div className="luck-game__tariff-grid">
+              {GAME_CONFIG.spinTiers.map((tier, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className="luck-game__tariff-card"
+                  onClick={() => handleBuySpins(i)}
+                  disabled={busy !== null || !paymentSigner || !gameConfig}
+                >
+                  <strong>{tier.count} Spin</strong>
+                  <span>{fmtSol(tier.priceSol)} SOL</span>
+                  {busy === `buy-${i}` && <em>Satın alınıyor...</em>}
+                </button>
+              ))}
+            </div>
+
+            <div className="luck-game__convert">
+              <label htmlFor="luck-convert-amount">Bakiyemi Spin'e Dönüştür</label>
+              <div className="luck-game__convert-row">
+                <input
+                  id="luck-convert-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="SOL miktarı (ör. 0.4)"
+                  value={convertAmount}
+                  onChange={(e) => setConvertAmount(e.target.value)}
+                  disabled={busy !== null}
+                />
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={handleConvert}
+                  disabled={busy !== null || !convertPreview || !paymentSigner || !gameConfig}
+                >
+                  {busy === 'convert' ? 'Dönüştürülüyor...' : 'Dönüştür'}
+                </button>
+              </div>
+              {convertPreview && (
+                <p className="luck-game__convert-preview">
+                  ≈ <strong>{convertPreview.totalSpins} spin</strong> (
+                  {convertPreview.purchases
+                    .map((p) => `${p.count}× ${GAME_CONFIG.spinTiers[p.tierIndex].count}-spin paketi`)
+                    .join(' + ')}
+                  ), toplam {fmtSol(lamportsToSol(convertPreview.totalCostLamports))} SOL
+                  {convertPreview.leftoverLamports > 0n && (
+                    <> (kalan {fmtSol(lamportsToSol(convertPreview.leftoverLamports))} SOL en küçük pakete yetmiyor)</>
+                  )}
+                </p>
+              )}
+              <p className="luck-game__convert-hint">
+                Girdiğin miktar, paketlerimizin en iyi eşleşen kombinasyonuna bölünüp tek işlemde satın alınır.
+              </p>
+            </div>
+          </div>
+
+          {leaderboard.length > 0 && (
+            <div className="luck-game__leaderboard">
+              <h3>🏆 Liderlik Tablosu</h3>
+              <table className="luck-game__leaderboard-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Cüzdan</th>
+                    <th>Toplam Kazanç</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard.map((entry, i) => (
+                    <tr key={entry.player.toBase58()}>
+                      <td>{i + 1}</td>
+                      <td>{maskWalletForLeaderboard(entry.player)}</td>
+                      <td>{fmtSol(lamportsToSol(entry.totalWonLamports))} SOL</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
       <div className="alert alert--warning luck-game__disclaimer">
         ⚠️ Rastgelelik zincir üstü blockhash tabanlı (denetlenmemiş bir sözde-VRF) — ayrıntı için{' '}
         <code>program/luck-game/README.md</code>. $LUCK gibi bu oyun da eğlence amaçlıdır, sadece
-        kaybetmeyi göze alabileceğin miktarla oyna.
+        kaybetmeyi göze alabileceğin miktarla oyna. "Oyun cüzdanı" (delegate), yalnızca satın aldığın
+        spin bakiyeni harcayabilir — gerçek cüzdanına veya kasaya asla erişemez.
       </div>
     </div>
   )
