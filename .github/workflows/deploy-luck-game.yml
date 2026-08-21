@@ -144,6 +144,27 @@ jobs:
           echo "--- blake3 ---"
           cargo tree -i blake3 2>&1 || true
 
+      # `anchor build`, target/deploy/luck_game-keypair.json yoksa YENİ bir
+      # keypair üretir ama kaynak koddaki declare_id!()/Anchor.toml'u BU
+      # YENİ adrese göre GÜNCELLEMEZ (bu varsayım daha önce burada yanlış
+      # yapılmıştı ve "DeclaredProgramIdMismatch" ile deploy'u fiilen
+      # kullanılamaz hale getirmişti — derlenen bytecode kendi içinde eski/
+      # yanlış bir ID'yi doğru kabul ediyor ama gerçekte BAŞKA bir adrese
+      # deploy ediliyordu). `anchor keys sync`, tam bunun için var: keypair
+      # yoksa üretir, declare_id!()/Anchor.toml'u o keypair'in gerçek
+      # pubkey'iyle EŞLER — böylece hemen ardından gelen `anchor build`,
+      # deploy edileceği adresle kendi içinde tutarlı bir bytecode üretir.
+      - name: Program ID'yi keypair ile senkronla (anchor keys sync)
+        working-directory: program/luck-game
+        run: |
+          mkdir -p target/deploy
+          if [ ! -f target/deploy/luck_game-keypair.json ]; then
+            solana-keygen new --no-bip39-passphrase --silent -o target/deploy/luck_game-keypair.json
+          fi
+          anchor keys sync
+          echo "Senkron sonrası declare_id!():"
+          grep declare_id programs/luck-game/src/lib.rs
+
       # Anchor'ın ayrı "IDL üretim" adımı (host toolchain ile, on-chain SBF
       # derlemesinden bağımsız — istemci SDK'ları için target/idl/*.json
       # üretiyor, deploy'un kendisi için gerekli değil) anchor-syn/
