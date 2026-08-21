@@ -55,6 +55,17 @@ function randMs(min: number, max: number): number {
   return min + Math.random() * (max - min)
 }
 
+// "held" (bekleme) karesi için 3 FARKLI sembol seçer — asla üçü aynı
+// olmaz. Önceki sürüm üç makarada da AYNI tek sembolü gösteriyordu,
+// bu da (gerçek sonuç henüz gelmediği hâlde) her seferinde sanki
+// kazanılmış gibi görünüyordu ("hepsinde 3 şekil yan yana geliyor,
+// kazanmış gibi" kullanıcı geri bildirimi). Gerçek sonuç sadece
+// "landed" karesinde, zincirden gelen won/lose'a göre gösteriliyor.
+function pickWaitingCombo(): Combo {
+  const shuffled = [...REEL_SYMBOLS].sort(() => Math.random() - 0.5)
+  return [shuffled[0], shuffled[1], shuffled[2]]
+}
+
 function ReelStrip() {
   const symbols = [...REEL_SYMBOLS, ...REEL_SYMBOLS]
   return (
@@ -84,10 +95,10 @@ type Phase = 'idle' | 'scrolling' | 'held' | 'revealing' | 'landed'
 export function SlotMachine({ spinning, result, bigWin = false }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [combo, setCombo] = useState<Combo | null>(null)
-  // "held" (bekleme) karesinde soru işareti yerine gerçek bir makara
-  // sembolü gösteriyoruz — üç makara da AYNI sembolü gösteriyor ki hizalı
-  // dursun, ama hangi sembol olduğu her bekleyişte rastgele değişiyor.
-  const [waitingSym, setWaitingSym] = useState<string>('🍀')
+  // "held" (bekleme) karesinde gösterilen 3 sembol — hizalı ama ASLA
+  // üçü aynı değil (bkz. pickWaitingCombo), ki gerçek sonuç henüz
+  // gelmeden "kazanmış" izlenimi vermesin.
+  const [waitingCombo, setWaitingCombo] = useState<Combo>(() => pickWaitingCombo())
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const clearTimer = () => {
@@ -108,7 +119,7 @@ export function SlotMachine({ spinning, result, bigWin = false }: Props) {
           // Sonuç hâlâ gelmediyse (zincir/cüzdan onayı sürüyor) dönmeyi
           // durdurup bekleme karesine geç — "sürekli dönüyor" hissini
           // burada kesiyoruz.
-          setWaitingSym(REEL_SYMBOLS[Math.floor(Math.random() * REEL_SYMBOLS.length)])
+          setWaitingCombo(pickWaitingCombo())
           setPhase((p) => (p === 'scrolling' ? 'held' : p))
         }, randMs(4000, 7000))
       } else {
@@ -160,7 +171,7 @@ export function SlotMachine({ spinning, result, bigWin = false }: Props) {
               {phase === 'landed' && combo ? (
                 <StaticSym sym={combo[i]} />
               ) : phase === 'held' ? (
-                <StaticSym sym={waitingSym} />
+                <StaticSym sym={waitingCombo[i]} />
               ) : isScrollingVisual ? (
                 <ReelStrip />
               ) : null}
