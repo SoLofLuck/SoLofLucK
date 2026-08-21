@@ -92,7 +92,7 @@ denemeyi kayıp sayıp (ücret iadesi yok) tekrar oynayabilir hale gelir.
    Gerçek parayla mainnet'e çıkmadan önce Switchboard/ORAO VRF gibi
    denetlenmiş bir çözüme geçmek düşünülmeli.
 2. **Unaudited.** Hiçbir bağımsız güvenlik denetiminden geçmedi.
-3. **`vault_easy_threshold_lamports >= prize_lamports` kısıtı korunmalı** —
+3. **`vault_easy_threshold_lamports >= big_prize_lamports` kısıtı korunmalı** —
    `update_config` ile bu ilişkiyi bozacak bir kombinasyon girilmeye
    çalışılırsa işlem reddedilir, ama parametreleri güncellerken yine de
    dikkatli olun.

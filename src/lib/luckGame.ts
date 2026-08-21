@@ -129,7 +129,9 @@ export interface OnChainGameConfig {
   treasury: PublicKey
   entryFeeLamports: bigint
   freePlays: number
-  prizeLamports: bigint
+  smallPrizeLamports: bigint
+  bigPrizeLamports: bigint
+  bigPrizeBps: number
   vaultEasyThresholdLamports: bigint
   normalWinBps: number
   easyWinBps: number
@@ -155,8 +157,12 @@ export async function fetchGameConfig(connection: Connection): Promise<OnChainGa
   o += 8
   const freePlays = d.readUInt8(o)
   o += 1
-  const prizeLamports = d.readBigUInt64LE(o)
+  const smallPrizeLamports = d.readBigUInt64LE(o)
   o += 8
+  const bigPrizeLamports = d.readBigUInt64LE(o)
+  o += 8
+  const bigPrizeBps = d.readUInt16LE(o)
+  o += 2
   const vaultEasyThresholdLamports = d.readBigUInt64LE(o)
   o += 8
   const normalWinBps = d.readUInt16LE(o)
@@ -176,7 +182,9 @@ export async function fetchGameConfig(connection: Connection): Promise<OnChainGa
     treasury,
     entryFeeLamports,
     freePlays,
-    prizeLamports,
+    smallPrizeLamports,
+    bigPrizeLamports,
+    bigPrizeBps,
     vaultEasyThresholdLamports,
     normalWinBps,
     easyWinBps,
@@ -391,6 +399,7 @@ export function lamportsToSol(lamports: bigint | number): number {
 export interface PlayResolvedResult {
   won: boolean
   prizePaidLamports: bigint
+  isBigWin: boolean
   easyMode: boolean
 }
 
@@ -424,9 +433,11 @@ export async function parsePlayResolvedFromTx(
     o += 1
     const prizePaidLamports = raw.readBigUInt64LE(o)
     o += 8
+    const isBigWin = raw.readUInt8(o) !== 0
+    o += 1
     const easyMode = raw.readUInt8(o) !== 0
 
-    return { won, prizePaidLamports, easyMode }
+    return { won, prizePaidLamports, isBigWin, easyMode }
   }
   return null
 }

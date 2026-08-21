@@ -1712,11 +1712,27 @@ button {
   border-radius: 3%;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.2s ease;
 }
 
-.luck-slot--spinning .luck-slot__reels {
+.luck-slot__reels--visible {
   opacity: 1;
+}
+
+/* Beklemede (sonuç henüz gelmedi ama başlangıç dönüşü bitti): makaralar
+   dönmeyi durdurup yavaşça parıldıyor — "sonsuza dek dönüyor" hissini
+   kesen, gerilim yaratan bir bekleme karesi. */
+.luck-slot__reels--held {
+  animation: luck-reels-held-pulse 1.6s ease-in-out infinite;
+}
+
+.luck-slot__reels--held .luck-slot__reel-strip {
+  animation-play-state: paused;
+}
+
+/* İndikten sonra (landed): net, bulanıklıksız, hafif bir "pop" ile beliriyor. */
+.luck-slot__reels--landed .luck-slot__reel {
+  animation: luck-reel-landed-pop 0.35s ease-out;
 }
 
 .luck-slot__reel {
@@ -1725,6 +1741,9 @@ button {
   position: relative;
   background: linear-gradient(180deg, #fff6df, #ffe8a8);
   box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.35);
+}
+
+.luck-slot__reels--scrolling .luck-slot__reel {
   filter: blur(1.2px);
 }
 
@@ -1755,12 +1774,19 @@ button {
   animation: luck-reel-scroll 0.5s linear infinite;
 }
 
-.luck-slot__reel--2 .luck-slot__reel-strip {
+.luck-slot__reel:nth-child(2) .luck-slot__reel-strip {
   animation-duration: 0.42s;
 }
 
-.luck-slot__reel--3 .luck-slot__reel-strip {
+.luck-slot__reel:nth-child(3) .luck-slot__reel-strip {
   animation-duration: 0.58s;
+}
+
+.luck-slot__reel-landed {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .luck-slot__sym {
@@ -1772,6 +1798,11 @@ button {
   justify-content: center;
   font-size: 13cqw;
   line-height: 1;
+}
+
+.luck-slot__reel-landed .luck-slot__sym {
+  height: auto;
+  min-height: 0;
 }
 
 .luck-slot__sym--seven {
@@ -1787,6 +1818,28 @@ button {
   }
   to {
     transform: translateY(-50%);
+  }
+}
+
+@keyframes luck-reels-held-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(0.75);
+  }
+}
+
+@keyframes luck-reel-landed-pop {
+  0% {
+    transform: scale(0.7);
+  }
+  60% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
   }
 }
 

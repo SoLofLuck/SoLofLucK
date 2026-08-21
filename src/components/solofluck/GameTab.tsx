@@ -209,7 +209,8 @@ export function GameTab() {
   const revealDelaySlots = gameConfig?.revealDelaySlots ?? BigInt(GAME_CONFIG.revealDelaySlots)
   const freePlays = gameConfig?.freePlays ?? GAME_CONFIG.freePlays
   const entryFeeSol = gameConfig ? lamportsToSol(gameConfig.entryFeeLamports) : GAME_CONFIG.entryFeeSol
-  const prizeSol = gameConfig ? lamportsToSol(gameConfig.prizeLamports) : GAME_CONFIG.prizeSol
+  const smallPrizeSol = gameConfig ? lamportsToSol(gameConfig.smallPrizeLamports) : GAME_CONFIG.smallPrizeSol
+  const bigPrizeSol = gameConfig ? lamportsToSol(gameConfig.bigPrizeLamports) : GAME_CONFIG.bigPrizeSol
   const thresholdSol = gameConfig
     ? lamportsToSol(gameConfig.vaultEasyThresholdLamports)
     : GAME_CONFIG.vaultEasyThresholdSol
@@ -237,8 +238,9 @@ export function GameTab() {
         Zincir üzerinde çalışan gerçekten zor bir şans çarkı — kaynak kodu ve nasıl adil olduğu{' '}
         <code>program/luck-game</code> içinde. Her cüzdana <strong>{freePlays} ücretsiz deneme</strong>,
         sonrası <strong>{fmtSol(entryFeeSol)} SOL</strong>. Kasa{' '}
-        <strong>{fmtSol(thresholdSol)} SOL'a</strong> ulaşınca oyun biraz kolaylaşır ve kazanan{' '}
-        <strong>{fmtSol(prizeSol)} SOL</strong> kazanır.
+        <strong>{fmtSol(thresholdSol)} SOL'a</strong> ulaşınca oyun biraz kolaylaşır. Kazananların çoğu{' '}
+        <strong>{fmtSol(smallPrizeSol)} SOL</strong> küçük ödül alır, şanslı bir azınlık ise{' '}
+        <strong>{fmtSol(bigPrizeSol)} SOL</strong> büyük ödülü/jackpot'u kazanır.
       </p>
 
       {initialized === false && (
@@ -280,7 +282,7 @@ export function GameTab() {
             </div>
           )}
 
-          <SlotMachine spinning={spinning} result={slotResult} />
+          <SlotMachine spinning={spinning} result={slotResult} bigWin={lastResult?.isBigWin ?? false} />
 
           {error && <div className="alert alert--error">{error}</div>}
           {!error && status && <div className="alert alert--info">{status}</div>}
@@ -290,7 +292,11 @@ export function GameTab() {
               className={`luck-game__result ${lastResult.won ? 'luck-game__result--win' : 'luck-game__result--lose'}`}
             >
               {lastResult.won ? (
-                <>🎉 KAZANDIN! {fmtSol(lamportsToSol(lastResult.prizePaidLamports))} SOL cüzdanına gönderildi.</>
+                lastResult.isBigWin ? (
+                  <>🎉🏆 BÜYÜK ÖDÜL / JACKPOT! {fmtSol(lamportsToSol(lastResult.prizePaidLamports))} SOL cüzdanına gönderildi.</>
+                ) : (
+                  <>🎉 Küçük ödül kazandın! {fmtSol(lamportsToSol(lastResult.prizePaidLamports))} SOL cüzdanına gönderildi.</>
+                )
               ) : (
                 <>Bu sefer olmadı — tekrar dene! 🍀</>
               )}

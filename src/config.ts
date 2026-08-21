@@ -167,7 +167,12 @@ export const GAME_CONFIG = {
   programId: 'FoQuLzFc4r6r778SEsb65kAfqTsHrnj5Rj6Q6MQ5bXUw', // Devnet'te deploy edildi ve initialize() çağrıldı
   freePlays: 3,
   entryFeeSol: 0.1,
-  prizeSol: 1,
+  // İki katmanlı ödül: kazanan denemelerin %(bigPrizeBps/100)'i büyük
+  // ödülü (jackpot), geri kalanı küçük ödülü kazanır — hangisi tutacağı
+  // resolve() içinde ikinci, bağımsız bir zarla belirleniyor.
+  smallPrizeSol: 0.5,
+  bigPrizeSol: 1,
+  bigPrizeBps: 3000, // kazananların %30'u büyük ödül alır
   vaultEasyThresholdSol: 2,
   treasuryFeeBps: 2000, // %20 hazineye, %80 kasaya
   normalWinBps: 50, // zor mod: %0.5
