@@ -164,7 +164,7 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  programId: 'FoQuLzFc4r6r778SEsb65kAfqTsHrnj5Rj6Q6MQ5bXUw', // Devnet'te deploy edildi ve initialize() çağrıldı
+  programId: '6oxR8J5QhV2RvQzVB2kNKQ8XrZJt7AZF3eCnQXuGuydp', // Devnet'te deploy edildi ve initialize() çağrıldı (küçük/büyük ödül katmanıyla)
   freePlays: 3,
   entryFeeSol: 0.1,
   // İki katmanlı ödül: kazanan denemelerin %(bigPrizeBps/100)'i büyük

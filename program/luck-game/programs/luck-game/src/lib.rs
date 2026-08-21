@@ -4,7 +4,7 @@ use anchor_lang::system_program::{self, Transfer as SolTransfer};
 
 // Solana Playground üzerinden Devnet'e deploy edildikten sonra bu placeholder
 // gerçek program ID'siyle değiştirilmeli (bkz. program/luck-game/README.md).
-declare_id!("FoQuLzFc4r6r778SEsb65kAfqTsHrnj5Rj6Q6MQ5bXUw");
+declare_id!("6oxR8J5QhV2RvQzVB2kNKQ8XrZJt7AZF3eCnQXuGuydp");
 
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";
