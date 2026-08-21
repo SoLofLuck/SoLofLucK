@@ -105,7 +105,7 @@ jobs:
         # public key) manuel olarak devnet SOL göndermek gerekir.
         run: |
           for i in 1 2 3 4 5 6 7 8; do
-            if solana airdrop 2; then break; fi
+            if solana airdrop 3; then break; fi
             echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar denenecek..."
             sleep 20
           done
