@@ -164,7 +164,7 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  programId: '', // deploy-luck-game.yml (force_new_program_id=true) tamamlanınca yeni Program ID buraya girilecek
+  programId: 'GsdoVyrSWLudbTpzkaZk4n4TnYH9W5inqnG7wXeFhCPe', // Devnet'te deploy edildi (spin-kredisi/delegate mimarisi)
   freePlays: 3,
   // Spin-kredisi tarifesi: 3 ücretsiz deneme bitince (+1 bonus spin
   // hediye), her paket bir defada satın alınıp bakiyeye eklenir. Sırayla

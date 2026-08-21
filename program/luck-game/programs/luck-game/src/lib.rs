@@ -2,9 +2,9 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::sysvar::slot_hashes;
 use anchor_lang::system_program::{self, Transfer as SolTransfer};
 
-// Solana Playground üzerinden Devnet'e deploy edildikten sonra bu placeholder
-// gerçek program ID'siyle değiştirilmeli (bkz. program/luck-game/README.md).
-declare_id!("6oxR8J5QhV2RvQzVB2kNKQ8XrZJt7AZF3eCnQXuGuydp");
+// Spin-kredisi/delegate mimarisine geçişte GameConfig/PlayerState hesap
+// düzeni değiştiği için taze bir Program ID ile deploy edildi (devnet).
+declare_id!("GsdoVyrSWLudbTpzkaZk4n4TnYH9W5inqnG7wXeFhCPe");
 
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";

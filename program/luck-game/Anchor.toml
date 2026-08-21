@@ -4,9 +4,9 @@
 resolution = true
 skip-lint = false
 
-# Devnet'e deploy edildi ve initialize() çağrıldı (program/luck-game/README.md).
+# Devnet'e deploy edildi (spin-kredisi/delegate mimarisi — bkz. program/luck-game/README.md).
 [programs.devnet]
-luck_game = "6oxR8J5QhV2RvQzVB2kNKQ8XrZJt7AZF3eCnQXuGuydp"
+luck_game = "GsdoVyrSWLudbTpzkaZk4n4TnYH9W5inqnG7wXeFhCPe"
 
 [programs.mainnet]
 luck_game = "11111111111111111111111111111111"
