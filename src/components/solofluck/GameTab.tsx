@@ -331,11 +331,17 @@ export function GameTab() {
       // Delegate henüz register değilse (ilk satın alma), önce register et
       const needsDelegate = !playerState || !playerState.delegate.equals(delegateKeypair.publicKey)
       if (needsDelegate) {
+        console.log('[BuySpins] Delegate kaydı gerekli, register ediliyor...', {
+          delegateKeypair: delegateKeypair.publicKey.toBase58(),
+          playerStateDelegate: playerState?.delegate?.toBase58(),
+        })
         setStatus('Oyun cüzdanı kuruluyor (1/2)...')
         await registerAndFundDelegate(connection, paymentSigner, delegateKeypair.publicKey, setStatus)
+        console.log('[BuySpins] Delegate kayıt tamamlandı')
         setStatus('Spinler satın alınıyor (2/2)...')
       }
 
+      console.log('[BuySpins] Spin satın alınıyor...', { tierIndex, treasury: gameConfig.treasury.toBase58() })
       const sig = await buySpins(
         connection,
         paymentSigner,
@@ -344,14 +350,21 @@ export function GameTab() {
         delegateKeypair.publicKey,
         setStatus,
       )
+      console.log('[BuySpins] Satın alma tx başarılı:', sig)
       const purchased = await parseSpinsPurchasedFromTx(connection, sig)
+      console.log('[BuySpins] Parsed spin count:', purchased?.spinCount)
       setPurchaseNotice(purchased ? `+${purchased.spinCount} spin eklendi!` : 'Paket satın alındı.')
       setStatus('')
       await refresh()
     } catch (err) {
-      console.error(err)
-      setError(friendlyErrorMessage(err))
+      console.error('[BuySpins] Hata:', err)
+      const friendlyMsg = friendlyErrorMessage(err)
+      setError(friendlyMsg)
       setStatus('')
+      // Hata mesajını göster
+      if (err instanceof Error) {
+        console.error('[BuySpins] Error details:', err.message, err.stack)
+      }
     } finally {
       setBusy(null)
     }
@@ -566,10 +579,10 @@ export function GameTab() {
             >
               {busy === 'play'
                 ? 'Gönderiliyor...'
-                : needsDelegateSetup
-                  ? '🔒 Önce oyun cüzdanını etkinleştir'
-                  : spinsRemaining > 0
-                    ? `🎰 Çevir (Kalan: ${spinsRemaining} spin)`
+                : spinsRemaining > 0
+                  ? `🎰 Çevir (Kalan: ${spinsRemaining} spin)`
+                  : needsDelegateSetup
+                    ? '🔒 Oyun cüzdanını etkinleştir (spin satın al)'
                     : '🔒 Spin hakkın kalmadı — paket satın al'}
             </button>
           )}
