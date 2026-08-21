@@ -15,15 +15,19 @@ import {
   getConfigPda,
   isLuckGameConfigured,
   lamportsToSol,
+  loadFreeSpinsState,
   maskWalletForLeaderboard,
   parsePlayCommittedFromTx,
   parsePlayResolvedFromTx,
   parseSpinsPurchasedFromTx,
+  playFreeSpin,
   playGame,
   registerAndFundDelegate,
   resolveGame,
+  saveFreeSpinsState,
   solToLamports,
   topUpDelegateGas,
+  type FreeSpinsState,
   type LeaderboardEntry,
   type OnChainGameConfig,
   type OnChainPlayerState,
@@ -93,6 +97,9 @@ export function GameTab() {
   // yerel bir cüzdanla oyunu tamamlayıp oyun mantığının kendisinin
   // çalıştığını doğrulamayı sağlar. Bu modda ayrıca oyuncu == imzalayıcı
   // olduğundan delegate kaydına hiç gerek yok.
+  // Ücretsiz spinler: blockchain yok, tamamen istemci tarafında, localStorage'da tutulur
+  const [freeSpinsState, setFreeSpinsState] = useState<FreeSpinsState>(() => loadFreeSpinsState())
+
   const [testKeypair] = useState(() => loadOrCreateTestWallet())
   const [testWalletOn, setTestWalletOn] = useState(false)
   const [testBalance, setTestBalance] = useState<number | null>(null)
@@ -254,19 +261,37 @@ export function GameTab() {
   }
 
   async function handlePlay() {
-    if (!spinAuthoritySigner || !activeOwnerPublicKey) return
     setError('')
     setLastResult(null)
     setBonusNotice(false)
     setBusy('play')
     try {
-      const sig = await playGame(connection, activeOwnerPublicKey, spinAuthoritySigner, setStatus, {
-        confirmMessage: null,
-      })
-      const committed = await parsePlayCommittedFromTx(connection, sig)
-      if (committed?.bonusGranted) setBonusNotice(true)
-      setStatus('Oyun başladı — sonuç birkaç saniye içinde açığa çıkacak.')
-      await refresh()
+      // Ücretsiz spinler mevcut mu?
+      if (freeSpinsState.spinsRemaining > 0) {
+        // Blockchain yok, tamamen istemci tarafında
+        const { newState } = playFreeSpin(freeSpinsState)
+        setFreeSpinsState(newState)
+        saveFreeSpinsState(newState)
+
+        // Bonus spin verildi mi?
+        if (newState.bonusGranted && newState.spinsRemaining > 0 && newState.playsCount === GAME_CONFIG.freePlays + 1) {
+          setBonusNotice(true)
+        }
+
+        setStatus('Ücretsiz oyun oynandı — ekranda slot döndü!')
+        setLastResult({ won: false, prizePaidLamports: BigInt(0), isBigWin: false, easyMode: false })
+        await refresh()
+      } else {
+        // Satın alınan spinler için blockchain oyunu
+        if (!spinAuthoritySigner || !activeOwnerPublicKey) return
+        const sig = await playGame(connection, activeOwnerPublicKey, spinAuthoritySigner, setStatus, {
+          confirmMessage: null,
+        })
+        const committed = await parsePlayCommittedFromTx(connection, sig)
+        if (committed?.bonusGranted) setBonusNotice(true)
+        setStatus('Oyun başladı — sonuç birkaç saniye içinde açığa çıkacak.')
+        await refresh()
+      }
     } catch (err) {
       console.error(err)
       setError(friendlyErrorMessage(err))

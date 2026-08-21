@@ -737,6 +737,48 @@ export interface SpinsPurchasedResult {
   spinsRemaining: number
 }
 
+// Ücretsiz spinler için istemci tarafında tutulan state — blockchain'le hiç ilgisi yok
+export interface FreeSpinsState {
+  spinsRemaining: number
+  playsCount: number
+  bonusGranted: boolean
+}
+
+const FREE_SPINS_STORAGE_KEY = 'solofluck_free_spins'
+
+export function loadFreeSpinsState(): FreeSpinsState {
+  try {
+    const stored = localStorage.getItem(FREE_SPINS_STORAGE_KEY)
+    if (stored) return JSON.parse(stored)
+  } catch {
+    // Hata varsa baştan başla
+  }
+  return { spinsRemaining: GAME_CONFIG.freePlays, playsCount: 0, bonusGranted: false }
+}
+
+export function saveFreeSpinsState(state: FreeSpinsState): void {
+  localStorage.setItem(FREE_SPINS_STORAGE_KEY, JSON.stringify(state))
+}
+
+/** Ücretsiz spinleri oynat (istemci tarafında, blockchain yok). Sonuç HER ZAMAN kayıp'tır. */
+export function playFreeSpin(state: FreeSpinsState): { newState: FreeSpinsState; won: boolean } {
+  if (state.spinsRemaining <= 0) {
+    throw new Error('Ücretsiz spin kalmadı')
+  }
+
+  const newState = { ...state }
+  newState.spinsRemaining -= 1
+  newState.playsCount += 1
+
+  // Bonus spin: ilk set tükenince +1 bonus (sadece bir kez)
+  if (newState.spinsRemaining === 0 && !newState.bonusGranted && newState.playsCount === GAME_CONFIG.freePlays) {
+    newState.spinsRemaining = 1
+    newState.bonusGranted = true
+  }
+
+  return { newState, won: false }
+}
+
 function findEventData(logs: string[], discriminator: Buffer): Buffer | null {
   for (const line of logs) {
     if (!line.startsWith('Program data: ')) continue
