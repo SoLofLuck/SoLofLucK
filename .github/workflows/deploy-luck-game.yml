@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       force_new_program_id:
-        description: 'true: önbellekteki eski program keypair'"'"'ini sil, YENİ bir Program ID üret (ör. GameConfig hesap boyutu değiştiğinde gerekir — ardından declare_id!()/Anchor.toml/site config.ts yeni ID ile güncellenip bu workflow tekrar false ile çalıştırılmalı ki asıl deploy o adrese doğru binary ile yapılsın)'
+        description: "true: onbellekteki eski program keypair dosyasini sil, YENI bir Program ID uret (GameConfig hesap boyutu degistiginde gerekir - ardindan declare_id!()/Anchor.toml/site config.ts yeni ID ile guncellenip bu workflow tekrar false ile calistirilmali ki asil deploy o adrese dogru binary ile yapilsin)"
         required: false
         type: boolean
         default: false
