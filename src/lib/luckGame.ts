@@ -618,6 +618,12 @@ const MAX_PURCHASE_IXS = 20
  * "Bakiyemi spin'e dönüştür": kullanıcının girdiği rastgele bir SOL
  * miktarını, sabit paketlerimizin en iyi eşleşen kombinasyonuna bölüp TEK
  * bir işlemde (ve TEK bir gerçek cüzdan onayıyla) satın alır.
+ *
+ * Kombinasyon MAX_PURCHASE_IXS'i aşarsa (çok büyük bir miktar için tek
+ * işlemde sığmıyorsa) burada SESSİZCE kısmi satın alma YAPILMIYOR — bunun
+ * yerine açık bir hata fırlatılıyor, çünkü kısmen gönderip tam miktarı
+ * "satın alındı" gibi göstermek yanıltıcı olurdu. Kullanıcı bu durumda
+ * miktarı birkaç parçaya bölerek tekrar denemeli.
  */
 export async function buyBestFitSpins(
   connection: Connection,
@@ -631,13 +637,17 @@ export async function buyBestFitSpins(
   if (purchases.length === 0) {
     throw new Error('Bu miktar, en küçük paketimizi bile karşılamıyor.')
   }
+  const totalIxs = purchases.reduce((sum, p) => sum + p.count, 0)
+  if (totalIxs > MAX_PURCHASE_IXS) {
+    throw new Error(
+      `Bu miktar tek işlemde satın alınamayacak kadar çok paket gerektiriyor (${totalIxs} paket, üst sınır ${MAX_PURCHASE_IXS}) — daha küçük bir miktarla dene ya da birkaç kez dönüştür.`,
+    )
+  }
   const ixs: TransactionInstruction[] = []
   for (const { tierIndex, count } of purchases) {
     for (let i = 0; i < count; i++) {
       ixs.push(buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury))
-      if (ixs.length >= MAX_PURCHASE_IXS) break
     }
-    if (ixs.length >= MAX_PURCHASE_IXS) break
   }
   const signature = await sendIxs(connection, ownerSigner, ixs, onStatus)
   return { signature, purchases, totalCostLamports, leftoverLamports }
