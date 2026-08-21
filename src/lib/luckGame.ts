@@ -349,7 +349,17 @@ export function maskWalletForLeaderboard(player: PublicKey): string {
   return `${base58.slice(0, 3)}*****`
 }
 
-function buildBuySpinsIx(player: PublicKey, tierIndex: number, treasury: PublicKey): TransactionInstruction {
+// `delegate` her zaman verilir (kayıtlı olsun ya da olmasın) — program,
+// arayanın kayıtlı delegesiyle eşleşmiyorsa gaz top-up'ını sessizce
+// atlıyor (bkz. lib.rs buy_spins). Bu sayede oyuncu her satın alımda,
+// zaten imzaladığı ödeme işleminin İÇİNDE, kasadan gelen küçük bir gaz
+// tazelemesi de almış oluyor — ayrı bir "doldur" onayına gerek kalmadan.
+function buildBuySpinsIx(
+  player: PublicKey,
+  tierIndex: number,
+  treasury: PublicKey,
+  delegate: PublicKey,
+): TransactionInstruction {
   const config = getConfigPda()
   const vault = getVaultPda(config)
   const playerState = getPlayerStatePda(player)
@@ -362,23 +372,33 @@ function buildBuySpinsIx(player: PublicKey, tierIndex: number, treasury: PublicK
       { pubkey: playerState, isSigner: false, isWritable: true },
       { pubkey: vault, isSigner: false, isWritable: true },
       { pubkey: treasury, isSigner: false, isWritable: true },
+      { pubkey: delegate, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
     data,
   })
 }
 
+// Delegenin gaz bakiyesi artık oyuncudan DEĞİL, ilk kayıtta kasadan
+// (vault) sponsor ediliyor (bkz. lib.rs register_delegate) — bu yüzden
+// burada oyuncudan hiçbir SOL transferi istenmiyor, tek imza gerçekten
+// ücretsiz bir işlem. `delegate` artık instruction verisinde değil, bir
+// hesap olarak veriliyor (program `ctx.accounts.delegate.key()`'i okuyor).
 function buildRegisterDelegateIx(player: PublicKey, delegate: PublicKey): TransactionInstruction {
+  const config = getConfigPda()
+  const vault = getVaultPda(config)
   const playerState = getPlayerStatePda(player)
-  const data = Buffer.concat([IX_REGISTER_DELEGATE, delegate.toBuffer()])
   return new TransactionInstruction({
     programId: programId(),
     keys: [
       { pubkey: player, isSigner: true, isWritable: true },
+      { pubkey: config, isSigner: false, isWritable: false },
       { pubkey: playerState, isSigner: false, isWritable: true },
+      { pubkey: vault, isSigner: false, isWritable: true },
+      { pubkey: delegate, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
-    data,
+    data: IX_REGISTER_DELEGATE,
   })
 }
 
@@ -518,30 +538,20 @@ async function sendIxs(
 }
 
 /**
- * Oyuncunun yerel delegate anahtarını zincirde yetkilendirir VE aynı
- * işlemde ona küçük bir işlem-ücreti tamponu gönderir — böylece delegate,
- * sonraki tüm play()/resolve() çağrılarının ücretini kendisi karşılayabilir
- * ve gerçek cüzdan bir daha (ödeme dışında) hiç devreye girmez. TEK bir
- * gerçek cüzdan onayı gerektirir.
+ * Oyuncunun yerel delegate anahtarını zincirde yetkilendirir — bundan
+ * sonraki tüm play()/resolve() çağrılarını bu anahtar imzalayabilir.
+ * Delegenin işlem-ücreti gaz bakiyesi OYUNCUDAN DEĞİL, ilk kayıtta
+ * (yeni oyuncu) kasadan (vault) sponsor edilir (bkz. lib.rs
+ * register_delegate) — bu yüzden burada oyuncudan HİÇBİR SOL transferi
+ * istenmiyor; TEK bir gerçek cüzdan onayı, gerçekten ücretsiz.
  */
 export async function registerAndFundDelegate(
   connection: Connection,
   ownerSigner: TxSigner,
   delegate: PublicKey,
-  fundLamports: number,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  const ixs = [buildRegisterDelegateIx(ownerSigner.publicKey, delegate)]
-  if (fundLamports > 0) {
-    ixs.push(
-      SystemProgram.transfer({
-        fromPubkey: ownerSigner.publicKey,
-        toPubkey: delegate,
-        lamports: fundLamports,
-      }),
-    )
-  }
-  return sendIxs(connection, ownerSigner, ixs, onStatus)
+  return sendIxs(connection, ownerSigner, [buildRegisterDelegateIx(ownerSigner.publicKey, delegate)], onStatus)
 }
 
 /** Delegate'in gaz bakiyesini gerçek cüzdandan küçük bir transferle doldurur. */
@@ -559,16 +569,24 @@ export async function topUpDelegateGas(
 /**
  * Spin paketi satın alır — her zaman GERÇEK cüzdan onayı gerektirir (bu bir
  * ödeme işlemidir). `tierIndex`, GAME_CONFIG.spinTiers dizisindeki sıraya
- * karşılık gelir.
+ * karşılık gelir. `delegate`, oyuncunun yerel delege anahtarı — kayıtlıysa
+ * program bu işlemin İÇİNDE kasadan küçük bir gaz tazelemesi de yapar
+ * (bkz. lib.rs buy_spins), kayıtlı değilse/eşleşmiyorsa sessizce atlanır.
  */
 export async function buySpins(
   connection: Connection,
   ownerSigner: TxSigner,
   tierIndex: number,
   treasury: PublicKey,
+  delegate: PublicKey,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  return sendIxs(connection, ownerSigner, [buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury)], onStatus)
+  return sendIxs(
+    connection,
+    ownerSigner,
+    [buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury, delegate)],
+    onStatus,
+  )
 }
 
 export interface BestFitTierPurchase {
@@ -631,6 +649,7 @@ export async function buyBestFitSpins(
   budgetLamports: bigint,
   tiers: SpinTier[],
   treasury: PublicKey,
+  delegate: PublicKey,
   onStatus?: (status: string) => void,
 ): Promise<{ signature: string; purchases: BestFitTierPurchase[]; totalCostLamports: bigint; leftoverLamports: bigint }> {
   const { purchases, totalCostLamports, leftoverLamports } = computeBestFitSpinPurchase(budgetLamports, tiers)
@@ -646,7 +665,7 @@ export async function buyBestFitSpins(
   const ixs: TransactionInstruction[] = []
   for (const { tierIndex, count } of purchases) {
     for (let i = 0; i < count; i++) {
-      ixs.push(buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury))
+      ixs.push(buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury, delegate))
     }
   }
   const signature = await sendIxs(connection, ownerSigner, ixs, onStatus)

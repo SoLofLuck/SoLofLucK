@@ -10,10 +10,12 @@
 //   NORMAL_WIN_BPS=50  EASY_WIN_BPS=1000  TREASURY_FEE_BPS=2000
 //   REVEAL_DELAY_SLOTS=5
 //   SPIN_TIER_COUNTS=1,5,10,20,50,100  SPIN_TIER_PRICES_SOL=0.1,0.3,0.5,0.8,1.5,2.5
+//   VAULT_BOOTSTRAP_SOL=0.05
 //
 // Bu değerlerin varsayılanları src/config.ts içindeki GAME_CONFIG ile
 // birebir eşleşir. Program zaten initialize edilmişse (config PDA'sı
-// mevcutsa) işlem atlanır, hata vermez.
+// mevcutsa) initialize() çağrısı atlanır, hata vermez — ama kasa (vault)
+// bootstrap adımı yine de çalışır (idempotent, güvenle tekrar çalıştırılabilir).
 
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -83,6 +85,16 @@ if (spinTierCounts.length !== 6 || spinTierPricesLamports.length !== 6) {
   process.exit(1)
 }
 
+// Yeni bir oyuncu ilk kez register_delegate() çağırdığında, program
+// delegenin gaz bakiyesini KASADAN (vault) sponsor eder (bkz. lib.rs
+// DELEGATE_GAS_SPONSOR_LAMPORTS) — ücretsiz deneme gerçekten ücretsiz
+// olsun diye. Ama taze kurulmuş bir oyunda kasada henüz hiç satın alma
+// olmadığı için 0 SOL var — sponsor edilecek bir şey yok. Bu yüzden kasayı
+// burada, program sahibinin cüzdanından, küçük bir başlangıç rezerviyle
+// "tohumluyoruz". Bu düz bir SOL transferi (PDA'lar imza olmadan SOL kabul
+// edebilir), programın kendisiyle bir ilgisi yok.
+const vaultBootstrapLamports = BigInt(Math.round(envFloat('VAULT_BOOTSTRAP_SOL', 0.05) * LAMPORTS_PER_SOL))
+
 function anchorDiscriminator(name) {
   return createHash('sha256').update(`global:${name}`).digest().subarray(0, 8)
 }
@@ -113,41 +125,63 @@ async function main() {
   const existing = await connection.getAccountInfo(configPda)
   if (existing) {
     console.log('GameConfig zaten var, initialize atlanıyor:', configPda.toBase58())
-    return
+  } else {
+    const data = Buffer.concat([
+      anchorDiscriminator('initialize'),
+      u8(freePlays),
+      u64(smallPrizeLamports),
+      u64(bigPrizeLamports),
+      u16(bigPrizeBps),
+      u64(vaultThresholdLamports),
+      u16(normalWinBps),
+      u16(easyWinBps),
+      u16(treasuryFeeBps),
+      u64(revealDelaySlots),
+      // [u16; 6] ve [u64; 6] — sabit boyutlu diziler, Vec<T>'nin aksine
+      // uzunluk ön eki OLMADAN art arda ham değerler olarak serileşir.
+      ...spinTierCounts.map((n) => u16(n)),
+      ...spinTierPricesLamports.map((n) => u64(n)),
+    ])
+
+    const ix = new TransactionInstruction({
+      programId: PROGRAM_ID,
+      keys: [
+        { pubkey: authority.publicKey, isSigner: true, isWritable: true },
+        { pubkey: configPda, isSigner: false, isWritable: true },
+        { pubkey: TREASURY_WALLET, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data,
+    })
+
+    const tx = new Transaction().add(ix)
+    const sig = await sendAndConfirmTransaction(connection, tx, [authority])
+    console.log('initialize() başarılı, imza:', sig)
+    console.log('GameConfig PDA:', configPda.toBase58())
   }
 
-  const data = Buffer.concat([
-    anchorDiscriminator('initialize'),
-    u8(freePlays),
-    u64(smallPrizeLamports),
-    u64(bigPrizeLamports),
-    u16(bigPrizeBps),
-    u64(vaultThresholdLamports),
-    u16(normalWinBps),
-    u16(easyWinBps),
-    u16(treasuryFeeBps),
-    u64(revealDelaySlots),
-    // [u16; 6] ve [u64; 6] — sabit boyutlu diziler, Vec<T>'nin aksine
-    // uzunluk ön eki OLMADAN art arda ham değerler olarak serileşir.
-    ...spinTierCounts.map((n) => u16(n)),
-    ...spinTierPricesLamports.map((n) => u64(n)),
-  ])
-
-  const ix = new TransactionInstruction({
-    programId: PROGRAM_ID,
-    keys: [
-      { pubkey: authority.publicKey, isSigner: true, isWritable: true },
-      { pubkey: configPda, isSigner: false, isWritable: true },
-      { pubkey: TREASURY_WALLET, isSigner: false, isWritable: false },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ],
-    data,
-  })
-
-  const tx = new Transaction().add(ix)
-  const sig = await sendAndConfirmTransaction(connection, tx, [authority])
-  console.log('initialize() başarılı, imza:', sig)
-  console.log('GameConfig PDA:', configPda.toBase58())
+  const [vaultPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from('vault'), configPda.toBuffer()],
+    PROGRAM_ID,
+  )
+  const vaultBalance = BigInt(await connection.getBalance(vaultPda))
+  if (vaultBalance < vaultBootstrapLamports) {
+    const topUp = vaultBootstrapLamports - vaultBalance
+    const tx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: authority.publicKey,
+        toPubkey: vaultPda,
+        lamports: topUp,
+      }),
+    )
+    const sig = await sendAndConfirmTransaction(connection, tx, [authority])
+    console.log(
+      `Kasa (vault) ${Number(topUp) / LAMPORTS_PER_SOL} SOL ile tohumlandı, imza:`,
+      sig,
+    )
+  } else {
+    console.log('Kasa (vault) zaten yeterli bakiyeye sahip, tohumlama atlanıyor:', vaultPda.toBase58())
+  }
 }
 
 main().catch((err) => {
