@@ -1675,9 +1675,16 @@ button {
   overflow: hidden;
 }
 
-.luck-slot__img {
+.luck-slot__frame {
+  position: relative;
   width: 100%;
   max-width: 300px;
+  line-height: 0;
+  container-type: inline-size;
+}
+
+.luck-slot__img {
+  width: 100%;
   height: auto;
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
 }
@@ -1687,6 +1694,100 @@ button {
    hissi veriyoruz. */
 .luck-slot--spinning .luck-slot__img {
   animation: luck-slot-spin-shake 0.15s linear infinite, luck-slot-spin-glow 0.6s ease-in-out infinite;
+}
+
+/* Görselin üstündeki 3 sahte makara şeridi — resimdeki makara penceresinin
+   YAKLAŞIK konumuna hizalı (görsel 640x640, pencere kabaca %20-%80 x,
+   %34-%62 y). Sadece "spinning" durumunda görünür; boştayken/sonuçta
+   opaklık 0'a düşüyor ki altındaki gerçek "7 7 7" görüntüsü bozulmadan
+   görünsün. */
+.luck-slot__reels {
+  position: absolute;
+  left: 20.5%;
+  right: 20%;
+  top: 34%;
+  height: 27.5%;
+  display: flex;
+  gap: 2.5%;
+  border-radius: 3%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.luck-slot--spinning .luck-slot__reels {
+  opacity: 1;
+}
+
+.luck-slot__reel {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  background: linear-gradient(180deg, #fff6df, #ffe8a8);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.35);
+  filter: blur(1.2px);
+}
+
+.luck-slot__reel::before,
+.luck-slot__reel::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.luck-slot__reel::before {
+  top: 0;
+  background: linear-gradient(180deg, rgba(20, 12, 40, 0.55), transparent);
+}
+
+.luck-slot__reel::after {
+  bottom: 0;
+  background: linear-gradient(0deg, rgba(20, 12, 40, 0.55), transparent);
+}
+
+.luck-slot__reel-strip {
+  display: flex;
+  flex-direction: column;
+  animation: luck-reel-scroll 0.5s linear infinite;
+}
+
+.luck-slot__reel--2 .luck-slot__reel-strip {
+  animation-duration: 0.42s;
+}
+
+.luck-slot__reel--3 .luck-slot__reel-strip {
+  animation-duration: 0.58s;
+}
+
+.luck-slot__sym {
+  height: 100%;
+  min-height: 100%;
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13cqw;
+  line-height: 1;
+}
+
+.luck-slot__sym--seven {
+  font-weight: 900;
+  font-family: Georgia, 'Times New Roman', serif;
+  color: #c81e2c;
+  text-shadow: 0 1px 0 #fff, 0 -1px 0 #7a0f18;
+}
+
+@keyframes luck-reel-scroll {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
 }
 
 @keyframes luck-slot-spin-shake {
