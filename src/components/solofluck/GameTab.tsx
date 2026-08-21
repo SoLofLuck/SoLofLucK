@@ -485,9 +485,11 @@ export function GameTab() {
           {needsDelegateSetup && (
             <div className="alert alert--info luck-game__delegate-setup">
               🔑 Spinlerin sırasında her seferinde cüzdan onayı istememesi için, bir kereliğine küçük bir
-              "oyun cüzdanı" etkinleştirmemiz gerekiyor (küçük bir işlem ücreti tamponuyla birlikte,{' '}
-              {GAME_CONFIG.delegateFundSol} SOL). Bu adımdan sonra ücretsiz denemeler ve satın aldığın
-              spinler anında, onaysız oynanır — cüzdanın yalnızca ödeme yaparken devreye girer.
+              "oyun cüzdanı" etkinleştirmemiz gerekiyor. Bu ÜCRETSİZ bir işlem — sana bir bedel çıkmıyor,
+              sadece cüzdanından, yine sana ait yerel bir anahtara {GAME_CONFIG.delegateFundSol} SOL'luk
+              (~kuruşun altında) minik bir ağ işlem ücreti tamponu aktarılıyor, o kadar. Bu adımdan sonra
+              ücretsiz denemeler ve satın aldığın spinler anında, onaysız oynanır — cüzdanın yalnızca
+              gerçek bir ödeme yaparken devreye girer.
               <div>
                 <button
                   type="button"
