@@ -132,13 +132,43 @@ export function SlotMachine({ spinning, result, bigWin = false, onLanded }: Prop
 
   useEffect(() => clearTimers, [])
 
-  // --- Tur başlangıcı / iptali -----------------------------------------
-  // Yeni bir tur, sonuç temizlenmişken (result 'idle') dönüş istendiğinde
-  // başlar. Tur sürerken GameTab'in "spinning"i true tutması gerekiyor;
-  // hata/vazgeçme durumunda false'a düşerse animasyon kesiliyor.
-  useEffect(() => {
-    if (result !== 'idle') return
+  // Sonucu ekranda AÇMA planı: makaralar toplam süre dolmadan durmuyor,
+  // sonra soldan sağa tek tek iniyorlar. Hem "sonuç tur başlarken zaten
+  // belli" (ücretsiz spin) hem de "sonuç sonradan geldi" (zincir) durumu
+  // için aynı fonksiyon kullanılıyor.
+  const scheduleLanding = (res: SlotResult) => {
+    if (res === 'idle' || !runningRef.current || landingScheduledRef.current) return
+    landingScheduledRef.current = true
+    clearTimers()
 
+    const now = Date.now()
+    // Toplam süre dolmadan inilmiyor; sonuç çok geç geldiyse de en az
+    // MIN_REVEAL_MS'lik bir açılış dönüşü gösteriliyor.
+    const lastStopAt = Math.max(now + MIN_REVEAL_MS, startedAtRef.current + totalMsRef.current)
+    const firstStopAt = lastStopAt - 2 * REEL_STOP_GAP_MS
+
+    setPhase('spinning') // bekleme karesindeysek tekrar dönmeye başla
+    setCombo(pickCombo(res, bigWin))
+    for (let i = 0; i < 3; i++) {
+      addTimer(() => setStoppedReels(i + 1), firstStopAt + i * REEL_STOP_GAP_MS - now)
+    }
+    addTimer(() => {
+      runningRef.current = false
+      setPhase('landed')
+      onLandedRef.current?.()
+    }, lastStopAt - now + 120)
+  }
+
+  // --- Tur başlangıcı / iptali -----------------------------------------
+  // Tur, "spinning" false -> true olduğunda başlar. Sonucun o anda 'idle'
+  // olmasına GÜVENİLMİYOR: ücretsiz spinde GameTab, spin başlatma ve
+  // sonucu aynı senkron blokta set ediyor, React bunları tek render'da
+  // birleştiriyor ve SlotMachine result'ı hiçbir zaman 'idle' görmüyor.
+  // (Önceki sürüm bu yüzden turu hiç başlatmıyordu: makaralar görünmüyor,
+  // buton "Makaralar dönüyor..." durumunda kalıyordu.) Sonuç tur başında
+  // zaten belliyse inişi hemen planlıyoruz — süreyi yine toplam süre
+  // belirliyor, sonuç erken bilinmesi turu kısaltmıyor.
+  useEffect(() => {
     if (spinning && !runningRef.current) {
       clearTimers()
       runningRef.current = true
@@ -152,8 +182,9 @@ export function SlotMachine({ spinning, result, bigWin = false, onLanded }: Prop
       // bekleme karesine geç — "sonsuza dek dönüyor" hissini burada kesiyoruz.
       addTimer(() => {
         setWaitingCombo(pickWaitingCombo())
-        setPhase((p) => (p === 'spinning' ? 'held' : p))
+        setPhase((ph) => (ph === 'spinning' ? 'held' : ph))
       }, HOLD_AFTER_MS)
+      scheduleLanding(result)
     } else if (!spinning && runningRef.current) {
       // Oyun hata verdi ya da sıkışan deneme temizlendi: turu iptal et.
       clearTimers()
@@ -163,30 +194,13 @@ export function SlotMachine({ spinning, result, bigWin = false, onLanded }: Prop
       setCombo(null)
       setStoppedReels(0)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spinning, result])
 
-  // --- Sonuç geldi: inişi planla ---------------------------------------
+  // --- Sonuç sonradan geldi (zincirden): inişi planla -------------------
   useEffect(() => {
-    if (result === 'idle' || !runningRef.current || landingScheduledRef.current) return
-    landingScheduledRef.current = true
-    clearTimers()
-
-    const now = Date.now()
-    // Toplam süre dolmadan inilmiyor; sonuç çok geç geldiyse de en az
-    // MIN_REVEAL_MS'lik bir açılış dönüşü gösteriliyor.
-    const lastStopAt = Math.max(now + MIN_REVEAL_MS, startedAtRef.current + totalMsRef.current)
-    const firstStopAt = lastStopAt - 2 * REEL_STOP_GAP_MS
-
-    setPhase('spinning') // bekleme karesindeysek tekrar dönmeye başla
-    setCombo(pickCombo(result, bigWin))
-    for (let i = 0; i < 3; i++) {
-      addTimer(() => setStoppedReels(i + 1), firstStopAt + i * REEL_STOP_GAP_MS - now)
-    }
-    addTimer(() => {
-      runningRef.current = false
-      setPhase('landed')
-      onLandedRef.current?.()
-    }, lastStopAt - now + 120)
+    scheduleLanding(result)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, bigWin])
 
   const allStopped = stoppedReels >= 3
@@ -194,9 +208,15 @@ export function SlotMachine({ spinning, result, bigWin = false, onLanded }: Prop
   const overlayVisible = phase !== 'idle'
   const containerPhaseClass =
     phase === 'held' ? 'luck-slot__reels--held' : phase === 'landed' ? 'luck-slot__reels--landed' : ''
+  // Kazanma/kaybetme görselleri (kaybedince gri+sönük, kazanınca altın
+  // nabız) YALNIZCA makaralar indikten sonra uygulanıyor. Ücretsiz spinde
+  // sonuç tur başında zaten belli olduğu için, bu sınıf doğrudan result'a
+  // bağlıyken makine 15-20sn boyunca griye çekiliyor ve sonucu daha
+  // makaralar dönerken ele veriyordu.
+  const shownResult = phase === 'landed' ? result : 'idle'
 
   return (
-    <div className={`luck-slot luck-slot--${result} ${phase === 'spinning' && !allStopped ? 'luck-slot--spinning' : ''}`}>
+    <div className={`luck-slot luck-slot--${shownResult} ${phase === 'spinning' && !allStopped ? 'luck-slot--spinning' : ''}`}>
       <div className="luck-slot__frame">
         <img src={slotMachineImg} alt="777 Jackpot slot makinesi" className="luck-slot__img" />
         <div
