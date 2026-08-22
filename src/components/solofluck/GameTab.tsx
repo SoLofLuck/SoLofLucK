@@ -86,8 +86,19 @@ export function GameTab() {
   const [delegateBalance, setDelegateBalance] = useState<number | null>(null)
 
   const [busy, setBusy] = useState<string | null>(null)
+  // İşlem ilerleme metni artık ekranda GÖSTERİLMİYOR (kullanıcı geri
+  // bildirimi: "Ücretsiz oyun oynandı — ekranda slot döndü yazısını
+  // kaldır, oyuncu gerçek çevirme deneyimini yaşamalı"). Alt katman
+  // fonksiyonları (playGame/buySpins/...) yine bir ilerleme callback'i
+  // bekliyor, bu yüzden setter duruyor, değeri okunmuyor.
+  const [, setStatus] = useState('')
   const [error, setError] = useState('')
   const [lastResult, setLastResult] = useState<PlayResolvedResult | null>(null)
+  // Slot animasyonu bitmeden sonucu yazıyla açıklamıyoruz — makaralar
+  // 15-20sn dönüp tek tek durduktan SONRA SlotMachine onLanded ile
+  // haber veriyor, kazandın/kaybettin metni ancak o an görünüyor.
+  const [revealedResult, setRevealedResult] = useState<PlayResolvedResult | null>(null)
+  const [spinAnimating, setSpinAnimating] = useState(false)
   const [bonusNotice, setBonusNotice] = useState(false)
   const [purchaseNotice, setPurchaseNotice] = useState('')
   const [convertAmount, setConvertAmount] = useState('')
@@ -243,7 +254,9 @@ export function GameTab() {
   async function handlePlay() {
     setError('')
     setLastResult(null)
+    setRevealedResult(null)
     setBonusNotice(false)
+    setSpinAnimating(true)
     setBusy('play')
     try {
       // Ücretsiz spinler mevcut mu?
@@ -258,10 +271,10 @@ export function GameTab() {
           setBonusNotice(true)
         }
 
-        // Makara 15-20 saniye dönsün — gerçekçi bir slot makinesi deneyimi
-        setTimeout(() => {
-          setLastResult({ won: false, prizePaidLamports: BigInt(0), isBigWin: false, easyMode: false })
-        }, 12000)
+        // Sonuç anında belli (ücretsiz spin hep kaybeder) ama EKRANDA
+        // hemen gösterilmiyor: SlotMachine makaraları 15-20sn döndürüp
+        // tek tek durduruyor, sonuç metni ancak o zaman açılıyor.
+        setLastResult({ won: false, prizePaidLamports: BigInt(0), isBigWin: false, easyMode: false })
 
         await refresh()
       } else {
@@ -279,6 +292,7 @@ export function GameTab() {
       console.error(err)
       setError(friendlyErrorMessage(err))
       setStatus('')
+      setSpinAnimating(false)
     } finally {
       setBusy(null)
     }
@@ -294,6 +308,8 @@ export function GameTab() {
       })
       setStatus('Sonuç okunuyor...')
       const result = await parsePlayResolvedFromTx(connection, sig)
+      // Sonuç zincirden geldi ama ekranda hemen yazılmıyor — makaralar
+      // sırayla durup animasyon bitince (onLanded) açıklanıyor.
       setLastResult(result)
       setStatus('')
       await refresh()
@@ -302,6 +318,7 @@ export function GameTab() {
       console.error(err)
       setError(friendlyErrorMessage(err))
       setStatus('')
+      setSpinAnimating(false)
     } finally {
       setBusy(null)
     }
@@ -314,6 +331,9 @@ export function GameTab() {
     try {
       await forfeitStuckPlay(connection, forfeitSigner, setStatus)
       setStatus('Sıkışan deneme temizlendi, tekrar oynayabilirsin.')
+      setSpinAnimating(false)
+      setLastResult(null)
+      setRevealedResult(null)
       await refresh()
     } catch (err) {
       console.error(err)
@@ -471,7 +491,11 @@ export function GameTab() {
   const windowExpired =
     slotsRemaining !== null && -slotsRemaining > GAME_CONFIG.maxResolveWindowSlots
 
-  const spinning = busy === 'play' || busy === 'resolve' || (pending && !windowExpired)
+  // Animasyon süresini SlotMachine yönetiyor: bir tur başladıktan sonra
+  // spinAnimating, makaralar tek tek durup sonuç açıklanana kadar
+  // (onLanded) true kalıyor — ücretsiz spinde zincir işi olmadığı için
+  // busy anında bitse bile makaralar 15-20sn dönmeye devam ediyor.
+  const spinning = spinAnimating || busy === 'play' || busy === 'resolve' || (pending && !windowExpired)
   const slotResult = lastResult ? (lastResult.won ? 'win' : 'lose') : 'idle'
 
   return (
@@ -539,7 +563,16 @@ export function GameTab() {
             </div>
           )}
 
-          <SlotMachine spinning={spinning} result={slotResult} bigWin={lastResult?.isBigWin ?? false} />
+          <SlotMachine
+            spinning={spinning}
+            result={slotResult}
+            bigWin={lastResult?.isBigWin ?? false}
+            onLanded={() => {
+              setSpinAnimating(false)
+              setRevealedResult(lastResult)
+              if (lastResult?.won) refreshLeaderboard()
+            }}
+          />
 
           {error && <div className="alert alert--error">{error}</div>}
           {bonusNotice && (
@@ -549,15 +582,15 @@ export function GameTab() {
           )}
           {purchaseNotice && <div className="alert alert--success">{purchaseNotice}</div>}
 
-          {lastResult && (
+          {revealedResult && (
             <div
-              className={`luck-game__result ${lastResult.won ? 'luck-game__result--win' : 'luck-game__result--lose'}`}
+              className={`luck-game__result ${revealedResult.won ? 'luck-game__result--win' : 'luck-game__result--lose'}`}
             >
-              {lastResult.won ? (
-                lastResult.isBigWin ? (
-                  <>🎉🏆 BÜYÜK ÖDÜL / JACKPOT! {fmtSol(lamportsToSol(lastResult.prizePaidLamports))} SOL cüzdanına gönderildi.</>
+              {revealedResult.won ? (
+                revealedResult.isBigWin ? (
+                  <>🎉🏆 BÜYÜK ÖDÜL / JACKPOT! {fmtSol(lamportsToSol(revealedResult.prizePaidLamports))} SOL cüzdanına gönderildi.</>
                 ) : (
-                  <>🎉 Küçük ödül kazandın! {fmtSol(lamportsToSol(lastResult.prizePaidLamports))} SOL cüzdanına gönderildi.</>
+                  <>🎉 Küçük ödül kazandın! {fmtSol(lamportsToSol(revealedResult.prizePaidLamports))} SOL cüzdanına gönderildi.</>
                 )
               ) : (
                 <>Bu sefer olmadı — tekrar dene! 🍀</>
@@ -570,10 +603,10 @@ export function GameTab() {
               type="button"
               className="btn btn--primary btn--block luck-game__play-btn"
               onClick={handlePlay}
-              disabled={busy !== null || !canPlay}
+              disabled={busy !== null || spinAnimating || !canPlay}
             >
-              {busy === 'play'
-                ? 'Gönderiliyor...'
+              {spinAnimating
+                ? '🎰 Makaralar dönüyor...'
                 : !isActive
                   ? '🔒 Cüzdanını bağla'
                   : freeSpinsState.spinsRemaining > 0 || spinsRemaining > 0

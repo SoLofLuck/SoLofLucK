@@ -1738,8 +1738,10 @@ button {
   animation: luck-reels-held-pulse 1.6s ease-in-out infinite;
 }
 
-/* İndikten sonra (landed): net, bulanıklıksız, hafif bir "pop" ile beliriyor. */
-.luck-slot__reels--landed .luck-slot__reel {
+/* İndikten sonra (landed): net, bulanıklıksız, hafif bir "pop" ile beliriyor.
+   Makaralar TEK TEK durduğu için "pop" da makara başına (--stopped)
+   veriliyor — üçü aynı anda değil, sırayla. */
+.luck-slot__reel--stopped {
   animation: luck-reel-landed-pop 0.35s ease-out;
 }
 
@@ -1751,7 +1753,9 @@ button {
   box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.35);
 }
 
-.luck-slot__reels--scrolling .luck-slot__reel {
+/* Bulanıklık makara BAŞINA: duran makara anında netleşiyor, hâlâ
+   dönenler bulanık kalıyor (gerçek slotlarda olduğu gibi). */
+.luck-slot__reel--spinning {
   filter: blur(1.2px);
 }
 
