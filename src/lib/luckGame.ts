@@ -744,20 +744,46 @@ export interface FreeSpinsState {
   bonusGranted: boolean
 }
 
-const FREE_SPINS_STORAGE_KEY = 'solofluck_free_spins'
+// Ücretsiz haklar CÜZDAN BAŞINA tutuluyor ("her cüzdana 3 ücretsiz
+// deneme"). Önceki sürüm tek bir genel anahtar kullanıyordu; bu yüzden
+// tarayıcıda daha önce deneme yapılmışsa YENİ bağlanan cüzdan da hakları
+// tükenmiş görüyor ve Çevir butonu hiç açılmıyordu.
+const FREE_SPINS_STORAGE_PREFIX = 'solofluck_free_spins'
 
-export function loadFreeSpinsState(): FreeSpinsState {
-  try {
-    const stored = localStorage.getItem(FREE_SPINS_STORAGE_KEY)
-    if (stored) return JSON.parse(stored)
-  } catch {
-    // Hata varsa baştan başla
-  }
+function freeSpinsKey(owner: string | null | undefined): string {
+  return owner ? `${FREE_SPINS_STORAGE_PREFIX}:${owner}` : FREE_SPINS_STORAGE_PREFIX
+}
+
+export function freshFreeSpinsState(): FreeSpinsState {
   return { spinsRemaining: GAME_CONFIG.freePlays, playsCount: 0, bonusGranted: false }
 }
 
-export function saveFreeSpinsState(state: FreeSpinsState): void {
-  localStorage.setItem(FREE_SPINS_STORAGE_KEY, JSON.stringify(state))
+export function loadFreeSpinsState(owner?: string | null): FreeSpinsState {
+  try {
+    const stored = localStorage.getItem(freeSpinsKey(owner))
+    if (stored) {
+      const parsed = JSON.parse(stored) as Partial<FreeSpinsState>
+      // Bozuk/eksik kayıt gelirse hakları yok saymak yerine sıfırdan başla.
+      if (typeof parsed?.spinsRemaining === 'number') {
+        return {
+          spinsRemaining: parsed.spinsRemaining,
+          playsCount: parsed.playsCount ?? 0,
+          bonusGranted: parsed.bonusGranted ?? false,
+        }
+      }
+    }
+  } catch {
+    // Hata varsa baştan başla
+  }
+  return freshFreeSpinsState()
+}
+
+export function saveFreeSpinsState(state: FreeSpinsState, owner?: string | null): void {
+  try {
+    localStorage.setItem(freeSpinsKey(owner), JSON.stringify(state))
+  } catch {
+    // Depolama kullanılamıyorsa (gizli sekme vb.) oyun yine oynanabilsin.
+  }
 }
 
 /** Ücretsiz spinleri oynat (istemci tarafında, blockchain yok). Sonuç HER ZAMAN kayıp'tır. */

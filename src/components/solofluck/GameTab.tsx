@@ -107,8 +107,10 @@ export function GameTab() {
   // yerel bir cüzdanla oyunu tamamlayıp oyun mantığının kendisinin
   // çalıştığını doğrulamayı sağlar. Bu modda ayrıca oyuncu == imzalayıcı
   // olduğundan delegate kaydına hiç gerek yok.
-  // Ücretsiz spinler: blockchain yok, tamamen istemci tarafında, localStorage'da tutulur
-  const [freeSpinsState, setFreeSpinsState] = useState<FreeSpinsState>(() => loadFreeSpinsState())
+  // Ücretsiz spinler: blockchain yok, tamamen istemci tarafında,
+  // localStorage'da CÜZDAN BAŞINA tutulur (aşağıdaki effect, cüzdan
+  // değiştikçe o cüzdanın haklarını yükler).
+  const [freeSpinsState, setFreeSpinsState] = useState<FreeSpinsState>(() => loadFreeSpinsState(null))
 
   const [testKeypair] = useState(() => loadOrCreateTestWallet())
   const [testWalletOn, setTestWalletOn] = useState(false)
@@ -124,6 +126,14 @@ export function GameTab() {
 
   const activeOwnerPublicKey = testWalletOn ? testKeypair.publicKey : wallet.publicKey
   const isActive = testWalletOn || wallet.connected
+  const freeSpinsOwnerKey = activeOwnerPublicKey ? activeOwnerPublicKey.toBase58() : null
+
+  // Bağlı cüzdan değiştiğinde o cüzdanın ücretsiz haklarını yükle —
+  // haklar cüzdan başına ("her cüzdana 3 ücretsiz deneme"), tarayıcı
+  // geneline değil.
+  useEffect(() => {
+    setFreeSpinsState(loadFreeSpinsState(freeSpinsOwnerKey))
+  }, [freeSpinsOwnerKey])
 
   const realWalletSigner: TxSigner | null =
     wallet.publicKey && wallet.signTransaction
@@ -264,7 +274,7 @@ export function GameTab() {
         // Blockchain yok, tamamen istemci tarafında
         const { newState } = playFreeSpin(freeSpinsState)
         setFreeSpinsState(newState)
-        saveFreeSpinsState(newState)
+        saveFreeSpinsState(newState, freeSpinsOwnerKey)
 
         // Bonus spin verildi mi?
         if (newState.bonusGranted && newState.spinsRemaining > 0 && newState.playsCount === GAME_CONFIG.freePlays + 1) {
@@ -466,21 +476,28 @@ export function GameTab() {
   const vaultSol = vaultLamports !== null ? lamportsToSol(vaultLamports) : null
   const easyMode = vaultSol !== null && vaultSol >= thresholdSol
 
-  const playsCount = playerState?.playsCount ?? 0
   const winsCount = playerState?.winsCount ?? 0
   const totalWonSol = playerState ? lamportsToSol(playerState.totalWonLamports) : 0
-  // Zincirde spins_remaining, ücretsiz haklar henüz "seed" edilmediyse
-  // (ilk play() çağrılmadan önce) satın alınmış bakiyeyi İÇERİR ama
-  // ücretsiz hakları henüz İÇERMEZ (bunlar play()'de eklenir) — ekranda
-  // doğru toplamı göstermek için burada aynı toplamayı client tarafında
-  // yapıyoruz.
-  const spinsRemaining = playerState
-    ? playerState.spinsRemaining + (playerState.spinsSeeded ? 0 : freePlays)
-    : freePlays
+  // Ücretsiz denemeler istemci tarafında (freeSpinsState), satın alınan
+  // spinler zincirde tutuluyor; toplam deneme sayısı ikisinin toplamı.
+  const playsCount = (playerState?.playsCount ?? 0) + freeSpinsState.playsCount
+  // Zincirdeki spin bakiyesi YALNIZCA delegate (oyun cüzdanı) kayıtlıyken
+  // oynanabilir — imzayı o atıyor. Delegate ilk satın alma sırasında
+  // kuruluyor, yani henüz hiç paket almamış bir oyuncunun zincirdeki
+  // bakiyesi (hesap yokken varsayılan olarak görünen ücretsiz haklar
+  // dahil) pratikte kullanılamaz.
+  //
+  // Önceki sürüm bu kullanılamaz bakiyeyi yine de sayaçta ve buton
+  // etiketinde gösteriyordu: buton "Kalan: 3 spin" yazarken canPlay
+  // istemci tarafındaki (tükenmiş) ücretsiz haklara bakıp false
+  // döndürüyor, buton pasif kalıyordu. Artık her iki yer de GERÇEKTEN
+  // oynanabilir hakları gösteriyor.
+  const purchasedSpins = spinAuthoritySigner !== null ? (playerState?.spinsRemaining ?? 0) : 0
+  const playableSpins = freeSpinsState.spinsRemaining + purchasedSpins
   const pending = playerState?.pending ?? false
   const needsDelegateSetup = isActive && !testWalletOn && !delegateActive
-  // Cüzdan bağlı olmalı, sonra ücretsiz veya ücretli spinler kullanılabilir
-  const canPlay = isActive && (freeSpinsState.spinsRemaining > 0 || (spinAuthoritySigner !== null && spinsRemaining > 0))
+  // Cüzdan bağlı olmalı ve gerçekten oynanabilir bir hak bulunmalı.
+  const canPlay = isActive && playableSpins > 0
   const delegateLowBalance =
     delegateActive && delegateBalance !== null && lamportsToSol(delegateBalance) < GAME_CONFIG.delegateLowBalanceSol
 
@@ -609,8 +626,8 @@ export function GameTab() {
                 ? '🎰 Makaralar dönüyor...'
                 : !isActive
                   ? '🔒 Cüzdanını bağla'
-                  : freeSpinsState.spinsRemaining > 0 || spinsRemaining > 0
-                    ? `🎰 Çevir (Kalan: ${freeSpinsState.spinsRemaining + spinsRemaining} spin)`
+                  : playableSpins > 0
+                    ? `🎰 Çevir (Kalan: ${playableSpins} spin)`
                     : needsDelegateSetup
                       ? '🔒 Oyun cüzdanını etkinleştir (spin satın al)'
                       : '🔒 Spin hakkın kalmadı — paket satın al'}
@@ -655,7 +672,7 @@ export function GameTab() {
           <div className="luck-tokenomics__summary luck-game__stats">
             <div className="luck-tokenomics__stat">
               <span>Kalan Spin</span>
-              <strong>{spinsRemaining}</strong>
+              <strong>{playableSpins}</strong>
             </div>
             <div className="luck-tokenomics__stat">
               <span>Toplam Deneme</span>
