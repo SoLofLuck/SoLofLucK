@@ -86,7 +86,6 @@ export function GameTab() {
   const [delegateBalance, setDelegateBalance] = useState<number | null>(null)
 
   const [busy, setBusy] = useState<string | null>(null)
-  const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [lastResult, setLastResult] = useState<PlayResolvedResult | null>(null)
   const [bonusNotice, setBonusNotice] = useState(false)
