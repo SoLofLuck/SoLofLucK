@@ -465,9 +465,6 @@ export function GameTab() {
   const freePlays = gameConfig?.freePlays ?? GAME_CONFIG.freePlays
   const smallPrizeSol = gameConfig ? lamportsToSol(gameConfig.smallPrizeLamports) : GAME_CONFIG.smallPrizeSol
   const bigPrizeSol = gameConfig ? lamportsToSol(gameConfig.bigPrizeLamports) : GAME_CONFIG.bigPrizeSol
-  const thresholdSol = gameConfig
-    ? lamportsToSol(gameConfig.vaultEasyThresholdLamports)
-    : GAME_CONFIG.vaultEasyThresholdSol
 
   const winsCount = playerState?.winsCount ?? 0
   const totalWonSol = playerState ? lamportsToSol(playerState.totalWonLamports) : 0
@@ -511,10 +508,8 @@ export function GameTab() {
   return (
     <div className="luck-game">
       <p className="subtab-desc">
-        Zincir üzerinde çalışan gerçekten zor bir şans çarkı — kaynak kodu ve nasıl adil olduğu{' '}
-        <code>program/luck-game</code> içinde. Her cüzdana <strong>{freePlays} ücretsiz deneme</strong>{' '}
-        (bitince <strong>+1 bonus deneme</strong> hediye), sonrası paket satın alarak. Kasa{' '}
-        <strong>{fmtSol(thresholdSol)} SOL'a</strong> ulaşınca oyun biraz kolaylaşır. Kazananların çoğu{' '}
+        Solana ağında çalışan bir şans oyunu. Her cüzdana <strong>{freePlays} ücretsiz deneme</strong>{' '}
+        (bitince <strong>+1 bonus deneme</strong> hediye), sonrası paket satın alarak. Kazananların çoğu{' '}
         <strong>{fmtSol(smallPrizeSol)} SOL</strong> küçük ödül alır, şanslı bir azınlık ise{' '}
         <strong>{fmtSol(bigPrizeSol)} SOL</strong> büyük ödülü/jackpot'u kazanır — kazanç her zaman doğrudan
         cüzdanına gönderilir.
