@@ -1,4 +1,5 @@
-import { LUCK_TOKEN, TOKENOMICS } from '../../config'
+import { LUCK_TOKEN, PRESALE_SOL_ALLOCATION, TOKENOMICS } from '../../config'
+import { PRESALE_OPS_FEE_PERCENT } from '../../lib/presale'
 
 function formatSupply(n: number) {
   return n.toLocaleString('tr-TR')
@@ -51,8 +52,45 @@ export function TokenomicsTab() {
         ))}
       </ul>
 
+      <h3 className="luck-tokenomics__subhead">Toplanan SOL Nereye Gidiyor?</h3>
+      <p className="subtab-desc">
+        Yukarıdaki tablo <strong>token</strong> dağılımıdır. Bu tablo ise presale'de toplanan{' '}
+        <strong>parayı</strong> gösterir — ikisi ayrı şeylerdir. Katkının{' '}
+        <strong>%{PRESALE_OPS_FEE_PERCENT.toLocaleString('tr-TR')}</strong>'lik kısmı, token
+        yayınlanana kadarki giderler için aynı işlemde ayrı bir cüzdana gider ve havuza eklenmez.
+        Kalan tutar şöyle kullanılır:
+      </p>
+      <ul className="luck-tokenomics__sol-list">
+        {PRESALE_SOL_ALLOCATION.map((a) => (
+          <li key={a.key}>
+            <span>{a.label}</span>
+            <strong>%{a.percent}</strong>
+          </li>
+        ))}
+      </ul>
+
+      <h3 className="luck-tokenomics__subhead">Lansman Taahhütleri</h3>
+      <ul className="luck-tokenomics__pledges">
+        <li>
+          <strong>Likidite yakılır.</strong> Havuz açıldıktan sonra LP token'ları yakılır; havuzdaki
+          likiditeyi ekip dahil kimse çekemez. Yakma işleminin linki burada yayınlanır.
+        </li>
+        <li>
+          <strong>Mint yetkisi iptal edilir.</strong> Lansmandan sonra yeni $LUCK basılamaz, toplam
+          arz {formatSupply(LUCK_TOKEN.totalSupply)} olarak sabitlenir.
+        </li>
+        <li>
+          <strong>Freeze yetkisi iptal edilir.</strong> Hiçbir cüzdan dondurulamaz — token satışı
+          teknik olarak engellenemez.
+        </li>
+        <li>
+          <strong>$LUCK standart bir SPL token'dır.</strong> Gizli transfer, transfer vergisi veya
+          kara liste gibi bir uzantı içermez; bakiyeler herkese açık ve doğrulanabilir.
+        </li>
+      </ul>
+
       <div className="alert alert--info">
-        Bu dağılım henüz zincire yazılmamış bir plandır ({`src/config.ts`} dosyasındaki{' '}
+        Bu dağılım ve taahhütler henüz zincire yazılmamış bir plandır ({`src/config.ts`} dosyasındaki{' '}
         <code>TOKENOMICS</code> listesi) — coin, "Token Oluştur" sekmesinden gerçekten
         oluşturulduğunda mint/freeze yetkileri ve kilit süreleri bu plana göre ayarlanmalıdır.
       </div>

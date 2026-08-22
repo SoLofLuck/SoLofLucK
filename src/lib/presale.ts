@@ -1,7 +1,13 @@
 import { Connection, PublicKey, SystemProgram, Transaction, TransactionInstruction, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
 import type { NetworkId } from '../config'
-import { PRESALE_TICKET_UNIT_SOL, PRESALE_WALLET } from '../config'
+import {
+  PRESALE_OPS_FEE_DEN,
+  PRESALE_OPS_FEE_NUM,
+  PRESALE_OPS_WALLET,
+  PRESALE_TICKET_UNIT_SOL,
+  PRESALE_WALLET,
+} from '../config'
 
 // Solana Memo programı — presale katkısının modunu/tutarını, hiçbir özel
 // program yazmadan doğrudan işlem içinde, herkesin görebileceği şekilde
@@ -31,11 +37,37 @@ export function calcTickets(amountSol: number): number {
   return Math.floor((amountSol + 1e-9) / PRESALE_TICKET_UNIT_SOL)
 }
 
+/** Operasyon payının yüzde karşılığı (ör. 0.777) — arayüzde göstermek için. */
+export const PRESALE_OPS_FEE_PERCENT = (PRESALE_OPS_FEE_NUM / PRESALE_OPS_FEE_DEN) * 100
+
+/** Operasyon payı yapılandırıldı mı (cüzdan boşsa pay hiç alınmaz). */
+export const presaleOpsFeeActive = Boolean(PRESALE_OPS_WALLET) && PRESALE_OPS_FEE_NUM > 0
+
+/**
+ * Bir katkıyı, havuza gidecek kısım ile operasyon payına böler. Bölme
+ * lamport (tam sayı) üzerinden yapılır ve pay AŞAĞI yuvarlanır — yani
+ * yuvarlama farkı her zaman havuzun lehine kalır, katkıda bulunanın
+ * aleyhine değil.
+ */
+export function splitContributionLamports(totalLamports: number): {
+  poolLamports: number
+  opsLamports: number
+} {
+  if (!presaleOpsFeeActive) return { poolLamports: totalLamports, opsLamports: 0 }
+  const opsLamports = Math.floor((totalLamports * PRESALE_OPS_FEE_NUM) / PRESALE_OPS_FEE_DEN)
+  return { poolLamports: totalLamports - opsLamports, opsLamports }
+}
+
 /**
  * Presale'e SOL gönderir. `flex` modda çekiliş bileti kazandırmaz (serbest
  * katkı); `fixed` modda her PRESALE_TICKET_UNIT_SOL (0.5 SOL) için 1 bilet
- * kazandırır. Katkı, PRESALE_WALLET adresine tek bir SystemProgram.transfer
- * ile ve izlenebilirlik için bir memo talimatıyla birlikte gönderilir.
+ * kazandırır.
+ *
+ * Katkı tek bir işlemde iki transfere bölünür: havuza gidecek kısım
+ * PRESALE_WALLET'a, operasyon payı (bkz. PRESALE_OPS_WALLET) ayrı bir
+ * cüzdana. İzlenebilirlik için her iki tutarı da içeren bir memo eklenir.
+ * Operasyon cüzdanı yapılandırılmamışsa pay alınmaz ve katkının tamamı
+ * PRESALE_WALLET'a gider.
  */
 export async function sendPresaleContribution(
   connection: Connection,
@@ -56,20 +88,45 @@ export async function sendPresaleContribution(
   }
 
   const payer = wallet.publicKey
+  // Biletler HER ZAMAN gönderilen brüt tutar üzerinden hesaplanır —
+  // operasyon payı bilet sayısını düşürmez.
   const tickets = mode === 'fixed' ? calcTickets(amountSol) : 0
 
+  const totalLamports = Math.round(amountSol * LAMPORTS_PER_SOL)
+  const { poolLamports, opsLamports } = splitContributionLamports(totalLamports)
+
   const tx = new Transaction()
+  // Havuza gidecek kısım presale cüzdanına...
   tx.add(
     SystemProgram.transfer({
       fromPubkey: payer,
       toPubkey: new PublicKey(PRESALE_WALLET),
-      lamports: Math.round(amountSol * LAMPORTS_PER_SOL),
+      lamports: poolLamports,
     }),
   )
+  // ...operasyon payı ise AYNI işlemde ayrı bir cüzdana. Presale cüzdanına
+  // hiç uğramadığı için TGE'de havuza konacak tutar presale cüzdanının
+  // bakiyesine eşit olur; elle ayıklama gerekmez.
+  if (opsLamports > 0) {
+    tx.add(
+      SystemProgram.transfer({
+        fromPubkey: payer,
+        toPubkey: new PublicKey(PRESALE_OPS_WALLET),
+        lamports: opsLamports,
+      }),
+    )
+  }
   tx.add(
     buildMemoIx(
       payer,
-      JSON.stringify({ app: 'solofluck-presale', mode, sol: amountSol, tickets }),
+      JSON.stringify({
+        app: 'solofluck-presale',
+        mode,
+        sol: amountSol,
+        tickets,
+        pool: poolLamports,
+        ops: opsLamports,
+      }),
     ),
   )
 

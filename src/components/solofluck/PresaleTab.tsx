@@ -2,7 +2,13 @@ import { useState, type FormEvent } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { NETWORKS, PRESALE_TIERS, PRESALE_TICKET_UNIT_SOL, PRESALE_WALLET, type NetworkId } from '../../config'
-import { calcTickets, getLocalContributions, sendPresaleContribution } from '../../lib/presale'
+import {
+  PRESALE_OPS_FEE_PERCENT,
+  calcTickets,
+  getLocalContributions,
+  presaleOpsFeeActive,
+  sendPresaleContribution,
+} from '../../lib/presale'
 import { useSolUsdPrice } from '../../lib/solPrice'
 
 function formatUsd(sol: number, solUsd: number | null): string {
@@ -163,6 +169,19 @@ export function PresaleTab({ network }: Props) {
           </button>
         </div>
       </div>
+
+      {presaleOpsFeeActive && (
+        <p className="luck-presale__ops-note">
+          Katkının <strong>%{PRESALE_OPS_FEE_PERCENT.toLocaleString('tr-TR')}</strong>'lik kısmı
+          operasyon payı olarak ayrılır — token yayınlanana kadarki giderleri (havuz açma ücreti, token
+          metadata, RPC, alan adı, pazarlama) karşılar. Bu pay, aynı işlemde ayrı bir cüzdana gider
+          ve <strong>likidite havuzuna eklenmez</strong>; kalan{' '}
+          <strong>%{(100 - PRESALE_OPS_FEE_PERCENT).toLocaleString('tr-TR')}</strong> presale
+          cüzdanında toplanır. Çekiliş biletlerin gönderdiğin <strong>tam tutar</strong> üzerinden
+          hesaplanır, pay bilet sayını düşürmez. İmzalamadan önce cüzdanında her iki alıcıyı da
+          görürsün.
+        </p>
+      )}
 
       {error && <div className="alert alert--error">{error}</div>}
       {!error && status && <div className="alert alert--info">{status}</div>}

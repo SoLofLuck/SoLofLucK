@@ -96,6 +96,28 @@ export const LUCK_TOKEN = {
 // göndermesini önlemek için kasıtlı bir güvenlik freni.
 export const PRESALE_WALLET = '' // ör: 'YourPresaleWalletAddressHere...'
 
+// ---------------------------------------------------------------------------
+// Operasyon (gider) payı
+// ---------------------------------------------------------------------------
+// Token yayınlanana kadar oluşan giderleri (Raydium havuz açma ücreti, token
+// mint + metadata, RPC aboneliği, alan adı, pazarlama) karşılamak için her
+// presale katkısından ayrılan pay: 7.770 / 100.000 = %7.77 — projenin 777
+// temasıyla uyumlu. Piyasa normunun altında: launchpad'ler (PinkSale, DxSale
+// vb.) zaten toplanan fonun %2-5'ini platform ücreti alıyor, üstüne ekipler
+// genelde %10-30'unu pazarlama/operasyona ayırıyor.
+//
+// ÖNEMLİ — bu pay PRESALE_WALLET'a HİÇ GİRMEZ: katkının içinden AYNI işlemde
+// ayrı bir transfer olarak doğrudan bu cüzdana gider. Böylece TGE'de likidite
+// havuzuna konacak tutar, presale cüzdanının bakiyesinin ta kendisi olur —
+// elle bir ayıklama/çıkarma yapmak gerekmez ve pay yanlışlıkla havuza
+// karışamaz. Katkıda bulunan kişi, imzalamadan önce cüzdanında her iki
+// alıcıyı ve tutarı da görür.
+//
+// Boş bırakılırsa pay hiç alınmaz, katkının %100'ü presale cüzdanına gider.
+export const PRESALE_OPS_WALLET = '' // ör: 'YourOpsWalletAddressHere...'
+export const PRESALE_OPS_FEE_NUM = 7770
+export const PRESALE_OPS_FEE_DEN = 100_000
+
 // Sabit paket seçeneklerinde her 0.5 SOL için kazanılan çekiliş bileti.
 export const PRESALE_TICKET_UNIT_SOL = 0.5
 
@@ -107,38 +129,47 @@ export const TOKENOMICS = [
   {
     key: 'presale',
     label: 'Presale',
-    percent: 30,
+    percent: 35,
     color: '#22d3ee',
-    desc: 'İki modlu presale (serbest katkı + çekilişli sabit paketler) ile topluluğa dağıtılır.',
+    desc: 'İki modlu presale (serbest katkı + çekilişli sabit paketler) ile topluluğa dağıtılır. Dağıtım iki partide: %50 TGE\'de, kalan %50 otuz gün sonra.',
   },
   {
     key: 'liquidity',
     label: 'Likidite Havuzu',
-    percent: 35,
+    percent: 20,
     color: '#8b5cf6',
-    desc: 'Presale sonunda Raydium üzerinde havuz açılır ve likidite kilitlenir.',
+    desc: 'Presale sonunda Raydium (CPMM) üzerinde havuz açılır ve LP token\'ları YAKILIR — likidite kalıcı olarak havuzda kalır, ekip dahil kimse çekemez. Yakma işleminin linki bu sayfada yayınlanır.',
   },
   {
     key: 'community',
     label: 'Topluluk / Çekiliş Ödülleri',
-    percent: 15,
+    percent: 20,
     color: '#facc15',
-    desc: '777 temalı periyodik çekilişler ve topluluk ödülleri için ayrılır.',
+    desc: '777 temalı periyodik çekilişler ve topluluk ödülleri. Katılım anlık görüntüyle (snapshot) belirlenir: çekiliş anında $LUCK tutan cüzdanlar katılır.',
   },
   {
     key: 'team',
     label: 'Ekip (Kilitli)',
     percent: 10,
     color: '#f87171',
-    desc: 'Satış Kilidi / Likidite Kilitleme programlarıyla belirli bir süre kilitli tutulur.',
+    desc: '6 ay boyunca hiç açılmaz (cliff), sonraki 18 ay boyunca aylık eşit dilimlerle açılır.',
   },
   {
     key: 'marketing',
     label: 'Pazarlama & CEX',
-    percent: 10,
+    percent: 15,
     color: '#34d399',
-    desc: 'Pazarlama, işbirlikleri ve borsa listeleme giderleri için ayrılır.',
+    desc: 'Pazarlama, işbirlikleri ve borsa listeleme giderleri. Multisig cüzdanda tutulur, adresi yayınlanır; çeyrekte en fazla toplam arzın %1,25\'i kullanılır.',
   },
+] as const
+
+// Presale'de toplanan SOL'un (operasyon payı düşüldükten sonra kalan
+// %92,23'ün) nereye gittiği. Token dağılımından (TOKENOMICS) AYRI bir
+// tablodur: biri token, bu ise para.
+export const PRESALE_SOL_ALLOCATION = [
+  { key: 'liquidity', label: 'Likidite havuzu', percent: 85 },
+  { key: 'marketing', label: 'Pazarlama & CEX', percent: 10 },
+  { key: 'reserve', label: 'Rezerv / operasyon', percent: 5 },
 ] as const
 
 // Topluluk sosyal medya linkleri — boş bırakılan bir alan SoLofLuck
