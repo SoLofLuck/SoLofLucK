@@ -10,9 +10,7 @@ import {
   fetchGameConfig,
   fetchLeaderboard,
   fetchPlayerState,
-  fetchVaultBalanceLamports,
   forfeitStuckPlay,
-  getConfigPda,
   isLuckGameConfigured,
   lamportsToSol,
   loadFreeSpinsState,
@@ -78,7 +76,6 @@ export function GameTab() {
   const configured = isLuckGameConfigured()
 
   const [gameConfig, setGameConfig] = useState<OnChainGameConfig | null>(null)
-  const [vaultLamports, setVaultLamports] = useState<number | null>(null)
   const [playerState, setPlayerState] = useState<OnChainPlayerState | null>(null)
   const [currentSlot, setCurrentSlot] = useState<number | null>(null)
   const [initialized, setInitialized] = useState<boolean | null>(null)
@@ -173,10 +170,8 @@ export function GameTab() {
       setGameConfig(cfg)
       setInitialized(cfg !== null)
       setCurrentSlot(slot)
-      if (cfg) {
-        const vault = await fetchVaultBalanceLamports(connection, getConfigPda())
-        setVaultLamports(vault)
-      }
+      // Kasa bakiyesi kullanıcıya gösterilmiyor, bu yüzden sorgulanmıyor da
+      // (her polling turunda gereksiz bir RPC çağrısıydı).
       if (activeOwnerPublicKey) {
         const ps = await fetchPlayerState(connection, activeOwnerPublicKey)
         setPlayerState(ps)
@@ -473,8 +468,6 @@ export function GameTab() {
   const thresholdSol = gameConfig
     ? lamportsToSol(gameConfig.vaultEasyThresholdLamports)
     : GAME_CONFIG.vaultEasyThresholdSol
-  const vaultSol = vaultLamports !== null ? lamportsToSol(vaultLamports) : null
-  const easyMode = vaultSol !== null && vaultSol >= thresholdSol
 
   const winsCount = playerState?.winsCount ?? 0
   const totalWonSol = playerState ? lamportsToSol(playerState.totalWonLamports) : 0
@@ -686,15 +679,6 @@ export function GameTab() {
               <span>Oyun Bakiyesi (Toplam Kazanç)</span>
               <strong>{fmtSol(totalWonSol)} SOL</strong>
             </div>
-            <div className="luck-tokenomics__stat">
-              <span>Kasa</span>
-              <strong>
-                {vaultSol !== null ? `${fmtSol(vaultSol)} SOL` : '...'}{' '}
-                <span className={`luck-game__mode luck-game__mode--${easyMode ? 'easy' : 'hard'}`}>
-                  {easyMode ? 'Kolay Mod' : 'Zor Mod'}
-                </span>
-              </strong>
-            </div>
           </div>
 
           <div className="luck-game__tariff">
@@ -782,10 +766,9 @@ export function GameTab() {
       )}
 
       <div className="alert alert--warning luck-game__disclaimer">
-        ⚠️ Rastgelelik zincir üstü blockhash tabanlı (denetlenmemiş bir sözde-VRF) — ayrıntı için{' '}
-        <code>program/luck-game/README.md</code>. $LUCK gibi bu oyun da eğlence amaçlıdır, sadece
-        kaybetmeyi göze alabileceğin miktarla oyna. "Oyun cüzdanı" (delegate), yalnızca satın aldığın
-        spin bakiyeni harcayabilir — gerçek cüzdanına veya kasaya asla erişemez.
+        ⚠️ Rastgelelik zincir üstü blockhash tabanlı bir şans oyunu. $LUCK gibi bu oyun da eğlence
+        amaçlıdır, sadece kaybetmeyi göze alabileceğin miktarla oyna. "Oyun cüzdanı", yalnızca satın
+        aldığın spin bakiyeni harcayabilir — gerçek cüzdanına veya kasaya asla erişemez.
       </div>
     </div>
   )
