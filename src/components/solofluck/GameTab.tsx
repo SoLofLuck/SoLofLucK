@@ -259,8 +259,11 @@ export function GameTab() {
           setBonusNotice(true)
         }
 
-        setStatus('Ücretsiz oyun oynandı — ekranda slot döndü!')
-        setLastResult({ won: false, prizePaidLamports: BigInt(0), isBigWin: false, easyMode: false })
+        // Makara 15-20 saniye dönsün — gerçekçi bir slot makinesi deneyimi
+        setTimeout(() => {
+          setLastResult({ won: false, prizePaidLamports: BigInt(0), isBigWin: false, easyMode: false })
+        }, 12000)
+
         await refresh()
       } else {
         // Satın alınan spinler için blockchain oyunu
@@ -457,8 +460,8 @@ export function GameTab() {
     : freePlays
   const pending = playerState?.pending ?? false
   const needsDelegateSetup = isActive && !testWalletOn && !delegateActive
-  // Ücretsiz spinler signer'a gerek yok; ücretli spinler gerekli
-  const canPlay = freeSpinsState.spinsRemaining > 0 || (spinAuthoritySigner !== null && spinsRemaining > 0)
+  // Cüzdan bağlı olmalı, sonra ücretsiz veya ücretli spinler kullanılabilir
+  const canPlay = isActive && (freeSpinsState.spinsRemaining > 0 || (spinAuthoritySigner !== null && spinsRemaining > 0))
   const delegateLowBalance =
     delegateActive && delegateBalance !== null && lamportsToSol(delegateBalance) < GAME_CONFIG.delegateLowBalanceSol
 
@@ -495,13 +498,6 @@ export function GameTab() {
         <div className="luck-presale__connect">
           <p>Oynamak için önce cüzdanını bağla.</p>
           <WalletMultiButton />
-          <p className="luck-game__test-hint">
-            Cüzdan onayında sorun mu yaşıyorsun?{' '}
-            <button type="button" className="btn btn--secondary" onClick={handleEnableTestWallet} disabled={testFunding}>
-              {testFunding ? 'Test cüzdanı hazırlanıyor...' : '🧪 Devnet test cüzdanı ile dene (onaysız, hızlı)'}
-            </button>
-          </p>
-          {testFundError && <div className="alert alert--warning">{testFundError}</div>}
         </div>
       ) : (
         <>
@@ -547,7 +543,6 @@ export function GameTab() {
           <SlotMachine spinning={spinning} result={slotResult} bigWin={lastResult?.isBigWin ?? false} />
 
           {error && <div className="alert alert--error">{error}</div>}
-          {!error && status && <div className="alert alert--info">{status}</div>}
           {bonusNotice && (
             <div className="alert alert--success">
               🎁 Tebrikler! Ücretsiz denemelerini tamamladın, <strong>+1 bonus deneme hakkı</strong> kazandın!
@@ -580,11 +575,13 @@ export function GameTab() {
             >
               {busy === 'play'
                 ? 'Gönderiliyor...'
-                : spinsRemaining > 0
-                  ? `🎰 Çevir (Kalan: ${spinsRemaining} spin)`
-                  : needsDelegateSetup
-                    ? '🔒 Oyun cüzdanını etkinleştir (spin satın al)'
-                    : '🔒 Spin hakkın kalmadı — paket satın al'}
+                : !isActive
+                  ? '🔒 Cüzdanını bağla'
+                  : freeSpinsState.spinsRemaining > 0 || spinsRemaining > 0
+                    ? `🎰 Çevir (Kalan: ${freeSpinsState.spinsRemaining + spinsRemaining} spin)`
+                    : needsDelegateSetup
+                      ? '🔒 Oyun cüzdanını etkinleştir (spin satın al)'
+                      : '🔒 Spin hakkın kalmadı — paket satın al'}
             </button>
           )}
 
