@@ -457,7 +457,8 @@ export function GameTab() {
     : freePlays
   const pending = playerState?.pending ?? false
   const needsDelegateSetup = isActive && !testWalletOn && !delegateActive
-  const canPlay = spinAuthoritySigner !== null && spinsRemaining > 0
+  // Ücretsiz spinler signer'a gerek yok; ücretli spinler gerekli
+  const canPlay = freeSpinsState.spinsRemaining > 0 || (spinAuthoritySigner !== null && spinsRemaining > 0)
   const delegateLowBalance =
     delegateActive && delegateBalance !== null && lamportsToSol(delegateBalance) < GAME_CONFIG.delegateLowBalanceSol
 
