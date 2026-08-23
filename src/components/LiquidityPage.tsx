@@ -1047,8 +1047,8 @@ function TokenBurn({
   wallet: ReturnType<typeof useWallet>
 }) {
   const [tokens, setTokens] = useState<WalletTokenBalance[]>([])
-  const [loadingTokens, setLoadingTokens] = useState(false)
   const [mint, setMint] = useState('')
+  const [mintMeta, setMintMeta] = useState<TokenMeta | null>(null)
   const [amount, setAmount] = useState('')
   const [confirmText, setConfirmText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1058,31 +1058,40 @@ function TokenBurn({
 
   const owner = wallet.publicKey
 
-  // Cüzdandaki tokenları listele — kullanıcı mint adresini elle yazmak
-  // zorunda kalmasın. Yanlış adrese yakma işlemi geri alınamaz olduğu için
-  // seçtirmek, yazdırmaktan daha güvenli.
+  // Token seçimi CoinPicker ile yapılıyor (havuz oluşturma sekmesiyle aynı
+  // bileşen); bu liste yalnızca seçilen token'ın BAKİYESİNİ göstermek ve
+  // "tamamını yak" kısayolunu doldurmak için tutuluyor.
   useEffect(() => {
     if (!owner) {
       setTokens([])
       return
     }
     let cancelled = false
-    setLoadingTokens(true)
     listAllWalletTokens(connection, owner)
-      .then((list) => {
-        if (cancelled) return
-        setTokens(list.filter((t) => Number(t.uiAmount) > 0))
-      })
-      .catch(() => {
-        if (!cancelled) setTokens([])
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingTokens(false)
-      })
+      .then((list) => !cancelled && setTokens(list))
+      .catch(() => !cancelled && setTokens([]))
     return () => {
       cancelled = true
     }
   }, [connection, owner])
+
+  // Seçilen token'ın adı/sembolü/logosu — havuz oluşturmadaki "selected-coin"
+  // görünümünün aynısını kullanabilmek için.
+  useEffect(() => {
+    if (!mint) {
+      setMintMeta(null)
+      return
+    }
+    let cancelled = false
+    try {
+      getTokenMetadata(connection, new PublicKey(mint)).then((meta) => !cancelled && setMintMeta(meta))
+    } catch {
+      setMintMeta(null)
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [connection, mint])
 
   const selected = tokens.find((t) => t.mint === mint) ?? null
   const balance = selected ? selected.uiAmount : null
@@ -1108,8 +1117,7 @@ function TokenBurn({
       setConfirmText('')
       // Bakiyeler değişti — listeyi tazele.
       if (owner) {
-        const list = await listAllWalletTokens(connection, owner)
-        setTokens(list.filter((t) => Number(t.uiAmount) > 0))
+        setTokens(await listAllWalletTokens(connection, owner))
       }
     } catch (err) {
       console.error(err)
@@ -1183,83 +1191,98 @@ function TokenBurn({
         çekmeniz de mümkün olmaz.
       </p>
 
-      {!wallet.connected ? (
+      {!wallet.connected && (
         <div className="alert alert--info">Yakma yapmak için önce cüzdanınızı bağlayın.</div>
-      ) : (
-        <>
-          <label className="field">
-            <span>Yakılacak Token *</span>
-            <select
-              value={mint}
-              onChange={(e) => {
-                setMint(e.target.value)
+      )}
+
+      <div className="field">
+        <span>Yakılacak Token *</span>
+        {mint ? (
+          <div className="selected-coin" style={{ marginTop: 4 }}>
+            <TokenIcon image={mintMeta?.image} symbol={mintMeta?.symbol} size={28} />
+            <div className="selected-coin__info">
+              <span className="selected-coin__symbol">{mintMeta ? mintMeta.symbol : 'Seçili'}</span>
+              <code className="selected-coin__addr">{mint}</code>
+            </div>
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={() => {
+                setMint('')
                 setAmount('')
+                setConfirmText('')
                 setError('')
               }}
-              disabled={busy || loadingTokens}
+              disabled={busy}
             >
-              <option value="">
-                {loadingTokens ? 'Cüzdan taranıyor...' : 'Cüzdanınızdaki bir token seçin'}
-              </option>
-              {tokens.map((t) => (
-                <option key={t.tokenAccount} value={t.mint}>
-                  {t.mint.slice(0, 6)}…{t.mint.slice(-6)} — bakiye {t.uiAmount}
-                </option>
-              ))}
-            </select>
-            {!loadingTokens && tokens.length === 0 && (
-              <small>Bu cüzdanda bakiyesi olan token bulunamadı.</small>
-            )}
-          </label>
+              Değiştir
+            </button>
+          </div>
+        ) : (
+          // SOL yakılamaz (native, mint hesabı yok) — bu yüzden burada
+          // havuz oluşturmadan farklı olarak allowSol verilmiyor.
+          <CoinPicker
+            explorerCluster={NETWORKS[network].explorerCluster}
+            onSelect={(m) => {
+              setMint(m)
+              setAmount('')
+              setConfirmText('')
+              setError('')
+            }}
+          />
+        )}
+      </div>
 
-          <label className="field">
-            <span>Yakılacak Miktar *</span>
-            <input
-              type="text"
-              inputMode="decimal"
-              placeholder="ör. 1250.5"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              disabled={busy || !mint}
-            />
-            {balance !== null && (
-              <small>
-                Bakiyeniz: {balance}{' '}
-                <button
-                  type="button"
-                  className="link-btn"
-                  onClick={() => setAmount(balance)}
-                  disabled={busy}
-                >
-                  tamamını yak
-                </button>
-              </small>
-            )}
-          </label>
+      <label className="field">
+        <span>Yakılacak Miktar *</span>
+        <input
+          type="text"
+          inputMode="decimal"
+          placeholder="ör. 1250.5"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          disabled={busy || !mint}
+        />
+        {balance !== null && (
+          <small>
+            Bakiyeniz: {balance}{' '}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => setAmount(balance)}
+              disabled={busy}
+            >
+              tamamını yak
+            </button>
+          </small>
+        )}
+      </label>
 
-          <label className="field">
-            <span>
-              Onay — kutuya <strong>YAK</strong> yazın *
-            </span>
-            <input
-              type="text"
-              placeholder="YAK"
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              disabled={busy || !mint}
-            />
-          </label>
+      <label className="field">
+        <span>
+          Onay — kutuya <strong>YAK</strong> yazın *
+        </span>
+        <input
+          type="text"
+          placeholder="YAK"
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          disabled={busy || !mint}
+        />
+      </label>
 
-          <button
-            type="button"
-            className="btn btn--primary btn--block"
-            onClick={handleBurn}
-            disabled={!canBurn}
-          >
-            {busy ? 'Yakılıyor...' : '🔥 Tokenları Kalıcı Olarak Yak'}
-          </button>
-        </>
-      )}
+      <button
+        type="button"
+        className="btn btn--primary btn--block"
+        onClick={handleBurn}
+        disabled={!canBurn}
+      >
+        {busy
+          ? 'Yakılıyor...'
+          : wallet.connected
+            ? '🔥 Tokenları Kalıcı Olarak Yak'
+            : 'Önce Cüzdan Bağlayın'}
+      </button>
 
       {error && <div className="alert alert--error">{error}</div>}
       {!error && status && <div className="alert alert--info">{status}</div>}
