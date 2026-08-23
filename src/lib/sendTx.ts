@@ -1,4 +1,10 @@
-import { Connection, PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
+import {
+  ComputeBudgetProgram,
+  Connection,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js'
 
 // ---------------------------------------------------------------------------
 // Ortak işlem gönderme katmanı
@@ -13,7 +19,28 @@ import { Connection, PublicKey, Transaction, TransactionInstruction } from '@sol
 export interface TxSigner {
   publicKey: PublicKey
   signTransaction: (tx: Transaction) => Promise<Transaction>
+  /**
+   * Cüzdan adaptörünün kendi gönderme metodu. VARSA TERCİH EDİLİR: cüzdan
+   * işlemi kendi altyapısından yayınlıyor ve bunu onay ekranından çıkar
+   * çıkmaz yapıyor. Mobilde bu fark kritik — imzayı alıp tarayıcıya geri
+   * dönmeyi, sonra tarayıcıdan RPC'ye göndermeyi beklemek, blockhash'in
+   * ömrünün önemli bir kısmını harcıyor. Yerel anahtarlarda (delegate,
+   * test cüzdanı) böyle bir metot yok; orada sign + send yolu kullanılıyor.
+   */
+  sendTransaction?: (
+    tx: Transaction,
+    connection: Connection,
+    options?: { skipPreflight?: boolean; maxRetries?: number },
+  ) => Promise<string>
 }
+
+// İşlemlere eklenen küçük öncelik ücreti. Ağ yoğunken önceliksiz işlemler
+// lider tarafından sessizce düşürülüyor ve blockhash süresi doluyor —
+// kullanıcının gördüğü "işlem zincire yazılmadı" hatasının sebeplerinden
+// biri buydu. Sınır tanımlı olduğu için maliyet üst sınırı belli:
+// 300.000 CU x 5.000 microLamport = 1.500 lamport (~0,0000015 SOL).
+const COMPUTE_UNIT_LIMIT = 300_000
+const PRIORITY_FEE_MICRO_LAMPORTS = 5_000
 
 export interface SendOptions {
   /**
@@ -102,7 +129,7 @@ type ConfirmOutcome =
 async function confirmBySignature(
   connection: Connection,
   signature: string,
-  rawTx: Uint8Array,
+  rawTx: Uint8Array | null,
   lastValidBlockHeight: number,
   onStatus?: (status: string) => void,
 ): Promise<ConfirmOutcome> {
@@ -138,10 +165,10 @@ async function confirmBySignature(
       return { kind: 'expired' }
     }
 
-    if (Date.now() - lastResendAt > 3000) {
+    if (rawTx && Date.now() - lastResendAt > 3000) {
       // Yeniden yayın: aynı imza, aynı işlem — mükerrer bir işlem
       // oluşturmaz, yalnızca düşürülmüş olabilecek paketi tekrar gönderir.
-      connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 0 }).catch(() => {})
+      connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 }).catch(() => {})
       lastResendAt = Date.now()
       onStatus?.('Onay bekleniyor (işlem ağa tekrar gönderiliyor)...')
     }
@@ -196,33 +223,63 @@ export async function sendInstructions(
     const alreadyLanded = await findLandedSignature(connection, attempted)
     if (alreadyLanded) return alreadyLanded
 
-    const tx = new Transaction().add(...ixs)
+    // Öncelik ücreti talimatları en başa: ağ yoğunken önceliksiz işlemler
+    // lider tarafından sessizce düşürülüyor ve blockhash süresi doluyor.
+    const tx = new Transaction()
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNIT_LIMIT }))
+      .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPORTS }))
+      .add(...ixs)
 
     onStatus?.(cycle === 0 ? 'İşlem hazırlanıyor...' : `İşlem yeniden hazırlanıyor (${cycle + 1}. deneme)...`)
-    const { blockhash, lastValidBlockHeight } = await withRetry(() => connection.getLatestBlockhash())
+    // 'confirmed' ile mümkün olan en TAZE blockhash'i alıyoruz; daha eski
+    // (finalized) bir blockhash, zaten kısa olan geçerlilik penceresinin
+    // bir kısmını daha baştan harcamış olurdu.
+    const { blockhash, lastValidBlockHeight } = await withRetry(() =>
+      connection.getLatestBlockhash('confirmed'),
+    )
     tx.recentBlockhash = blockhash
     tx.feePayer = signer.publicKey
 
     if (confirmMessage) onStatus?.(confirmMessage)
+
     // Mobilde uygulama geçişi + kullanıcının okuma süresi rahatlıkla bir
     // dakikayı buluyor; bu yüzden onay için geniş bir pencere bırakıyoruz.
     // Yine de sonsuz değil: deep-link hiç geri dönmezse net bir hata verip
     // ekranı kilitli bırakmıyoruz.
-    const signedTx = await withTimeout(
-      signer.signTransaction(tx),
-      120_000,
-      'Cüzdan onayı 2 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
-    )
-    const rawTx = signedTx.serialize()
-
+    //
     // skipPreflight: yük dengelemeli RPC düğümleri arasında kısa süreli
     // state gecikmesi yüzünden preflight simülasyonu, gönderilen düğümde
     // henüz görünmeyen (ama geçerli) bir blockhash'i reddedebiliyor
     // ("Blockhash not found"). Gerçek sonucu imza durumundan okuyoruz.
-    onStatus?.('İşlem ağa gönderiliyor...')
-    const signature = await withRetry(() =>
-      connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 0 }),
-    )
+    let signature: string
+    let rawTx: Uint8Array | null = null
+
+    if (signer.sendTransaction) {
+      // Tercih edilen yol: cüzdan imzalayıp KENDİ altyapısından yayınlıyor.
+      // Onay ekranından çıkar çıkmaz gönderildiği için blockhash'in kalan
+      // ömrü, imzayı tarayıcıya geri taşımakla harcanmıyor.
+      signature = await withTimeout(
+        signer.sendTransaction(tx, connection, { skipPreflight: true, maxRetries: 5 }),
+        150_000,
+        'Cüzdan onayı 2,5 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
+      )
+    } else {
+      const signedTx = await withTimeout(
+        signer.signTransaction(tx),
+        120_000,
+        'Cüzdan onayı 2 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
+      )
+      rawTx = signedTx.serialize()
+      onStatus?.('İşlem ağa gönderiliyor...')
+      signature = await withRetry(() =>
+        // maxRetries, RPC düğümünün işlemi lidere TEKRAR TEKRAR iletmesini
+        // sağlıyor. Bir ara bunu 0'a çekmiştim ("kendi yeniden yayınımız
+        // var" diye) — ama istemciden 3sn'de bir gönderim, düğümün her slot
+        // başında yeniden iletmesinin yerini tutmuyor. İşlemlerin hiç
+        // zincire yazılmamasının başlıca sebebi buydu.
+        connection.sendRawTransaction(rawTx!, { skipPreflight: true, maxRetries: 5 }),
+      )
+    }
     attempted.push(signature)
 
     onStatus?.('Onay bekleniyor...')
