@@ -2161,6 +2161,23 @@ button {
 /* Presale hedef göstergesi: canlı doluluk çubuğu, sabit fiyat ve kalan süre.
    Doluluk, presale cüzdanının zincirdeki bakiyesinden okunuyor (bkz.
    usePresaleProgress) — ayrı bir backend/indexer yok. */
+/* Metin içinde geçen, buton gibi davranmayan küçük eylem bağlantısı
+   (ör. "tamamını yak"). */
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #22d3ee;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .luck-presale__meter {
   margin: 0 0 1.25rem;
   padding: 1rem 1.1rem;

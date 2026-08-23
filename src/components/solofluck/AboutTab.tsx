@@ -13,23 +13,23 @@ const PILLARS = [
     text: 'Toplam arz 777.000.000 $LUCK — jackpot temasına adanmış, topluluk çekilişleriyle canlı tutulan bir coin.',
   },
   {
-    icon: '🔒',
-    title: 'Kilitli Likidite',
-    text: 'Presale sonrası Raydium\'da açılan havuzun likiditesi, bu sitedeki Likidite Kilitleme aracıyla belirli bir süre kilitlenir.',
+    icon: '🔥',
+    title: 'Yakılan Likidite',
+    text: 'Presale sonrası Raydium\'da havuz açılır ve LP token\'ları YAKILIR — kilitlenmez. Havuzdaki likiditeyi ekip dahil hiç kimse, hiçbir tarihte çekemez; yakma işleminin linki yayınlanır.',
   },
   {
-    icon: '🧪',
-    title: 'Önce Testnet',
-    text: 'Presale ve çekiliş mekaniği önce Devnet üzerinde test ediliyor; olgunlaştığında Mainnet\'e taşınacak.',
+    icon: '🔍',
+    title: 'Şeffaf Kasalar',
+    text: 'Presale, operasyon, ekip, topluluk, pazarlama ve CEX kasalarının adresleri yayınlanır. Her hareket Solscan üzerinden takip edilebilir — söze değil zincire bakılır.',
   },
 ]
 
 const ROADMAP = [
   {
     phase: 'Faz 1',
-    title: 'Devnet Testi',
+    title: 'Hazırlık & Test',
     status: 'active' as const,
-    text: 'Token oluşturma, presale ve çekiliş akışları Devnet üzerinde uçtan uca test ediliyor.',
+    text: 'Token oluşturma, presale, çekiliş ve oyun akışları uçtan uca test ediliyor; kasalar açılıyor ve adresleri yayınlanıyor.',
   },
   {
     phase: 'Faz 2',
@@ -41,7 +41,7 @@ const ROADMAP = [
     phase: 'Faz 3',
     title: 'Likidite & Raydium',
     status: 'upcoming' as const,
-    text: 'Presale\'de toplanan fonlarla Raydium\'da havuz açılır, likidite belirli bir süre kilitlenir.',
+    text: 'Presale\'de toplanan fonlarla Raydium\'da (CPMM) havuz açılır ve LP token\'ları yakılır — likidite kalıcı olarak havuzda kalır.',
   },
   {
     phase: 'Faz 4',

@@ -17,6 +17,8 @@ import {
   type PoolSummary,
 } from '../lib/raydium'
 import { LOCK_DURATION_OPTIONS, lockLpTokens, type LockResult } from '../lib/lock'
+import { burnTokens, type BurnResult } from '../lib/burnToken'
+import { listAllWalletTokens, type WalletTokenBalance } from '../lib/walletTokens'
 import { getTokenMetadata, type TokenMeta } from '../lib/tokenMetadata'
 import { useSolUsdPrice } from '../lib/solPrice'
 import { CoinPicker } from './CoinPicker'
@@ -27,7 +29,7 @@ interface Props {
   network: NetworkId
 }
 
-type SubTab = 'create' | 'manage' | 'lock' | 'search'
+type SubTab = 'create' | 'manage' | 'lock' | 'burn' | 'search'
 
 function fmtNum(n: number, digits = 6): string {
   if (!Number.isFinite(n)) return '-'
@@ -105,6 +107,13 @@ export function LiquidityPage({ network }: Props) {
         </button>
         <button
           type="button"
+          className={`subtab ${subTab === 'burn' ? 'subtab--active' : ''}`}
+          onClick={() => setSubTab('burn')}
+        >
+          Likidite Yakma
+        </button>
+        <button
+          type="button"
           className={`subtab ${subTab === 'search' ? 'subtab--active' : ''}`}
           onClick={() => setSubTab('search')}
         >
@@ -115,6 +124,7 @@ export function LiquidityPage({ network }: Props) {
       {subTab === 'create' && <PoolCreate network={network} connection={connection} wallet={wallet} />}
       {subTab === 'manage' && <PoolManage network={network} connection={connection} wallet={wallet} />}
       {subTab === 'lock' && <PoolLock network={network} connection={connection} wallet={wallet} />}
+      {subTab === 'burn' && <TokenBurn network={network} connection={connection} wallet={wallet} />}
       {subTab === 'search' && <PoolSearch network={network} />}
     </div>
   )
@@ -1011,6 +1021,248 @@ function PoolLock({
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Likidite Yakma
+// ---------------------------------------------------------------------------
+// Kilitlemenin bir adım ötesi: yakılan LP token'ı geri gelmez, dolayısıyla
+// havuzdaki likidite SÜRESİZ olarak kilitlenmiş olur. Kilidin aksine bir
+// bitiş tarihi yok — yani alıcıların "şu tarihte kilit açılacak" diye
+// beklediği bir geri sayım da oluşmuyor.
+//
+// Araç bilerek LP'ye özel DEĞİL: cüzdandaki herhangi bir SPL/Token-2022
+// token'ı yakılabiliyor. Presale hedefi tutmazsa basılmayacak $LUCK'ın
+// oransal olarak yakılması da buradan yapılacak (bkz. config.ts presale
+// kuralları).
+function TokenBurn({
+  network,
+  connection,
+  wallet,
+}: {
+  network: NetworkId
+  connection: ReturnType<typeof useConnection>['connection']
+  wallet: ReturnType<typeof useWallet>
+}) {
+  const [tokens, setTokens] = useState<WalletTokenBalance[]>([])
+  const [loadingTokens, setLoadingTokens] = useState(false)
+  const [mint, setMint] = useState('')
+  const [amount, setAmount] = useState('')
+  const [confirmText, setConfirmText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
+  const [result, setResult] = useState<BurnResult | null>(null)
+
+  const owner = wallet.publicKey
+
+  // Cüzdandaki tokenları listele — kullanıcı mint adresini elle yazmak
+  // zorunda kalmasın. Yanlış adrese yakma işlemi geri alınamaz olduğu için
+  // seçtirmek, yazdırmaktan daha güvenli.
+  useEffect(() => {
+    if (!owner) {
+      setTokens([])
+      return
+    }
+    let cancelled = false
+    setLoadingTokens(true)
+    listAllWalletTokens(connection, owner)
+      .then((list) => {
+        if (cancelled) return
+        setTokens(list.filter((t) => Number(t.uiAmount) > 0))
+      })
+      .catch(() => {
+        if (!cancelled) setTokens([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTokens(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [connection, owner])
+
+  const selected = tokens.find((t) => t.mint === mint) ?? null
+  const balance = selected ? selected.uiAmount : null
+  // Onay kutusu: yanlışlıkla yakmayı engelleyen son bariyer. Butonun
+  // "disabled" olması yetmez — kullanıcının bilerek yazması gerekiyor.
+  const confirmed = confirmText.trim().toUpperCase() === 'YAK'
+  const canBurn =
+    wallet.connected && Boolean(mint) && Number(amount) > 0 && confirmed && !busy
+
+  async function handleBurn() {
+    setError('')
+    setResult(null)
+    if (!wallet.connected) {
+      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await burnTokens(connection, wallet, mint, amount.trim(), setStatus)
+      setResult(res)
+      setStatus('')
+      setAmount('')
+      setConfirmText('')
+      // Bakiyeler değişti — listeyi tazele.
+      if (owner) {
+        const list = await listAllWalletTokens(connection, owner)
+        setTokens(list.filter((t) => Number(t.uiAmount) > 0))
+      }
+    } catch (err) {
+      console.error(err)
+      setError(err instanceof Error ? err.message : 'Yakma işlemi sırasında bir hata oluştu.')
+      setStatus('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cluster = NETWORKS[network].explorerCluster
+
+  if (result) {
+    return (
+      <div className="token-form">
+        <h2>Yakma Tamamlandı 🔥</h2>
+        <p className="subtab-desc">
+          <strong>{result.amount}</strong> token kalıcı olarak yakıldı. Toplam arz zincirde
+          düştü — aşağıdaki değer işlemden sonra doğrudan mint hesabından okundu.
+        </p>
+        <div className="result-grid">
+          <div className="result-row">
+            <span>Yakılan miktar</span>
+            <code>{result.amount}</code>
+          </div>
+          <div className="result-row">
+            <span>Kalan toplam arz</span>
+            <code>{result.remainingSupply}</code>
+          </div>
+          <div className="result-row">
+            <span>Mint</span>
+            <code>{result.mint}</code>
+          </div>
+        </div>
+        <a
+          className="btn btn--secondary"
+          href={`https://explorer.solana.com/tx/${result.signature}${cluster}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          İşlemi Explorer'da görüntüle
+        </a>
+        <p className="subtab-desc">
+          Bu işlem linkini topluluğunuzla paylaşın — yakma taahhüdünüzün kanıtı budur.
+        </p>
+        <button type="button" className="btn btn--secondary" onClick={() => setResult(null)}>
+          Yeni Yakma İşlemi
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="token-form">
+      <h2>Likidite Yakma</h2>
+      <p className="subtab-desc">
+        LP token'ınızı yakarak havuzdaki likiditeyi <strong>süresiz</strong> kilitleyin. Yakılan
+        LP geri gelmediği için havuzdaki parayı siz dahil hiç kimse bir daha çekemez.
+      </p>
+
+      <div className="alert alert--warning">
+        ⚠️ <strong>Bu işlem geri alınamaz.</strong> Yakılan token yeniden basılamaz; kilidin
+        aksine bir süre sonunda geri alma imkânı yoktur. Doğru mint'i ve miktarı seçtiğinizden
+        emin olun.
+      </div>
+
+      <p className="subtab-desc">
+        <strong>Kilit mi, yakma mı?</strong> Kilitte bir bitiş tarihi vardır — o tarih
+        yaklaştıkça alıcılar için bir geri sayıma dönüşür ve satış baskısı yaratır. Yakmada böyle
+        bir tarih yoktur, ama likidite kalıcı olarak havuzda kalır: havuzdaki payınızı ileride
+        çekmeniz de mümkün olmaz.
+      </p>
+
+      {!wallet.connected ? (
+        <div className="alert alert--info">Yakma yapmak için önce cüzdanınızı bağlayın.</div>
+      ) : (
+        <>
+          <label className="field">
+            <span>Yakılacak Token *</span>
+            <select
+              value={mint}
+              onChange={(e) => {
+                setMint(e.target.value)
+                setAmount('')
+                setError('')
+              }}
+              disabled={busy || loadingTokens}
+            >
+              <option value="">
+                {loadingTokens ? 'Cüzdan taranıyor...' : 'Cüzdanınızdaki bir token seçin'}
+              </option>
+              {tokens.map((t) => (
+                <option key={t.tokenAccount} value={t.mint}>
+                  {t.mint.slice(0, 6)}…{t.mint.slice(-6)} — bakiye {t.uiAmount}
+                </option>
+              ))}
+            </select>
+            {!loadingTokens && tokens.length === 0 && (
+              <small>Bu cüzdanda bakiyesi olan token bulunamadı.</small>
+            )}
+          </label>
+
+          <label className="field">
+            <span>Yakılacak Miktar *</span>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder="ör. 1250.5"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              disabled={busy || !mint}
+            />
+            {balance !== null && (
+              <small>
+                Bakiyeniz: {balance}{' '}
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => setAmount(balance)}
+                  disabled={busy}
+                >
+                  tamamını yak
+                </button>
+              </small>
+            )}
+          </label>
+
+          <label className="field">
+            <span>
+              Onay — kutuya <strong>YAK</strong> yazın *
+            </span>
+            <input
+              type="text"
+              placeholder="YAK"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              disabled={busy || !mint}
+            />
+          </label>
+
+          <button
+            type="button"
+            className="btn btn--primary btn--block"
+            onClick={handleBurn}
+            disabled={!canBurn}
+          >
+            {busy ? 'Yakılıyor...' : '🔥 Tokenları Kalıcı Olarak Yak'}
+          </button>
+        </>
+      )}
+
+      {error && <div className="alert alert--error">{error}</div>}
+      {!error && status && <div className="alert alert--info">{status}</div>}
     </div>
   )
 }
