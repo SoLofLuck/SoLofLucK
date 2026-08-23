@@ -75,15 +75,109 @@ export async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelay
   throw new Error('unreachable')
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+type ConfirmOutcome =
+  | { kind: 'ok' }
+  | { kind: 'failed'; err: unknown }
+  | { kind: 'expired' }
+
 /**
- * Talimatları imzalatıp gönderir ve onaylanmasını bekler.
+ * İşlemin zincire yazılmasını HTTP yoklamasıyla bekler — `confirmTransaction`
+ * ile DEĞİL.
  *
- * Cüzdan onayı uzun sürerse (mobilde uygulama geçişi + kullanıcının okuma
- * süresi kolayca bir dakikayı bulabiliyor) blockhash'in ömrü dolar;
- * imzalanmış işlem artık geçersiz bir blockhash taşıdığı için AYNI imzayı
- * tekrar göndermek işe yaramaz. Böyle bir durumda tüm hazırla→imzala→gönder
- * döngüsü YENİ bir blockhash ve YENİ bir cüzdan onayıyla en baştan
- * tekrarlanıyor (en fazla birkaç kez).
+ * Sebep: `confirmTransaction` bir websocket aboneliği açıyor. Mobilde cüzdan
+ * onayı için uygulama değiştirildiğinde tarayıcı sayfayı arka plana alıyor ve
+ * bu abonelik sessizce kopuyor. Bildirim hiç gelmediği için işlem ZİNCİRE
+ * YAZILMIŞ olsa bile "block height exceeded" hatası veriliyordu — kullanıcı
+ * yakma başarısız sandı, oysa tokenlar yanmış olabilirdi. HTTP yoklaması
+ * arka plana alınmaya dayanıklı.
+ *
+ * Aynı döngüde imzalı işlem periyodik olarak YENİDEN yayınlanıyor: paylaşımlı
+ * devnet/mainnet RPC'leri yoğunlukta işlem düşürebiliyor ve tek gönderim
+ * çoğu zaman yetmiyor.
+ */
+async function confirmBySignature(
+  connection: Connection,
+  signature: string,
+  rawTx: Uint8Array,
+  lastValidBlockHeight: number,
+  onStatus?: (status: string) => void,
+): Promise<ConfirmOutcome> {
+  const deadline = Date.now() + 120_000
+  let lastResendAt = Date.now()
+
+  while (Date.now() < deadline) {
+    const status = await connection
+      .getSignatureStatuses([signature])
+      .then((r) => r.value[0])
+      .catch(() => null)
+
+    if (status) {
+      if (status.err) return { kind: 'failed', err: status.err }
+      if (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized') {
+        return { kind: 'ok' }
+      }
+    }
+
+    const height = await connection.getBlockHeight().catch(() => null)
+    if (height !== null && height > lastValidBlockHeight) {
+      // Blockhash penceresi kapandı. Kapanmadan hemen önce yazılmış olma
+      // ihtimaline karşı son bir kez daha bakıyoruz — burada acele edip
+      // "expired" dönmek, kullanıcıdan aynı işlem için ikinci bir imza
+      // istemek demek olurdu (yani çift yakma riski).
+      await sleep(2000)
+      const finalStatus = await connection
+        .getSignatureStatuses([signature])
+        .then((r) => r.value[0])
+        .catch(() => null)
+      if (finalStatus && !finalStatus.err) return { kind: 'ok' }
+      if (finalStatus?.err) return { kind: 'failed', err: finalStatus.err }
+      return { kind: 'expired' }
+    }
+
+    if (Date.now() - lastResendAt > 3000) {
+      // Yeniden yayın: aynı imza, aynı işlem — mükerrer bir işlem
+      // oluşturmaz, yalnızca düşürülmüş olabilecek paketi tekrar gönderir.
+      connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 0 }).catch(() => {})
+      lastResendAt = Date.now()
+      onStatus?.('Onay bekleniyor (işlem ağa tekrar gönderiliyor)...')
+    }
+
+    await sleep(1500)
+  }
+
+  return { kind: 'expired' }
+}
+
+/** Daha önce gönderilmiş imzalardan zincire yazılmış olan var mı? */
+async function findLandedSignature(
+  connection: Connection,
+  signatures: string[],
+): Promise<string | null> {
+  if (signatures.length === 0) return null
+  const statuses = await connection
+    .getSignatureStatuses(signatures)
+    .then((r) => r.value)
+    .catch(() => null)
+  if (!statuses) return null
+  for (let i = 0; i < signatures.length; i++) {
+    const st = statuses[i]
+    if (st && !st.err) return signatures[i]
+  }
+  return null
+}
+
+/**
+ * Talimatları imzalatıp gönderir ve zincire yazılmasını bekler.
+ *
+ * Normal koşulda TEK bir cüzdan onayı ister. Yalnızca işlem gerçekten
+ * zincire yazılmadıysa (blockhash penceresi kapandı ve imza hiçbir durumda
+ * görünmüyor) yeni bir blockhash'le yeniden imza istenir. Her yeni turdan
+ * ÖNCE önceki imzalar tekrar kontrol edilir: biri aslında yazılmışsa döngü
+ * orada biter — aynı işlemi iki kez göndermemek için.
  */
 export async function sendInstructions(
   connection: Connection,
@@ -95,8 +189,13 @@ export async function sendInstructions(
   const confirmMessage =
     options?.confirmMessage === undefined ? 'Cüzdanınızda onay bekleniyor...' : options.confirmMessage
 
+  const attempted: string[] = []
   const maxCycles = 3
+
   for (let cycle = 0; cycle < maxCycles; cycle++) {
+    const alreadyLanded = await findLandedSignature(connection, attempted)
+    if (alreadyLanded) return alreadyLanded
+
     const tx = new Transaction().add(...ixs)
 
     onStatus?.(cycle === 0 ? 'İşlem hazırlanıyor...' : `İşlem yeniden hazırlanıyor (${cycle + 1}. deneme)...`)
@@ -105,38 +204,41 @@ export async function sendInstructions(
     tx.feePayer = signer.publicKey
 
     if (confirmMessage) onStatus?.(confirmMessage)
+    // Mobilde uygulama geçişi + kullanıcının okuma süresi rahatlıkla bir
+    // dakikayı buluyor; bu yüzden onay için geniş bir pencere bırakıyoruz.
+    // Yine de sonsuz değil: deep-link hiç geri dönmezse net bir hata verip
+    // ekranı kilitli bırakmıyoruz.
     const signedTx = await withTimeout(
       signer.signTransaction(tx),
-      75_000,
-      'Cüzdan onayı 75 saniye içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
+      120_000,
+      'Cüzdan onayı 2 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
     )
+    const rawTx = signedTx.serialize()
 
-    try {
-      // skipPreflight: yük dengelemeli RPC düğümleri arasında kısa süreli
-      // state gecikmesi yüzünden preflight simülasyonu, gönderilen düğümde
-      // henüz görünmeyen (ama geçerli) bir blockhash'i reddedebiliyor
-      // ("Blockhash not found"). Preflight'ı atlayıp gerçek sonucu
-      // confirmTransaction'ın döndürdüğü err alanından okuyoruz.
-      onStatus?.('İşlem ağa gönderiliyor...')
-      const signature = await withRetry(() =>
-        connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true, maxRetries: 5 }),
-      )
+    // skipPreflight: yük dengelemeli RPC düğümleri arasında kısa süreli
+    // state gecikmesi yüzünden preflight simülasyonu, gönderilen düğümde
+    // henüz görünmeyen (ama geçerli) bir blockhash'i reddedebiliyor
+    // ("Blockhash not found"). Gerçek sonucu imza durumundan okuyoruz.
+    onStatus?.('İşlem ağa gönderiliyor...')
+    const signature = await withRetry(() =>
+      connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 0 }),
+    )
+    attempted.push(signature)
 
-      onStatus?.('Onay bekleniyor...')
-      const confirmation = await withRetry(() =>
-        connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
-      )
-      if (confirmation.value.err) {
-        throw new Error(`İşlem zincirde başarısız oldu: ${JSON.stringify(confirmation.value.err)}`)
-      }
+    onStatus?.('Onay bekleniyor...')
+    const outcome = await confirmBySignature(connection, signature, rawTx, lastValidBlockHeight, onStatus)
 
-      return signature
-    } catch (err) {
-      const isBlockhashExpiry =
-        err instanceof Error && /block height exceeded|blockhash not found/i.test(err.message)
-      if (!isBlockhashExpiry || cycle === maxCycles - 1) throw err
-      onStatus?.('Onay çok uzun sürdü, blockhash süresi doldu — yeni bir onay isteniyor...')
+    if (outcome.kind === 'ok') return signature
+    if (outcome.kind === 'failed') {
+      throw new Error(`İşlem zincirde başarısız oldu: ${JSON.stringify(outcome.err)}`)
     }
+    if (cycle === maxCycles - 1) {
+      throw new Error(
+        'İşlem zincire yazılmadı (blockhash süresi doldu). Ağ yoğun olabilir — biraz bekleyip tekrar deneyin. ' +
+          'Cüzdanınızdaki bakiye değişmediyse hiçbir işlem gerçekleşmemiştir.',
+      )
+    }
+    onStatus?.('İşlem zamanında zincire yazılmadı — yeni bir onayla tekrar deneniyor...')
   }
   throw new Error('unreachable')
 }

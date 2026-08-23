@@ -1185,6 +1185,19 @@ function TokenBurn({
       </div>
 
       <p className="subtab-desc">
+        <strong>Hangi token'ı seçmeliyim?</strong> Havuzun İÇİNDEKİ tokenlar yakılmaz — onlar
+        artık havuzun malıdır, üzerlerinde kimsenin yetkisi yoktur ve yakılsalar havuzun
+        dengesi bozulurdu. Yakılan şey <strong>LP token'ıdır</strong>: havuzu açtığınızda
+        cüzdanınıza gelen "makbuz". Havuzdaki parayı ancak bu makbuzu elinde tutan çekebilir;
+        makbuz yakılınca çekecek kimse kalmaz. Havuzdaki tokenlar yerinde durmaya ve alım-satımda
+        kullanılmaya devam eder.
+      </p>
+      <p className="subtab-desc">
+        Yani havuz için: listeden <strong>LP token'ını</strong> seçin (havuz oluşturduktan sonra
+        cüzdanınızda belirir), kendi projenizin token'ını değil. Aynı araçla satılmayan/kullanılmayan
+        kendi tokenlarınızı da yakabilirsiniz — o zaman doğrudan kendi token'ınızı seçin.
+      </p>
+      <p className="subtab-desc">
         <strong>Kilit mi, yakma mı?</strong> Kilitte bir bitiş tarihi vardır — o tarih
         yaklaştıkça alıcılar için bir geri sayıma dönüşür ve satış baskısı yaratır. Yakmada böyle
         bir tarih yoktur, ama likidite kalıcı olarak havuzda kalır: havuzdaki payınızı ileride
