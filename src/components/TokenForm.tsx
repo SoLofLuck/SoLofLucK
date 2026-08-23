@@ -81,12 +81,20 @@ export function TokenForm({ network }: Props) {
       setLogoFile(resized)
     } catch (err) {
       console.error('Logo küçültme hatası:', err)
-      if (file.size <= 300 * 1024) {
-        // Küçültme başarısız oldu ama dosya zaten küçük, olduğu gibi kullanılabilir.
-        setLogoFile(file)
-      } else {
-        setError('Görsel işlenemedi. Lütfen daha küçük/basit bir görsel deneyin.')
-      }
+      // Önceden burada bir yedek yol vardı: işleme başarısız olsa da dosya
+      // küçükse ORİJİNAL dosya olduğu gibi kabul ediliyordu. Ama işleme
+      // başarısızsa tarayıcı o görseli zaten çözemiyor demektir — sonuç,
+      // kırık bir önizleme ve token oluştururken "görsel yüklenemedi"
+      // hatasıydı. Doğrulayamadığımız bir dosyayı kabul etmiyoruz: seçim
+      // ya çalışır ve önizleme görünür, ya da net bir hata veririz.
+      setLogoFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      const isHeic = /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name)
+      setError(
+        isHeic
+          ? 'Bu görsel HEIC/HEIF biçiminde ve tarayıcılar bu biçimi açamıyor. Telefonunuzun galerisinden "JPG olarak paylaş/kaydet" seçeneğiyle dönüştürüp tekrar deneyin.'
+          : 'Görsel açılamadı. Ekran görüntüsü ya da düz bir PNG/JPG dosyası deneyin; logoyu boş bırakıp token\'ı yine oluşturabilirsiniz.',
+      )
     } finally {
       setStatus('')
     }
