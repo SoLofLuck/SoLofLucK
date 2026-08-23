@@ -1132,40 +1132,46 @@ function TokenBurn({
 
   if (result) {
     return (
-      <div className="token-form">
-        <h2>Yakma Tamamlandı 🔥</h2>
-        <p className="subtab-desc">
+      // Havuz oluşturma sonucuyla aynı kart deseni (result-card):
+      // etiket/değer alt alta, uzun adresler satır sonunda bölünüyor.
+      // Önce burada tanımlı olmayan sınıflar kullanılmıştı, o yüzden
+      // etiketle değer birbirine yapışıyor ve mint adresi ekrandan
+      // taşıyordu.
+      <div className="result-card">
+        <div className="result-card__icon">🔥</div>
+        <h2>Yakma Tamamlandı</h2>
+        <p>
           <strong>{result.amount}</strong> token kalıcı olarak yakıldı. Toplam arz zincirde
           düştü — aşağıdaki değer işlemden sonra doğrudan mint hesabından okundu.
         </p>
-        <div className="result-grid">
-          <div className="result-row">
-            <span>Yakılan miktar</span>
-            <code>{result.amount}</code>
-          </div>
-          <div className="result-row">
-            <span>Kalan toplam arz</span>
-            <code>{result.remainingSupply}</code>
-          </div>
-          <div className="result-row">
-            <span>Mint</span>
-            <code>{result.mint}</code>
-          </div>
+        <div className="result-card__row">
+          <span>Yakılan miktar</span>
+          <code>{result.amount}</code>
         </div>
-        <a
-          className="btn btn--secondary"
-          href={`https://explorer.solana.com/tx/${result.signature}${cluster}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          İşlemi Explorer'da görüntüle
-        </a>
+        <div className="result-card__row">
+          <span>Kalan toplam arz</span>
+          <code>{result.remainingSupply}</code>
+        </div>
+        <div className="result-card__row">
+          <span>Mint</span>
+          <code>{result.mint}</code>
+        </div>
+        <div className="result-card__links">
+          <a
+            className="btn btn--secondary"
+            href={`https://explorer.solana.com/tx/${result.signature}${cluster}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            İşlemi Explorer'da görüntüle
+          </a>
+          <button type="button" className="btn btn--secondary" onClick={() => setResult(null)}>
+            Yeni Yakma İşlemi
+          </button>
+        </div>
         <p className="subtab-desc">
           Bu işlem linkini topluluğunuzla paylaşın — yakma taahhüdünüzün kanıtı budur.
         </p>
-        <button type="button" className="btn btn--secondary" onClick={() => setResult(null)}>
-          Yeni Yakma İşlemi
-        </button>
       </div>
     )
   }
