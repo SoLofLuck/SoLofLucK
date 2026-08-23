@@ -66,11 +66,7 @@ const FAQ = [
   },
   {
     q: 'Fonlar nereye gidiyor?',
-    a: 'Tokenomics sekmesindeki dağılıma göre: %35 likidite havuzuna (kilitli), %30 presale katılımcılarına, %15 topluluk/çekiliş ödüllerine, %10 kilitli ekip payına, %10 pazarlama & borsa giderlerine ayrılır.',
-  },
-  {
-    q: 'Ne zaman Mainnet\'e geçilecek?',
-    a: 'Presale ve çekiliş mekaniği Devnet\'te sorunsuz çalıştığı doğrulandıktan sonra Mainnet\'e taşınacak. Kesin bir tarih henüz belirlenmedi — güncellemeler için topluluk kanallarını takip et.',
+    a: 'Tokenomics sekmesindeki dağılıma göre: %35 presale katılımcılarına, %20 likidite havuzuna (TGE\'de LP yakılır), %20 topluluk/çekiliş ödüllerine, %10 kilitli ekip payına, %15 pazarlama & CEX giderlerine ayrılır.',
   },
 ]
 
@@ -143,8 +139,7 @@ export function AboutTab() {
       <div className="alert alert--warning luck-about__disclaimer">
         ⚠️ $LUCK deneysel/eğlence amaçlı bir topluluk coin'idir, bir yatırım aracı değildir ve
         herhangi bir getiri vaadi içermez. Presale'e yalnızca kaybetmeyi göze alabileceğiniz
-        miktarda katılın. Şu an Devnet (test ağı) üzerindeyiz; gerçek SOL göndermeden önce ağ
-        seçiminizi mutlaka kontrol edin.
+        miktarda katılın.
       </div>
     </div>
   )
