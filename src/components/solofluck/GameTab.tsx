@@ -64,8 +64,16 @@ function friendlyErrorMessage(err: unknown): string {
   if (/429|rate limit/i.test(message)) {
     return 'RPC sunucusu şu an yoğun, birkaç saniye sonra tekrar dene.'
   }
-  if (/NoSpinsRemaining|0x1776|insufficient/i.test(message)) {
+  // DİKKAT: burada bir zamanlar `insufficient` de eşleşiyordu. Fazla genişti —
+  // "insufficient funds" / "insufficient lamports" (yani cüzdanda SOL yok)
+  // hataları da "spin hakkın kalmadı" diye gösteriliyordu. Gerçek sebebi
+  // gizleyen bir eşleşmeydi; artık yalnızca programın kendi hata koduna
+  // bakıyoruz.
+  if (/NoSpinsRemaining|0x1776/i.test(message)) {
     return 'Spin hakkın kalmadı — önce bir paket satın al.'
+  }
+  if (/insufficient funds|insufficient lamports|InsufficientFundsForFee/i.test(message)) {
+    return 'Cüzdanında yeterli SOL yok — işlem ücreti ve paket bedeli için biraz SOL gerekiyor.'
   }
   return message || 'İşlem başarısız oldu.'
 }

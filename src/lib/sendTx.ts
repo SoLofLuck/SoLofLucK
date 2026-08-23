@@ -107,6 +107,32 @@ type ConfirmOutcome =
   | { kind: 'expired' }
 
 /**
+ * Başarısız bir işlemin zincirdeki loglarını çeker.
+ *
+ * `getSignatureStatuses` yalnızca kuru bir hata kodu döndürüyor (ör.
+ * `{"InstructionError":[0,{"Custom":6003}]}`) — bu, ne kullanıcıya ne bize
+ * bir şey anlatıyor. Programın kendi `msg!` çıktıları ise gerçek sebebi
+ * yazıyor. Teşhisi tahmine bırakmamak için hatayla birlikte bunları da
+ * gösteriyoruz.
+ */
+async function fetchFailureLogs(connection: Connection, signature: string): Promise<string> {
+  try {
+    const tx = await withTimeout(
+      connection.getTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 }),
+      15_000,
+      'log sorgusu zaman aşımı',
+    )
+    const logs = tx?.meta?.logMessages ?? []
+    if (logs.length === 0) return ''
+    // Son satırlar hatayı içeriyor; başlangıçtaki "invoke/success"
+    // gürültüsünü almaya gerek yok.
+    return logs.slice(-6).join('\n')
+  } catch {
+    return ''
+  }
+}
+
+/**
  * İşlemin zincire yazılmasını HTTP yoklamasıyla bekler — `confirmTransaction`
  * ile DEĞİL.
  *
@@ -235,7 +261,7 @@ async function assertSimulationPasses(connection: Connection, tx: Transaction): 
   // başlayamadan hata veriyordu. Ön kontrolün işi, kullanıcının
   // düzeltebileceği net sorunları erken yakalamak; şüpheli her durumda
   // işlemi durdurmak değil.
-  console.warn('Simülasyon sonuçsuz, işleme devam ediliyor:', raw)
+  console.warn('Simülasyon sonuçsuz, işleme devam ediliyor:', raw, logs)
 }
 
 /**
@@ -372,7 +398,11 @@ export async function sendInstructions(
 
     if (outcome.kind === 'ok') return signature
     if (outcome.kind === 'failed') {
-      throw new Error(`İşlem zincirde başarısız oldu: ${JSON.stringify(outcome.err)}`)
+      onStatus?.('Hata ayrıntıları okunuyor...')
+      const logs = await fetchFailureLogs(connection, signature)
+      throw new Error(
+        `İşlem zincirde başarısız oldu: ${JSON.stringify(outcome.err)}${logs ? `\n\n${logs}` : ''}`,
+      )
     }
     if (cycle === maxCycles - 1) {
       throw new Error(

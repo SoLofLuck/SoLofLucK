@@ -626,6 +626,10 @@ button {
   background: rgba(248, 113, 113, 0.1);
   border: 1px solid rgba(248, 113, 113, 0.35);
   color: var(--danger);
+  /* Zincirden gelen program logları çok satırlı geliyor; satır sonlarını
+     koruyup uzun satırları kırıyoruz ki hata okunabilir olsun. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .alert--info {
