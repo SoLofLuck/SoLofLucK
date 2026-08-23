@@ -7,9 +7,8 @@ export function Footer() {
         bu siteye veya bir sunucuya gönderilmez; tüm işlemler cüzdanınızda imzalanır.
       </p>
       <p className="site-footer__disclaimer">
-        ⚠️ Kripto varlık oluşturmak ve dağıtmak yasal sorumluluklar doğurabilir. Mainnet'te işlem
-        yapmadan önce Devnet (test ağı) üzerinde deneyin. $LUCK presale'i de dahil bu sitedeki hiçbir
-        içerik yatırım tavsiyesi değildir.
+        ⚠️ Kripto varlık oluşturmak ve dağıtmak yasal sorumluluklar doğurabilir. $LUCK presale'i de
+        dahil bu sitedeki hiçbir içerik yatırım tavsiyesi değildir.
       </p>
     </footer>
   )
