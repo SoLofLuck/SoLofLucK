@@ -409,9 +409,8 @@ function PoolCreate({
       </p>
 
       <div className="alert alert--warning">
-        ⚠️ Bu işlem geri alınamaz ve gerçek token/SOL yatırmanızı gerektirir. Önce{' '}
-        <strong>Devnet</strong>'te (test ağı) deneyin. Yanlış miktar girmek, havuzun başlangıç
-        fiyatını yanlış ayarlayabilir.
+        ⚠️ Bu işlem geri alınamaz ve gerçek token/SOL yatırmanızı gerektirir. Yanlış miktar
+        girmek, havuzun başlangıç fiyatını yanlış ayarlayabilir.
       </div>
 
       <div className="token-pair-picker">
