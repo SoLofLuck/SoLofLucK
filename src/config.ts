@@ -101,10 +101,10 @@ export const PRESALE_WALLET = 'BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36'
 // ---------------------------------------------------------------------------
 // Token yayınlanana kadar oluşan giderleri (Raydium havuz açma ücreti, token
 // mint + metadata, RPC aboneliği, alan adı, pazarlama) karşılamak için her
-// presale katkısından ayrılan pay: 7.770 / 100.000 = %7.77 — projenin 777
-// temasıyla uyumlu. Piyasa normunun altında: launchpad'ler (PinkSale, DxSale
-// vb.) zaten toplanan fonun %2-5'ini platform ücreti alıyor, üstüne ekipler
-// genelde %10-30'unu pazarlama/operasyona ayırıyor.
+// presale katkısından ayrılan pay: 10.000 / 100.000 = %10. Piyasa normunun
+// içinde, hatta altında: launchpad'ler (PinkSale, DxSale vb.) zaten toplanan
+// fonun %2-5'ini platform ücreti alıyor, üstüne ekipler genelde %10-30'unu
+// pazarlama/operasyona ayırıyor. 777 SOL'lük hedefte tam 77,7 SOL ediyor.
 //
 // ÖNEMLİ — bu pay PRESALE_WALLET'a HİÇ GİRMEZ: katkının içinden AYNI işlemde
 // ayrı bir transfer olarak doğrudan bu cüzdana gider. Böylece TGE'de likidite
@@ -115,8 +115,45 @@ export const PRESALE_WALLET = 'BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36'
 //
 // Boş bırakılırsa pay hiç alınmaz, katkının %100'ü presale cüzdanına gider.
 export const PRESALE_OPS_WALLET = '2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9'
-export const PRESALE_OPS_FEE_NUM = 7770
+export const PRESALE_OPS_FEE_NUM = 10_000
 export const PRESALE_OPS_FEE_DEN = 100_000
+
+// ---------------------------------------------------------------------------
+// Presale kuralları: sabit fiyat, hedef, taban, süre
+// ---------------------------------------------------------------------------
+// Presale SABİT FİYATLIDIR — katkıda bulunan, parayı gönderirken tam olarak
+// kaç $LUCK alacağını bilir. Fiyat, hedeften türetiliyor ve tam yuvarlak
+// çıkıyor:
+//
+//     271.950.000 presale tokeni ÷ 777 SOL = 1 SOL başına 350.000 $LUCK
+//
+// HEDEFE ULAŞILIRSA presale anında kapanır ve TGE'ye geçilir; 777 SOL'den
+// fazla katkı kabul edilmez (hard cap).
+//
+// HEDEFE ULAŞILAMAZSA (7 hafta dolduğunda) yine TGE yapılır — ama arz,
+// toplanan orana göre KÜÇÜLTÜLÜR: hedefin %X'i toplandıysa HER KOVADAN
+// (presale, likidite, topluluk, ekip, pazarlama) yalnızca %X'i basılır,
+// kalan %100−X yakılır. Yüzdelik dağılım (35-20-20-10-15) aynen korunur.
+//
+// Bu kural kritik: yalnızca satılmayan presale tokenlerini yakıp likidite
+// kovasını sabit bırakırsak, havuza giden SOL azalırken token sabit kalır ve
+// açılış fiyatı presale fiyatının ALTINA düşer — alıcılar daha ilk saniyede
+// zarara geçerdi. Oransal yakma sayesinde açılış fiyatı, toplanan miktardan
+// BAĞIMSIZ olarak her zaman presale fiyatının %34 üstünde açılır.
+//
+// TABAN (soft cap): 77 SOL'ün altında kalınırsa TGE yapılmaz, katkılar iade
+// edilir. Sebebi ikisi birden: (1) bu tutarın altında operasyon payı lansman
+// giderlerini karşılamıyor, (2) o kadar sığ bir havuzda tek bir küçük alım
+// fiyatı çok oynatır, sağlıklı bir piyasa oluşmaz.
+export const PRESALE_TARGET_SOL = 777
+export const PRESALE_SOFT_CAP_SOL = 77
+export const PRESALE_TOKENS_PER_SOL = 350_000
+export const PRESALE_DURATION_WEEKS = 7
+
+// Presale başlangıcı — ISO 8601 (ör. '2026-09-01T18:00:00Z'). Boş bırakılırsa
+// site "başlangıç tarihi yakında duyurulacak" der ve geri sayım gösterilmez.
+// Bitiş, başlangıçtan PRESALE_DURATION_WEEKS hafta sonrasıdır.
+export const PRESALE_START_ISO = ''
 
 // Sabit paket seçeneklerinde her 0.5 SOL için kazanılan çekiliş bileti.
 export const PRESALE_TICKET_UNIT_SOL = 0.5
@@ -253,7 +290,7 @@ export const PUBLIC_WALLETS = [
 ] as const
 
 // Presale'de toplanan SOL'un (operasyon payı düşüldükten sonra kalan
-// %92,23'ün) nereye gittiği. Token dağılımından (TOKENOMICS) AYRI bir
+// %90'ın) nereye gittiği. Token dağılımından (TOKENOMICS) AYRI bir
 // tablodur: biri token, bu ise para.
 export const PRESALE_SOL_ALLOCATION = [
   { key: 'liquidity', label: 'Likidite havuzu', percent: 85 },

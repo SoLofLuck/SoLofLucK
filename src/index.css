@@ -1672,6 +1672,12 @@ button {
   color: var(--text-muted);
 }
 
+.luck-tier-btn__tokens {
+  font-size: 0.68rem;
+  color: #22d3ee;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Oyun sekmesi — kullanıcının kendi ürettiği gerçekçi altın slot makinesi
    görseli (src/assets/slot-machine.png), duruma göre animasyonlanıyor. */
 .luck-slot {
@@ -2152,6 +2158,90 @@ button {
 /* Presale operasyon payı açıklaması — gizlenmemesi gereken bir bilgi
    olduğu için normal metin boyutunda, uyarı kutusu gibi değil ama
    göz ardı edilemeyecek bir kontrastla gösteriliyor. */
+/* Presale hedef göstergesi: canlı doluluk çubuğu, sabit fiyat ve kalan süre.
+   Doluluk, presale cüzdanının zincirdeki bakiyesinden okunuyor (bkz.
+   usePresaleProgress) — ayrı bir backend/indexer yok. */
+.luck-presale__meter {
+  margin: 0 0 1.25rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 0.75rem;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.luck-presale__meter-head,
+.luck-presale__meter-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.luck-presale__meter-label {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.luck-presale__meter-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.luck-presale__bar {
+  position: relative;
+  height: 0.75rem;
+  margin: 0.6rem 0;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+
+.luck-presale__bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22d3ee, #a855f7);
+  transition: width 0.6s ease;
+}
+
+/* Taban (soft cap) çizgisi — bu noktanın altında TGE yapılmıyor. */
+.luck-presale__bar-softcap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(250, 204, 21, 0.9);
+}
+
+.luck-presale__meter-foot {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.luck-presale__meter-foot strong {
+  color: #22d3ee;
+}
+
+.luck-presale__rules {
+  margin: 0.9rem 0 1.25rem;
+  padding-left: 1.15rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.luck-presale__rules li {
+  margin-bottom: 0.45rem;
+}
+
+.luck-presale__rules strong {
+  color: var(--text);
+}
+
 .luck-presale__ops-note {
   margin: 0.75rem 0 0;
   padding: 0.85rem 1rem;

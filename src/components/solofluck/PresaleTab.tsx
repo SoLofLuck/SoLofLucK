@@ -1,19 +1,87 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
-import { NETWORKS, PRESALE_TIERS, PRESALE_TICKET_UNIT_SOL, PRESALE_WALLET, type NetworkId } from '../../config'
+import {
+  NETWORKS,
+  PRESALE_DURATION_WEEKS,
+  PRESALE_SOFT_CAP_SOL,
+  PRESALE_TARGET_SOL,
+  PRESALE_TICKET_UNIT_SOL,
+  PRESALE_TIERS,
+  PRESALE_TOKENS_PER_SOL,
+  PRESALE_WALLET,
+  type NetworkId,
+} from '../../config'
 import {
   PRESALE_OPS_FEE_PERCENT,
   calcTickets,
+  computePresaleProgress,
+  formatRemaining,
   getLocalContributions,
+  presaleEndsAt,
   presaleOpsFeeActive,
+  presalePhaseAt,
   sendPresaleContribution,
+  tokensForSol,
 } from '../../lib/presale'
 import { useSolUsdPrice } from '../../lib/solPrice'
 
 function formatUsd(sol: number, solUsd: number | null): string {
   if (!solUsd || !Number.isFinite(sol) || sol <= 0) return ''
   return `≈ $${(sol * solUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+}
+
+function formatTokens(n: number): string {
+  return n.toLocaleString('tr-TR', { maximumFractionDigits: 0 })
+}
+
+/**
+ * Presale cüzdanının bakiyesinden canlı doluluk. Katkılar düz SOL transferi
+ * olduğu için ayrı bir indexer'a gerek yok — cüzdanın bakiyesi toplananın
+ * kendisi. Operasyon payı bu cüzdana hiç girmediğinden brüt tutar
+ * computePresaleProgress içinde geri hesaplanıyor.
+ */
+function usePresaleProgress(connection: { getBalance: (k: PublicKey) => Promise<number> }) {
+  const [poolSol, setPoolSol] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!PRESALE_WALLET) return
+    let cancelled = false
+    let key: PublicKey
+    try {
+      key = new PublicKey(PRESALE_WALLET)
+    } catch {
+      return
+    }
+    const read = async () => {
+      try {
+        const lamports = await connection.getBalance(key)
+        if (!cancelled) setPoolSol(lamports / LAMPORTS_PER_SOL)
+      } catch {
+        // RPC geçici olarak cevap vermediyse eski değeri koru — çubuğu
+        // sıfırlamak, "toplanan para kayboldu" gibi yanlış bir izlenim verir.
+      }
+    }
+    read()
+    const id = setInterval(read, 30_000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [connection])
+
+  return poolSol
+}
+
+/** Dakikada bir yenilenen "şu an" — geri sayımı canlı tutar. */
+function useNow(intervalMs = 60_000) {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+  return now
 }
 
 interface Props {
@@ -41,6 +109,23 @@ export function PresaleTab({ network }: Props) {
 
   const configured = Boolean(PRESALE_WALLET)
   const totalTickets = history.reduce((sum, h) => sum + h.tickets, 0)
+
+  const poolSol = usePresaleProgress(connection)
+  const now = useNow()
+  const progress = computePresaleProgress(poolSol ?? 0)
+  const phase = presalePhaseAt(now)
+  const endsAt = presaleEndsAt()
+  // Katkı yalnızca presale gerçekten açıkken kabul edilir: hedef dolduysa
+  // (hard cap) ya da takvim bittiyse butonlar kapanır. Takvim henüz ilan
+  // edilmediyse ('unscheduled') test aşamasında olduğumuz için açık bırakılır.
+  const closedReason = progress.targetReached
+    ? 'reached'
+    : phase === 'ended'
+      ? 'ended'
+      : phase === 'upcoming'
+        ? 'upcoming'
+        : null
+  const canContribute = configured && wallet.connected && closedReason === null
 
   async function handleFlexSubmit(e: FormEvent) {
     e.preventDefault()
@@ -95,6 +180,59 @@ export function PresaleTab({ network }: Props) {
         </div>
       )}
 
+      <div className="luck-presale__meter">
+        <div className="luck-presale__meter-head">
+          <span className="luck-presale__meter-label">Presale Hedefi</span>
+          <span className="luck-presale__meter-value">
+            {poolSol === null ? '—' : progress.grossSol.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}{' '}
+            / {PRESALE_TARGET_SOL} SOL
+          </span>
+        </div>
+        <div
+          className="luck-presale__bar"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={PRESALE_TARGET_SOL}
+          aria-valuenow={poolSol === null ? 0 : Math.round(progress.grossSol)}
+        >
+          <div className="luck-presale__bar-fill" style={{ width: `${progress.percent}%` }} />
+          <div
+            className="luck-presale__bar-softcap"
+            style={{ left: `${(PRESALE_SOFT_CAP_SOL / PRESALE_TARGET_SOL) * 100}%` }}
+            title={`Taban: ${PRESALE_SOFT_CAP_SOL} SOL`}
+          />
+        </div>
+        <div className="luck-presale__meter-foot">
+          <span>
+            <strong>1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>
+          </span>
+          <span>
+            {phase === 'live' && endsAt
+              ? `Bitişe ${formatRemaining(endsAt.getTime() - now.getTime())}`
+              : phase === 'upcoming'
+                ? 'Henüz başlamadı'
+                : phase === 'ended'
+                  ? 'Presale sona erdi'
+                  : `${PRESALE_DURATION_WEEKS} hafta — tarih yakında`}
+          </span>
+        </div>
+      </div>
+
+      {closedReason === 'reached' && (
+        <div className="alert alert--info">
+          🎉 Hedefe ulaşıldı — presale kapandı. Sıradaki adım TGE: likidite havuzu açılır ve LP
+          token'ları yakılır.
+        </div>
+      )}
+      {closedReason === 'ended' && (
+        <div className="alert alert--info">
+          Presale süresi doldu. Toplanan tutara göre arz oranlanır, kalan tokenler yakılır.
+        </div>
+      )}
+      {closedReason === 'upcoming' && (
+        <div className="alert alert--info">Presale henüz başlamadı — katkı kabul edilmiyor.</div>
+      )}
+
       {!wallet.connected && (
         <div className="luck-presale__connect">
           <p>Presale'e katılmak için önce cüzdanını bağla.</p>
@@ -106,8 +244,9 @@ export function PresaleTab({ network }: Props) {
         <form className="token-form luck-presale__card" onSubmit={handleFlexSubmit}>
           <h2>Serbest Katkı</h2>
           <p className="subtab-desc">
-            İstediğin kadar SOL gönder. Bu seçenekte çekiliş bileti yoktur; katkın karşılığında
-            $LUCK, presale sonunda cüzdanına transfer edilir.
+            İstediğin kadar SOL gönder. Fiyat sabit:{' '}
+            <strong>1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>. Bu seçenekte
+            çekiliş bileti yoktur; tokenlerin presale sonunda cüzdanına transfer edilir.
           </p>
           <label className="field">
             <span>Miktar (SOL)</span>
@@ -118,16 +257,19 @@ export function PresaleTab({ network }: Props) {
               placeholder="ör. 2.5"
               value={flexAmount}
               onChange={(e) => setFlexAmount(e.target.value)}
-              disabled={!configured || !wallet.connected}
+              disabled={!canContribute}
             />
-            {solUsd && Number(flexAmount) > 0 && (
-              <small>{formatUsd(Number(flexAmount), solUsd)}</small>
+            {Number(flexAmount) > 0 && (
+              <small>
+                <strong>{formatTokens(tokensForSol(Number(flexAmount)))} $LUCK</strong>
+                {solUsd ? ` · ${formatUsd(Number(flexAmount), solUsd)}` : ''}
+              </small>
             )}
           </label>
           <button
             type="submit"
             className="btn btn--primary btn--block"
-            disabled={!configured || !wallet.connected || loading !== null}
+            disabled={!canContribute || loading !== null}
           >
             {loading === 'flex' ? 'Gönderiliyor...' : 'Katkıda Bulun'}
           </button>
@@ -147,9 +289,10 @@ export function PresaleTab({ network }: Props) {
                 type="button"
                 className={`luck-tier-btn ${selectedTier === tier ? 'luck-tier-btn--active' : ''}`}
                 onClick={() => setSelectedTier(tier)}
-                disabled={!configured || !wallet.connected}
+                disabled={!canContribute}
               >
                 <span className="luck-tier-btn__amount">{tier} SOL</span>
+                <span className="luck-tier-btn__tokens">{formatTokens(tokensForSol(tier))} $LUCK</span>
                 {solUsd && <span className="luck-tier-btn__usd">{formatUsd(tier, solUsd)}</span>}
                 <span className="luck-tier-btn__tickets">🎟 {calcTickets(tier)}</span>
               </button>
@@ -159,7 +302,7 @@ export function PresaleTab({ network }: Props) {
             type="button"
             className="btn btn--primary btn--block"
             onClick={handleFixedSubmit}
-            disabled={!configured || !wallet.connected || loading !== null || !selectedTier}
+            disabled={!canContribute || loading !== null || !selectedTier}
           >
             {loading === 'fixed'
               ? 'Gönderiliyor...'
@@ -182,6 +325,27 @@ export function PresaleTab({ network }: Props) {
           görürsün.
         </p>
       )}
+
+      <ul className="luck-presale__rules">
+        <li>
+          <strong>Sabit fiyat.</strong> 1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK. Ne
+          kadar toplanırsa toplansın bu oran değişmez; gönderirken tam olarak ne alacağını bilirsin.
+        </li>
+        <li>
+          <strong>Hedef {PRESALE_TARGET_SOL} SOL, süre {PRESALE_DURATION_WEEKS} hafta.</strong>{' '}
+          Hedefe erken ulaşılırsa presale o anda kapanır ve TGE'ye geçilir.
+        </li>
+        <li>
+          <strong>Hedef dolmazsa arz oranlanır.</strong> Hedefin %X'i toplandıysa her kovadan
+          (presale, likidite, topluluk, ekip, pazarlama) yalnızca %X'i basılır, kalanı{' '}
+          <strong>yakılır</strong>. Yüzdelik dağılım aynen korunur ve havuz açılış fiyatı
+          değişmez — hangi tutarda kapanırsa kapansın presale fiyatının üstünde açılır.
+        </li>
+        <li>
+          <strong>Taban {PRESALE_SOFT_CAP_SOL} SOL.</strong> Bu tutara ulaşılmazsa TGE yapılmaz ve
+          katkılar iade edilir. İade işlemleri zincirde takip edilebilir.
+        </li>
+      </ul>
 
       {error && <div className="alert alert--error">{error}</div>}
       {!error && status && <div className="alert alert--info">{status}</div>}

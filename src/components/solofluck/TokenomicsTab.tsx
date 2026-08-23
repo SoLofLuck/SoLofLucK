@@ -1,7 +1,11 @@
 import {
   LUCK_TOKEN,
   MARKETING_BREAKDOWN,
+  PRESALE_DURATION_WEEKS,
+  PRESALE_SOFT_CAP_SOL,
   PRESALE_SOL_ALLOCATION,
+  PRESALE_TARGET_SOL,
+  PRESALE_TOKENS_PER_SOL,
   PUBLIC_WALLETS,
   TOKENOMICS,
   VESTING_SCHEDULE,
@@ -82,6 +86,45 @@ export function TokenomicsTab() {
           </li>
         ))}
       </ul>
+
+      <h3 className="luck-tokenomics__subhead">Presale Kuralları</h3>
+      <ul className="luck-tokenomics__sol-list">
+        <li>
+          <span>Fiyat (sabit)</span>
+          <strong>1 SOL = {formatSupply(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>
+        </li>
+        <li>
+          <span>Hedef (hard cap)</span>
+          <strong>{PRESALE_TARGET_SOL} SOL</strong>
+        </li>
+        <li>
+          <span>Taban (soft cap)</span>
+          <strong>{PRESALE_SOFT_CAP_SOL} SOL</strong>
+        </li>
+        <li>
+          <span>Süre</span>
+          <strong>{PRESALE_DURATION_WEEKS} hafta</strong>
+        </li>
+      </ul>
+      <p className="subtab-desc">
+        Fiyat sabittir — katkıda bulunan, parayı gönderirken kaç $LUCK alacağını tam olarak bilir.
+        Hedefe süre dolmadan ulaşılırsa presale o anda kapanır ve TGE'ye geçilir; {PRESALE_TARGET_SOL}{' '}
+        SOL'den fazlası kabul edilmez.
+      </p>
+      <p className="subtab-desc">
+        <strong>Hedef dolmazsa arz oranlanır.</strong> Hedefin %X'i toplandıysa{' '}
+        <strong>her kovadan</strong> (presale, likidite, topluluk, ekip, pazarlama) yalnızca %X'i
+        basılır, kalan %100−X <strong>yakılır</strong>. Yukarıdaki yüzdelik dağılım aynen korunur.
+        Böylece havuzun açılış fiyatı toplanan miktardan bağımsız olarak sabit kalır ve presale
+        alıcısı hangi tutarda kapanırsa kapansın listelemede presale fiyatının üstünde başlar.
+        Yalnızca satılmayan presale tokenlerini yakıp likidite kovasını sabit bırakmak bunu
+        bozardı: havuza giden SOL azalırken token sabit kalır, açılış fiyatı presale fiyatının
+        altına düşerdi.
+      </p>
+      <p className="subtab-desc">
+        <strong>Taban {PRESALE_SOFT_CAP_SOL} SOL.</strong> Bu tutara ulaşılmazsa TGE yapılmaz ve
+        katkılar iade edilir — iadeler zincirde tek tek doğrulanabilir.
+      </p>
 
       <h3 className="luck-tokenomics__subhead">Kilit ve Açılış Takvimi</h3>
       <p className="subtab-desc">
