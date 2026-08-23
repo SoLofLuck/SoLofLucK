@@ -27,7 +27,7 @@ interface Props {
   network: NetworkId
 }
 
-type SubTab = 'search' | 'create' | 'manage' | 'lock'
+type SubTab = 'create' | 'manage' | 'lock' | 'search'
 
 function fmtNum(n: number, digits = 6): string {
   if (!Number.isFinite(n)) return '-'
@@ -73,18 +73,15 @@ function poolValueInSol(poolInfo: {
 export function LiquidityPage({ network }: Props) {
   const { connection } = useConnection()
   const wallet = useWallet()
-  const [subTab, setSubTab] = useState<SubTab>('search')
+  // Sekme sırası, kullanıcının havuzla yapacağı işin doğal sırasını
+  // izliyor: önce havuzu kur, sonra likidite ekle/çıkar, sonra kilitle.
+  // Salt okunur "Havuz Ara" en sona alındı — bir işlem değil, sorgulama
+  // aracı olduğu için sayfanın ilk karşılayan sekmesi olmamalı.
+  const [subTab, setSubTab] = useState<SubTab>('create')
 
   return (
     <div className="liquidity-page">
       <div className="subtabs">
-        <button
-          type="button"
-          className={`subtab ${subTab === 'search' ? 'subtab--active' : ''}`}
-          onClick={() => setSubTab('search')}
-        >
-          Havuz Ara
-        </button>
         <button
           type="button"
           className={`subtab ${subTab === 'create' ? 'subtab--active' : ''}`}
@@ -106,12 +103,19 @@ export function LiquidityPage({ network }: Props) {
         >
           Likidite Kilitle
         </button>
+        <button
+          type="button"
+          className={`subtab ${subTab === 'search' ? 'subtab--active' : ''}`}
+          onClick={() => setSubTab('search')}
+        >
+          Havuz Ara
+        </button>
       </div>
 
-      {subTab === 'search' && <PoolSearch network={network} />}
       {subTab === 'create' && <PoolCreate network={network} connection={connection} wallet={wallet} />}
       {subTab === 'manage' && <PoolManage network={network} connection={connection} wallet={wallet} />}
       {subTab === 'lock' && <PoolLock network={network} connection={connection} wallet={wallet} />}
+      {subTab === 'search' && <PoolSearch network={network} />}
     </div>
   )
 }

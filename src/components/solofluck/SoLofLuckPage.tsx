@@ -73,11 +73,7 @@ export function SoLofLuckPage({ network }: Props) {
               ))}
             </div>
           )}
-          <p>
-            $LUCK dahil bu sitedeki hiçbir içerik yatırım tavsiyesi değildir. Testnet (Devnet)
-            aşamasındayız — gerçek değeri olan varlıkları göndermeden önce ağın Devnet olduğundan
-            emin olun.
-          </p>
+          <p>$LUCK dahil bu sitedeki hiçbir içerik yatırım tavsiyesi değildir.</p>
         </footer>
       </div>
     </div>
