@@ -179,6 +179,50 @@ async function confirmBySignature(
   return { kind: 'expired' }
 }
 
+/**
+ * İmza istemeden ÖNCE işlemi simüle eder ve kesin bir hata varsa net bir
+ * mesajla durur.
+ *
+ * Neden gerekli: gerçek gönderimde `skipPreflight: true` kullanıyoruz
+ * (blockhash yayılma gecikmesi yüzünden sahte "Blockhash not found"
+ * hatalarını atlamak için). Ama preflight'ı atlamanın bedeli, GERÇEK
+ * hataların da gizlenmesi: cüzdanda ağ ücreti için SOL kalmadığında işlem
+ * lider tarafından reddediliyor, hiç zincire yazılmıyor ve biz bunu
+ * "blockhash süresi doldu" diye raporluyorduk. Kullanıcı defalarca imza
+ * atıp neden başarısız olduğunu göremiyordu.
+ *
+ * Simülasyon imza gerektirmiyor, ücretsiz ve hızlı — bu yüzden cüzdanı
+ * hiç rahatsız etmeden önce çalıştırıyoruz.
+ */
+async function assertSimulationPasses(connection: Connection, tx: Transaction): Promise<void> {
+  let result
+  try {
+    result = await withTimeout(connection.simulateTransaction(tx), 15_000, 'Simülasyon zaman aşımı.')
+  } catch {
+    // Simülasyonun KENDİSİ başarısız olduysa (RPC hatası, zaman aşımı) yolu
+    // tıkamıyoruz — bu geçici bir durum olabilir ve kullanıcıyı gerçek bir
+    // sorun olmadan durdurmak istemeyiz.
+    return
+  }
+
+  const err = result.value.err
+  if (!err) return
+
+  const raw = JSON.stringify(err)
+  const logs = (result.value.logs ?? []).join('\n')
+
+  if (/InsufficientFundsForFee/i.test(raw) || /insufficient lamports/i.test(logs)) {
+    throw new Error(
+      'Cüzdanınızda ağ ücretini ödeyecek kadar SOL yok. Devnet\'te ücretsiz SOL için ' +
+        'faucet.solana.com adresini kullanabilir, Mainnet\'te cüzdanınıza biraz SOL göndermeniz gerekir.',
+    )
+  }
+  if (/insufficient funds/i.test(logs)) {
+    throw new Error('Bakiye yetersiz — işlemin gerektirdiği tutar cüzdanınızda yok.')
+  }
+  throw new Error(`İşlem simülasyonu başarısız: ${raw}`)
+}
+
 /** Daha önce gönderilmiş imzalardan zincire yazılmış olan var mı? */
 async function findLandedSignature(
   connection: Connection,
@@ -239,6 +283,13 @@ export async function sendInstructions(
     )
     tx.recentBlockhash = blockhash
     tx.feePayer = signer.publicKey
+
+    // İmza istemeden önce kesin hataları yakala (yetersiz bakiye vb.).
+    // Yalnızca ilk turda: sonraki turlar aynı talimatları taşıyor.
+    if (cycle === 0) {
+      onStatus?.('İşlem kontrol ediliyor...')
+      await assertSimulationPasses(connection, tx)
+    }
 
     if (confirmMessage) onStatus?.(confirmMessage)
 
