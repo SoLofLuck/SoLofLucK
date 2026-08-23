@@ -134,15 +134,7 @@ export function GameTab() {
 
   const realWalletSigner: TxSigner | null =
     wallet.publicKey && wallet.signTransaction
-      ? {
-          publicKey: wallet.publicKey,
-          signTransaction: wallet.signTransaction,
-          // Gerçek cüzdanda, işlemi cüzdanın kendi altyapısından yayınlamak
-          // mobilde belirgin şekilde daha güvenilir (bkz. sendTx.ts).
-          // Delegate/test anahtarlarında böyle bir metot yok, orada
-          // sign + send yolu kullanılıyor.
-          sendTransaction: (tx, conn, opts) => wallet.sendTransaction(tx, conn, opts),
-        }
+      ? { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction }
       : null
 
   const delegateActive =

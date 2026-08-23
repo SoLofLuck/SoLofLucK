@@ -19,20 +19,15 @@ import {
 export interface TxSigner {
   publicKey: PublicKey
   signTransaction: (tx: Transaction) => Promise<Transaction>
-  /**
-   * Cüzdan adaptörünün kendi gönderme metodu. VARSA TERCİH EDİLİR: cüzdan
-   * işlemi kendi altyapısından yayınlıyor ve bunu onay ekranından çıkar
-   * çıkmaz yapıyor. Mobilde bu fark kritik — imzayı alıp tarayıcıya geri
-   * dönmeyi, sonra tarayıcıdan RPC'ye göndermeyi beklemek, blockhash'in
-   * ömrünün önemli bir kısmını harcıyor. Yerel anahtarlarda (delegate,
-   * test cüzdanı) böyle bir metot yok; orada sign + send yolu kullanılıyor.
-   */
-  sendTransaction?: (
-    tx: Transaction,
-    connection: Connection,
-    options?: { skipPreflight?: boolean; maxRetries?: number },
-  ) => Promise<string>
 }
+
+// NOT: cüzdan adaptörünün kendi `sendTransaction` metodu BİLEREK
+// kullanılmıyor. Mobilde bir tur gidiş-geliş kazandırıyor, ama işlemi
+// CÜZDANIN seçili olduğu ağa yayınlıyor — bizim bağlandığımız ağa değil.
+// Cüzdan başka bir ağdayken (ör. Phantom'da Devnet yerine Testnet seçili)
+// işlem sessizce yanlış ağa gidiyor. İmzayı alıp kendi bağlantımızdan
+// göndermek, işlemin her zaman sitenin seçtiği ağa gitmesini garanti
+// ediyor; hız kazancı bu garantiden vazgeçmeye değmez.
 
 // İşlemlere eklenen küçük öncelik ücreti. Ağ yoğunken önceliksiz işlemler
 // lider tarafından sessizce düşürülüyor ve blockhash süresi doluyor —
@@ -129,7 +124,7 @@ type ConfirmOutcome =
 async function confirmBySignature(
   connection: Connection,
   signature: string,
-  rawTx: Uint8Array | null,
+  rawTx: Uint8Array,
   lastValidBlockHeight: number,
   onStatus?: (status: string) => void,
 ): Promise<ConfirmOutcome> {
@@ -165,7 +160,7 @@ async function confirmBySignature(
       return { kind: 'expired' }
     }
 
-    if (rawTx && Date.now() - lastResendAt > 3000) {
+    if (Date.now() - lastResendAt > 3000) {
       // Yeniden yayın: aynı imza, aynı işlem — mükerrer bir işlem
       // oluşturmaz, yalnızca düşürülmüş olabilecek paketi tekrar gönderir.
       connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 }).catch(() => {})
@@ -221,6 +216,38 @@ async function assertSimulationPasses(connection: Connection, tx: Transaction): 
     throw new Error('Bakiye yetersiz — işlemin gerektirdiği tutar cüzdanınızda yok.')
   }
   throw new Error(`İşlem simülasyonu başarısız: ${raw}`)
+}
+
+/**
+ * Ücreti ödeyecek hesabın SİTENİN BAĞLI OLDUĞU ağdaki bakiyesini kontrol
+ * eder.
+ *
+ * Bu kontrol, cüzdanın kendi ekranında gösterdiği bakiyeye değil, bizim
+ * RPC bağlantımıza bakıyor — ve tam da bu yüzden değerli: cüzdan başka bir
+ * ağa ayarlıysa (ör. Phantom "Testnet Mode" içinde Devnet yerine Testnet
+ * seçiliyse) kullanıcı cüzdanında dolu bir bakiye görüyor ama işlemler
+ * bizim ağımızda ücretsiz kalıyor ve hiç zincire yazılmıyor. Mesajda hem
+ * gerçek bakiyeyi hem de ağ adını veriyoruz ki yanlış ağ durumu anlaşılsın.
+ */
+async function assertFeePayerFunded(connection: Connection, feePayer: PublicKey): Promise<void> {
+  let lamports: number
+  try {
+    lamports = await withTimeout(connection.getBalance(feePayer), 15_000, 'Bakiye sorgusu zaman aşımı.')
+  } catch {
+    return // Geçici RPC sorunu — kullanıcıyı boşuna durdurmuyoruz.
+  }
+
+  // Taban işlem ücreti (5.000) + öncelik ücreti üst sınırı + küçük bir pay.
+  const needed = 5_000 + (COMPUTE_UNIT_LIMIT * PRIORITY_FEE_MICRO_LAMPORTS) / 1_000_000 + 5_000
+  if (lamports >= needed) return
+
+  const sol = (lamports / 1_000_000_000).toFixed(9).replace(/0+$/, '').replace(/\.$/, '')
+  throw new Error(
+    `Bu ağda cüzdanınızda ${sol} SOL var; işlem ücreti için yeterli değil. ` +
+      'Cüzdanınızda dolu bir bakiye görüyorsanız cüzdanınız BAŞKA BİR AĞA ayarlı olabilir — ' +
+      'sitedeki ağ seçimiyle (üst soldaki menü) cüzdanınızın ağının aynı olduğundan emin olun. ' +
+      'Devnet için ücretsiz SOL: faucet.solana.com',
+  )
 }
 
 /** Daha önce gönderilmiş imzalardan zincire yazılmış olan var mı? */
@@ -288,6 +315,7 @@ export async function sendInstructions(
     // Yalnızca ilk turda: sonraki turlar aynı talimatları taşıyor.
     if (cycle === 0) {
       onStatus?.('İşlem kontrol ediliyor...')
+      await assertFeePayerFunded(connection, signer.publicKey)
       await assertSimulationPasses(connection, tx)
     }
 
@@ -302,35 +330,21 @@ export async function sendInstructions(
     // state gecikmesi yüzünden preflight simülasyonu, gönderilen düğümde
     // henüz görünmeyen (ama geçerli) bir blockhash'i reddedebiliyor
     // ("Blockhash not found"). Gerçek sonucu imza durumundan okuyoruz.
-    let signature: string
-    let rawTx: Uint8Array | null = null
+    const signedTx = await withTimeout(
+      signer.signTransaction(tx),
+      120_000,
+      'Cüzdan onayı 2 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
+    )
+    const rawTx = signedTx.serialize()
 
-    if (signer.sendTransaction) {
-      // Tercih edilen yol: cüzdan imzalayıp KENDİ altyapısından yayınlıyor.
-      // Onay ekranından çıkar çıkmaz gönderildiği için blockhash'in kalan
-      // ömrü, imzayı tarayıcıya geri taşımakla harcanmıyor.
-      signature = await withTimeout(
-        signer.sendTransaction(tx, connection, { skipPreflight: true, maxRetries: 5 }),
-        150_000,
-        'Cüzdan onayı 2,5 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
-      )
-    } else {
-      const signedTx = await withTimeout(
-        signer.signTransaction(tx),
-        120_000,
-        'Cüzdan onayı 2 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
-      )
-      rawTx = signedTx.serialize()
-      onStatus?.('İşlem ağa gönderiliyor...')
-      signature = await withRetry(() =>
-        // maxRetries, RPC düğümünün işlemi lidere TEKRAR TEKRAR iletmesini
-        // sağlıyor. Bir ara bunu 0'a çekmiştim ("kendi yeniden yayınımız
-        // var" diye) — ama istemciden 3sn'de bir gönderim, düğümün her slot
-        // başında yeniden iletmesinin yerini tutmuyor. İşlemlerin hiç
-        // zincire yazılmamasının başlıca sebebi buydu.
-        connection.sendRawTransaction(rawTx!, { skipPreflight: true, maxRetries: 5 }),
-      )
-    }
+    onStatus?.('İşlem ağa gönderiliyor...')
+    const signature = await withRetry(() =>
+      // maxRetries, RPC düğümünün işlemi lidere TEKRAR TEKRAR iletmesini
+      // sağlıyor. Bir ara bunu 0'a çekmiştim ("kendi yeniden yayınımız var"
+      // diye) — ama istemciden 3sn'de bir gönderim, düğümün her slot başında
+      // yeniden iletmesinin yerini tutmuyor.
+      connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 }),
+    )
     attempted.push(signature)
 
     onStatus?.('Onay bekleniyor...')

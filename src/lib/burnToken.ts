@@ -133,15 +133,7 @@ export async function burnTokens(
   // RPC'sinde "Blockhash not found" ile başarısız olmasına yol açmıştı.
   const signature = await sendInstructions(
     connection,
-    {
-      publicKey: owner,
-      signTransaction: wallet.signTransaction,
-      // Cüzdanın kendi gönderme metodu varsa sendInstructions onu tercih
-      // ediyor — mobilde işlemin zincire yazılma şansını belirgin artırıyor.
-      sendTransaction: wallet.sendTransaction
-        ? (tx, conn, opts) => wallet.sendTransaction(tx, conn, opts)
-        : undefined,
-    },
+    { publicKey: owner, signTransaction: wallet.signTransaction },
     [createBurnCheckedInstruction(ata, mint, owner, baseAmount, decimals, [], programId)],
     onStatus,
   )
