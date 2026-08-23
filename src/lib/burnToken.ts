@@ -1,4 +1,4 @@
-import { Connection, PublicKey, Transaction } from '@solana/web3.js'
+import { Connection, PublicKey } from '@solana/web3.js'
 import {
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -7,6 +7,7 @@ import {
   getMint,
 } from '@solana/spl-token'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
+import { sendInstructions, withRetry } from './sendTx'
 
 // ---------------------------------------------------------------------------
 // Token yakma (burn)
@@ -101,8 +102,8 @@ export async function burnTokens(
   }
 
   onStatus?.('Token bilgisi okunuyor...')
-  const programId = await resolveTokenProgramId(connection, mint)
-  const mintInfo = await getMint(connection, mint, undefined, programId)
+  const programId = await withRetry(() => resolveTokenProgramId(connection, mint))
+  const mintInfo = await withRetry(() => getMint(connection, mint, undefined, programId))
   const decimals = mintInfo.decimals
 
   const baseAmount = toBaseUnits(amount, decimals)
@@ -113,7 +114,7 @@ export async function burnTokens(
   onStatus?.('Bakiye kontrol ediliyor...')
   let held: bigint
   try {
-    const balance = await connection.getTokenAccountBalance(ata)
+    const balance = await withRetry(() => connection.getTokenAccountBalance(ata))
     held = BigInt(balance.value.amount)
   } catch {
     throw new Error('Bu token için cüzdanınızda bir hesap bulunamadı.')
@@ -124,34 +125,23 @@ export async function burnTokens(
     )
   }
 
-  const tx = new Transaction().add(
-    createBurnCheckedInstruction(ata, mint, owner, baseAmount, decimals, [], programId),
+  // Gönderim, oyun tarafında sertleştirilmiş ortak yoldan geçiyor
+  // (src/lib/sendTx.ts): cüzdan onayı uzun sürüp blockhash'in ömrü dolarsa
+  // yeni bir blockhash'le yeniden imzalatıyor, mobil cüzdanın hiç geri
+  // dönmediği durumda zaman aşımıyla kesiyor ve preflight simülasyonunu
+  // atlıyor. Bunun ilk sürümde yapılmaması, yakmanın paylaşımlı devnet
+  // RPC'sinde "Blockhash not found" ile başarısız olmasına yol açmıştı.
+  const signature = await sendInstructions(
+    connection,
+    { publicKey: owner, signTransaction: wallet.signTransaction },
+    [createBurnCheckedInstruction(ata, mint, owner, baseAmount, decimals, [], programId)],
+    onStatus,
   )
-
-  onStatus?.('İşlem hazırlanıyor...')
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-  tx.recentBlockhash = blockhash
-  tx.feePayer = owner
-
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
-  const signed = await wallet.signTransaction(tx)
-
-  onStatus?.('İşlem ağa gönderiliyor...')
-  const signature = await connection.sendRawTransaction(signed.serialize())
-
-  onStatus?.('Onay bekleniyor...')
-  const confirmation = await connection.confirmTransaction(
-    { signature, blockhash, lastValidBlockHeight },
-    'confirmed',
-  )
-  if (confirmation.value.err) {
-    throw new Error(`Yakma işlemi zincirde başarısız oldu: ${JSON.stringify(confirmation.value.err)}`)
-  }
 
   // Arzı işlemden SONRA tekrar okuyoruz — "gerçekten düştü" kanıtını
   // kullanıcıya tahmin ederek değil, zincirden okuyarak gösteriyoruz.
   onStatus?.('Yeni toplam arz okunuyor...')
-  const after = await getMint(connection, mint, 'confirmed', programId)
+  const after = await withRetry(() => getMint(connection, mint, 'confirmed', programId))
 
   return {
     signature,

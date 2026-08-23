@@ -3,19 +3,18 @@ import {
   PublicKey,
   SystemProgram,
   SYSVAR_SLOT_HASHES_PUBKEY,
-  Transaction,
   TransactionInstruction,
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js'
 import { GAME_CONFIG } from '../config'
+import { sendInstructions, type SendOptions, type TxSigner } from './sendTx'
 
-// Gerçek cüzdan adaptörü (Phantom vb.) ve yerel anahtarlar (delegate/test
-// cüzdanı) için ortak, minimal imzalama arayüzü — sendIxs ve oyun
-// fonksiyonları hangi imzalayıcıyı kullandığını bilmek zorunda değil.
-export interface TxSigner {
-  publicKey: PublicKey
-  signTransaction: (tx: Transaction) => Promise<Transaction>
-}
+// İmzalama arayüzü ve sertleştirilmiş gönderim mantığı artık ortak
+// src/lib/sendTx.ts'te — yakma gibi oyun dışı akışlar da aynı korumaları
+// (blockhash süresi dolunca yeniden imzalama, mobil cüzdan zaman aşımı,
+// preflight atlama) kullanabilsin diye. Mevcut import'lar kırılmasın diye
+// buradan yeniden dışa aktarılıyor.
+export type { TxSigner, SendOptions } from './sendTx'
 
 // Kaynak kodu ve deploy talimatları: program/luck-game/README.md.
 // `GAME_CONFIG.programId` boşken bu modülün fonksiyonları çağrılmamalı —
@@ -25,54 +24,6 @@ export function isLuckGameConfigured(): boolean {
 }
 
 export const SPIN_TIERS = 6
-
-/**
- * Bir promise'i, verilen süre içinde ne sonuçlanır ne de hata verirse
- * belirtilen mesajla reddeden bir zaman aşımına bağlar. Mobil cüzdanlarda
- * (özellikle Phantom'ın deep-link ile uygulama arasında geçiş yapan onay
- * akışında) uygulama geçişi başarısız olursa `wallet.signTransaction()`
- * SONSUZA KADAR ne çözülüyor ne reddediliyor — bu da tüm oyun ekranını
- * "İşlem bekleniyor" durumunda kalıcı olarak kilitliyordu. Her ağ/cüzdan
- * adımını bu sarmalayıcıyla sınırlıyoruz ki en kötü ihtimalle net bir hata
- * mesajıyla sonuçlansın, sonsuza dek donmasın.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms)
-    promise.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (err) => {
-        clearTimeout(timer)
-        reject(err)
-      },
-    )
-  })
-}
-
-/**
- * İki bilinen geçici RPC hatası sınıfına karşı kısa backoff'lu tekrar
- * deneme: (1) public/paylaşımlı RPC'lerin IP başına hız sınırı; (2) yük
- * dengelemeli sağlayıcılarda getLatestBlockhash() bir düğümden, ardından
- * gönderilen işlemin preflight simülasyonu henüz o blockhash'i görmemiş
- * farklı bir düğümden yanıt alabiliyor ("Blockhash not found"). Her
- * deneme ayrıca bir zaman aşımına bağlı.
- */
-async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelayMs = 800): Promise<T> {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await withTimeout(fn(), 20_000, 'RPC isteği zaman aşımına uğradı.')
-    } catch (err) {
-      const isTransient =
-        err instanceof Error && /429|rate limit|blockhash not found|zaman aşımına uğradı/i.test(err.message)
-      if (!isTransient || i === attempts - 1) throw err
-      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** i))
-    }
-  }
-  throw new Error('unreachable')
-}
 
 function programId(): PublicKey {
   if (!GAME_CONFIG.programId) {
@@ -463,82 +414,19 @@ function buildForfeitStuckPlayIx(player: PublicKey): TransactionInstruction {
   })
 }
 
-export interface SendOptions {
-  /**
-   * Cüzdan onayı beklenirken gösterilecek durum mesajı. `null` verilirse bu
-   * adım hiç gösterilmez — yerel bir anahtarla (delegate/test cüzdanı)
-   * imzalanan işlemler ANINDA ve onaysız tamamlandığından, kullanıcıya
-   * yanlışlıkla "cüzdanınızda onay bekleniyor" gibi bir mesaj gösterilmemesi
-   * için. Sadece GERÇEK cüzdan imzası gerektiren adımlarda (ödeme, delegate
-   * kaydı, sıkışan denemeyi temizleme) varsayılan mesaj kullanılmalı.
-   */
-  confirmMessage?: string | null
-}
-
-// Bir blockhash yalnızca ~60-90 saniye (150 blok) geçerli. Cüzdan onayı
-// (özellikle mobilde uygulama geçişleriyle) bu süreyi aşarsa, o ana kadar
-// imzalanmış işlem artık geçersiz bir blockhash taşıyor — withRetry ile
-// AYNI imzayı tekrar göndermek işe yaramaz, çünkü sorun ağ gecikmesi değil,
-// blockhash'in gerçekten süresinin dolmuş olması. Böyle bir durumda tüm
-// hazırla→imzala→gönder döngüsünü YENİ bir blockhash ve YENİ bir cüzdan
-// onayıyla en baştan tekrarlıyoruz (en fazla birkaç kez).
-async function sendIxs(
+/**
+ * Oyun akışlarının işlem gönderme yolu — ortak `sendInstructions`'a
+ * devrediyor. Blockhash süresi dolduğunda yeniden imzalatma, mobil cüzdan
+ * zaman aşımı ve preflight atlama davranışı orada tanımlı.
+ */
+function sendIxs(
   connection: Connection,
   signer: TxSigner,
   ixs: TransactionInstruction[],
   onStatus?: (status: string) => void,
   options?: SendOptions,
 ): Promise<string> {
-  const confirmMessage = options?.confirmMessage === undefined ? 'Cüzdanınızda onay bekleniyor...' : options.confirmMessage
-
-  const maxCycles = 3
-  for (let cycle = 0; cycle < maxCycles; cycle++) {
-    const tx = new Transaction().add(...ixs)
-
-    onStatus?.(cycle === 0 ? 'İşlem hazırlanıyor...' : `İşlem yeniden hazırlanıyor (${cycle + 1}. deneme)...`)
-    const { blockhash, lastValidBlockHeight } = await withRetry(() => connection.getLatestBlockhash())
-    tx.recentBlockhash = blockhash
-    tx.feePayer = signer.publicKey
-
-    if (confirmMessage) onStatus?.(confirmMessage)
-    // Mobil cüzdanlarda uygulama geçişi (deep link) bazen hiç geri
-    // dönmüyor — bu durumda signTransaction sonsuza dek asılı kalırdı.
-    // 75sn içinde onay gelmezse net bir hatayla bırakıyoruz. Yerel
-    // anahtarlarda (delegate/test cüzdanı) bu zaten anında çözülür.
-    const signedTx = await withTimeout(
-      signer.signTransaction(tx),
-      75_000,
-      'Cüzdan onayı 75 saniye içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
-    )
-
-    try {
-      // skipPreflight: Helius'un yük dengelemeli düğümleri arasında kısa
-      // süreli state gecikmesi yüzünden preflight simülasyonu, gönderilen
-      // düğümde henüz görünmeyen (ama geçerli) bir blockhash'i
-      // reddedebiliyor ("Blockhash not found"). Preflight'ı atlayıp gerçek
-      // sonucu confirmTransaction'ın döndürdüğü err alanından okuyoruz.
-      onStatus?.('İşlem ağa gönderiliyor...')
-      const signature = await withRetry(() =>
-        connection.sendRawTransaction(signedTx.serialize(), { skipPreflight: true, maxRetries: 5 }),
-      )
-
-      onStatus?.('Onay bekleniyor...')
-      const confirmation = await withRetry(() =>
-        connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed'),
-      )
-      if (confirmation.value.err) {
-        throw new Error(`İşlem zincirde başarısız oldu: ${JSON.stringify(confirmation.value.err)}`)
-      }
-
-      return signature
-    } catch (err) {
-      const isBlockhashExpiry =
-        err instanceof Error && /block height exceeded|blockhash not found/i.test(err.message)
-      if (!isBlockhashExpiry || cycle === maxCycles - 1) throw err
-      onStatus?.('Onay çok uzun sürdü, blockhash süresi doldu — yeni bir onay isteniyor...')
-    }
-  }
-  throw new Error('unreachable')
+  return sendInstructions(connection, signer, ixs, onStatus, options)
 }
 
 /**
