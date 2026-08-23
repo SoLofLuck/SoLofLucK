@@ -2199,6 +2199,56 @@ button {
   color: var(--text-muted);
 }
 
+.luck-tokenomics__wallet-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.luck-tokenomics__wallet {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.9rem;
+  padding: 0.7rem 1rem;
+  background: var(--bg-elevated);
+  font-size: 0.9rem;
+}
+
+.luck-tokenomics__wallet-label {
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  min-width: 9rem;
+}
+
+/* Adres kısaltılmıyor — doğrulama için tamamı gerekli. Dar ekranda kutunun
+   içinde yatay kayıyor, sayfanın kendisini taşırmıyor. */
+.luck-tokenomics__wallet-addr {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--accent, #22d3ee);
+  text-decoration: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.luck-tokenomics__wallet-addr:hover {
+  text-decoration: underline;
+}
+
+.luck-tokenomics__wallet .copy-btn {
+  flex: 0 0 auto;
+}
+
 .luck-tokenomics__pledges {
   margin: 0 0 1.25rem;
   padding-left: 1.15rem;

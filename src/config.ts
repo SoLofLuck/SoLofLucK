@@ -94,7 +94,7 @@ export const LUCK_TOKEN = {
 // Boş bırakılırsa presale sekmesi "yapılandırılmadı" uyarısı gösterir ve
 // gönderim butonları devre dışı kalır — yanlışlıkla kimsenin coin'siz SOL
 // göndermesini önlemek için kasıtlı bir güvenlik freni.
-export const PRESALE_WALLET = '' // ör: 'YourPresaleWalletAddressHere...'
+export const PRESALE_WALLET = 'BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36'
 
 // ---------------------------------------------------------------------------
 // Operasyon (gider) payı
@@ -114,7 +114,7 @@ export const PRESALE_WALLET = '' // ör: 'YourPresaleWalletAddressHere...'
 // alıcıyı ve tutarı da görür.
 //
 // Boş bırakılırsa pay hiç alınmaz, katkının %100'ü presale cüzdanına gider.
-export const PRESALE_OPS_WALLET = '' // ör: 'YourOpsWalletAddressHere...'
+export const PRESALE_OPS_WALLET = '2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9'
 export const PRESALE_OPS_FEE_NUM = 7770
 export const PRESALE_OPS_FEE_DEN = 100_000
 
@@ -215,7 +215,17 @@ export const MARKETING_BREAKDOWN = {
   // kasıtlı olarak öyle, çünkü hızlı gelen bir listeleme fırsatında
   // kırmak zorunda kalacağımız bir kilit sözü vermek istemiyoruz.
   // Kasa adresleri yayınlanır, her kullanım kanıtlanır.
-  cexReserve: { total: 77_700_000, wallets: 3, perWallet: 25_900_000 },
+  cexReserve: {
+    total: 77_700_000,
+    wallets: 3,
+    perWallet: 25_900_000,
+    // Yayınlanan kasa adresleri — her hareket zincirde izlenebilir.
+    addresses: [
+      { label: 'CEX kasa 1', address: 'CZ639Mx6MFiZfwpVFLecyMTecGp2Cv6HErdoWqgZG6HS' },
+      { label: 'CEX kasa 2', address: '3cCqgaj4QzKQUFvSNnz1yqrqcPt7xiKsbh29AfVoGM8B' },
+      { label: 'CEX kasa 3', address: 'DmdePMQyuKEX9Hwaytx6tEfPxx5utBVxSJ5bgWrKghmh' },
+    ],
+  },
   // 6 birime bölünen akan kısım (1 birim = 6.475.000).
   flow: {
     total: 38_850_000,
@@ -226,6 +236,21 @@ export const MARKETING_BREAKDOWN = {
     ],
   },
 } as const
+
+// ---------------------------------------------------------------------------
+// Açık cüzdan listesi
+// ---------------------------------------------------------------------------
+// Tokenomics sekmesinde yayınlanan cüzdanlar. Amaç: kilit/dağıtım sözlerinin
+// zincirde tek tek doğrulanabilmesi — her bakiye ve her hareket bu adresler
+// üzerinden Solscan'de takip edilebilir. Buradaki adreslerin hiçbiri özel
+// anahtar içermez, sadece herkese açık (public) adreslerdir.
+export const PUBLIC_WALLETS = [
+  { key: 'presale', label: 'Presale kasası', address: PRESALE_WALLET },
+  { key: 'ops', label: 'Operasyon payı', address: PRESALE_OPS_WALLET },
+  { key: 'team', label: 'Ekip', address: 'AHGDn3qqRyShYURf9qriMpVPHT8W6LwVTKUBXYMzuMxA' },
+  { key: 'community', label: 'Topluluk / çekiliş', address: '3fBhNn8BEoFyQVAXasWj1xcNrcc2FRpLVQexFhZTnw6F' },
+  { key: 'marketing', label: 'Pazarlama (akan kısım)', address: 'BiWqNZzCPCfJtVPNhoCrvEb9s6unpCFXXf38GR3WnPWX' },
+] as const
 
 // Presale'de toplanan SOL'un (operasyon payı düşüldükten sonra kalan
 // %92,23'ün) nereye gittiği. Token dağılımından (TOKENOMICS) AYRI bir

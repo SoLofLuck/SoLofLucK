@@ -2,10 +2,35 @@ import {
   LUCK_TOKEN,
   MARKETING_BREAKDOWN,
   PRESALE_SOL_ALLOCATION,
+  PUBLIC_WALLETS,
   TOKENOMICS,
   VESTING_SCHEDULE,
 } from '../../config'
 import { PRESALE_OPS_FEE_PERCENT } from '../../lib/presale'
+import { CopyButton } from '../CopyButton'
+
+function solscanUrl(address: string) {
+  return `https://solscan.io/account/${address}`
+}
+
+// Adresi kısaltmadan gösteriyoruz (doğrulama için tamamı gerekli); dar
+// ekranlarda kutunun içinde kaydırılabiliyor (bkz. .luck-tokenomics__wallet-addr).
+function WalletRow({ label, address }: { label: string; address: string }) {
+  return (
+    <li className="luck-tokenomics__wallet">
+      <span className="luck-tokenomics__wallet-label">{label}</span>
+      <a
+        className="luck-tokenomics__wallet-addr"
+        href={solscanUrl(address)}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {address}
+      </a>
+      <CopyButton value={address} label="Kopyala" />
+    </li>
+  )
+}
 
 function formatSupply(n: number) {
   return n.toLocaleString('tr-TR')
@@ -93,6 +118,11 @@ export function TokenomicsTab() {
         çünkü hızlı gelen bir listeleme fırsatında kırmak zorunda kalacağımız bir kilit sözü
         vermek istemiyoruz.
       </p>
+      <ul className="luck-tokenomics__wallet-list">
+        {MARKETING_BREAKDOWN.cexReserve.addresses.map((w) => (
+          <WalletRow key={w.address} label={w.label} address={w.address} />
+        ))}
+      </ul>
       <ul className="luck-tokenomics__sol-list">
         {MARKETING_BREAKDOWN.flow.items.map((it) => (
           <li key={it.label}>
@@ -123,6 +153,18 @@ export function TokenomicsTab() {
             <span>{a.label}</span>
             <strong>%{a.percent}</strong>
           </li>
+        ))}
+      </ul>
+
+      <h3 className="luck-tokenomics__subhead">Yayınlanan Cüzdanlar</h3>
+      <p className="subtab-desc">
+        Yukarıdaki kilit ve dağıtım sözlerinin tamamı zincirde doğrulanabilir. Aşağıdaki
+        adreslerin bakiyesini ve her hareketini Solscan'de kendiniz takip edebilirsiniz — bize
+        güvenmenize gerek yok, bakın.
+      </p>
+      <ul className="luck-tokenomics__wallet-list">
+        {PUBLIC_WALLETS.filter((w) => w.address).map((w) => (
+          <WalletRow key={w.key} label={w.label} address={w.address} />
         ))}
       </ul>
 
