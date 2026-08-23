@@ -192,11 +192,15 @@ async function confirmBySignature(
 async function assertSimulationPasses(connection: Connection, tx: Transaction): Promise<void> {
   let result
   try {
-    result = await withTimeout(connection.simulateTransaction(tx), 15_000, 'Simülasyon zaman aşımı.')
+    result = await withRetry(
+      () => connection.simulateTransaction(tx),
+      2,
+      600,
+    )
   } catch {
     // Simülasyonun KENDİSİ başarısız olduysa (RPC hatası, zaman aşımı) yolu
-    // tıkamıyoruz — bu geçici bir durum olabilir ve kullanıcıyı gerçek bir
-    // sorun olmadan durdurmak istemeyiz.
+    // tıkamıyoruz — geçici olabilir ve kullanıcıyı gerçek bir sorun olmadan
+    // durdurmak istemeyiz.
     return
   }
 
@@ -206,6 +210,8 @@ async function assertSimulationPasses(connection: Connection, tx: Transaction): 
   const raw = JSON.stringify(err)
   const logs = (result.value.logs ?? []).join('\n')
 
+  // Kullanıcının düzeltebileceği, net sorunlar — bunlarda cüzdanı hiç
+  // açmadan duruyoruz.
   if (/InsufficientFundsForFee/i.test(raw) || /insufficient lamports/i.test(logs)) {
     throw new Error(
       'Cüzdanınızda ağ ücretini ödeyecek kadar SOL yok. Devnet\'te ücretsiz SOL için ' +
@@ -215,7 +221,21 @@ async function assertSimulationPasses(connection: Connection, tx: Transaction): 
   if (/insufficient funds/i.test(logs)) {
     throw new Error('Bakiye yetersiz — işlemin gerektirdiği tutar cüzdanınızda yok.')
   }
-  throw new Error(`İşlem simülasyonu başarısız: ${raw}`)
+  // Programın kendi reddi (Anchor/SPL hata kodu): gerçek ve tekrarlanabilir
+  // bir hata, göstermeye değer.
+  if (/InstructionError/i.test(raw)) {
+    throw new Error(`İşlem simülasyonu başarısız: ${raw}${logs ? `\n${logs.slice(-400)}` : ''}`)
+  }
+
+  // Geri kalan her şey SONUÇSUZ sayılıyor ve yolu tıkamıyor. Özellikle
+  // "BlockhashNotFound": simulateTransaction kendi blockhash'ini çekiyor ve
+  // yük dengelemeli RPC'lerde simülasyonu yapan düğüm o blockhash'i henüz
+  // görmemiş olabiliyor. Bu, işlemle ilgili bir sorun DEĞİL — nitekim bu
+  // kontrolü ilk eklediğimde spin satın alma tam da bu yüzden hiç
+  // başlayamadan hata veriyordu. Ön kontrolün işi, kullanıcının
+  // düzeltebileceği net sorunları erken yakalamak; şüpheli her durumda
+  // işlemi durdurmak değil.
+  console.warn('Simülasyon sonuçsuz, işleme devam ediliyor:', raw)
 }
 
 /**
