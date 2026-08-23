@@ -2214,3 +2214,63 @@ button {
 .luck-tokenomics__pledges strong {
   color: var(--text);
 }
+
+/* Tokenomics: kilit / açılış zaman çizelgesi */
+.luck-tokenomics__timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.luck-tokenomics__timeline-group h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.luck-tokenomics__timeline-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--panel-border);
+}
+
+.luck-tokenomics__timeline-group li {
+  position: relative;
+  padding: 0.4rem 0 0.4rem 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  align-items: baseline;
+  font-size: 0.88rem;
+}
+
+.luck-tokenomics__timeline-group li::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 0.95rem;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-b);
+}
+
+.luck-tokenomics__when {
+  font-weight: 700;
+  color: var(--accent-b);
+  min-width: 8.5rem;
+}
+
+.luck-tokenomics__what {
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 10rem;
+}
+
+.luck-tokenomics__amount {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

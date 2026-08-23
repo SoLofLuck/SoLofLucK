@@ -1,4 +1,10 @@
-import { LUCK_TOKEN, PRESALE_SOL_ALLOCATION, TOKENOMICS } from '../../config'
+import {
+  LUCK_TOKEN,
+  MARKETING_BREAKDOWN,
+  PRESALE_SOL_ALLOCATION,
+  TOKENOMICS,
+  VESTING_SCHEDULE,
+} from '../../config'
 import { PRESALE_OPS_FEE_PERCENT } from '../../lib/presale'
 
 function formatSupply(n: number) {
@@ -52,6 +58,57 @@ export function TokenomicsTab() {
         ))}
       </ul>
 
+      <h3 className="luck-tokenomics__subhead">Kilit ve Açılış Takvimi</h3>
+      <p className="subtab-desc">
+        Tasarım ilkesi şu: <strong>hiçbir açılış, likidite havuzunun emebileceğinden büyük
+        olmamalı.</strong> Bu yüzden her kova kademeli açılıyor ve büyük kilitlerin bitiş günleri
+        birbirinden ayrı — takvimde tek bir "herkesin sattığı gün" yok.
+      </p>
+      <div className="luck-tokenomics__timeline">
+        {VESTING_SCHEDULE.map((v) => (
+          <div key={v.key} className="luck-tokenomics__timeline-group">
+            <h4>{v.label}</h4>
+            <ul>
+              {v.steps.map((st, i) => (
+                <li key={i}>
+                  <span className="luck-tokenomics__when">{st.when}</span>
+                  <span className="luck-tokenomics__what">{st.what}</span>
+                  {st.amount > 0 && (
+                    <span className="luck-tokenomics__amount">{formatSupply(st.amount)}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      <h3 className="luck-tokenomics__subhead">Pazarlama Kovasının İçi</h3>
+      <p className="subtab-desc">
+        <strong>CEX listeleme rezervi — {formatSupply(MARKETING_BREAKDOWN.cexReserve.total)}</strong>{' '}
+        (toplam arzın %10'u), {MARKETING_BREAKDOWN.cexReserve.wallets} ayrı kasada,
+        her biri {formatSupply(MARKETING_BREAKDOWN.cexReserve.perWallet)}. Her kasa bir borsa
+        listelemesi içindir; kasa adresleri yayınlanır ve her kullanım borsa duyurusu + işlem
+        linkiyle kanıtlanır. Bu rezerv <strong>kilitli değildir</strong> — kasıtlı olarak öyle,
+        çünkü hızlı gelen bir listeleme fırsatında kırmak zorunda kalacağımız bir kilit sözü
+        vermek istemiyoruz.
+      </p>
+      <ul className="luck-tokenomics__sol-list">
+        {MARKETING_BREAKDOWN.flow.items.map((it) => (
+          <li key={it.label}>
+            <span>
+              {it.label} ({it.units} birim)
+            </span>
+            <strong>{formatSupply(it.amount)}</strong>
+          </li>
+        ))}
+      </ul>
+      <p className="subtab-desc">
+        Akan kısım toplam {formatSupply(MARKETING_BREAKDOWN.flow.total)} (1 birim ={' '}
+        {formatSupply(MARKETING_BREAKDOWN.flow.unit)}): <strong>7 hafta kilitli</strong>, sonra{' '}
+        <strong>7 ay</strong> boyunca aylık eşit dilimlerle kullanılır.
+      </p>
+
       <h3 className="luck-tokenomics__subhead">Toplanan SOL Nereye Gidiyor?</h3>
       <p className="subtab-desc">
         Yukarıdaki tablo <strong>token</strong> dağılımıdır. Bu tablo ise presale'de toplanan{' '}
@@ -86,6 +143,14 @@ export function TokenomicsTab() {
         <li>
           <strong>$LUCK standart bir SPL token'dır.</strong> Gizli transfer, transfer vergisi veya
           kara liste gibi bir uzantı içermez; bakiyeler herkese açık ve doğrulanabilir.
+        </li>
+        <li>
+          <strong>CEX kasalarının adresleri yayınlanır.</strong> Üç kasanın her hareketi zincirde
+          izlenebilir; kullanılmayan kasa, takvim sonunda yakılır veya çekiliş kovasına aktarılır.
+        </li>
+        <li>
+          <strong>Ekip 7 ay boyunca hiçbir token alamaz.</strong> Kilit bittikten sonra da tek
+          seferde değil, 7 ay boyunca aylık dilimlerle açılır.
         </li>
       </ul>
 

@@ -131,37 +131,101 @@ export const TOKENOMICS = [
     label: 'Presale',
     percent: 35,
     color: '#22d3ee',
-    desc: 'İki modlu presale (serbest katkı + çekilişli sabit paketler) ile topluluğa dağıtılır. Dağıtım iki partide: %50 TGE\'de, kalan %50 otuz gün sonra.',
+    desc: 'İki modlu presale (serbest katkı + çekilişli sabit paketler) ile topluluğa dağıtılır. TGE\'de %7 açılır, sonra her 7 günde bir %7 daha; 98. günde (14. hafta) tamamı serbest.',
   },
   {
     key: 'liquidity',
     label: 'Likidite Havuzu',
     percent: 20,
     color: '#8b5cf6',
-    desc: 'Presale sonunda Raydium (CPMM) üzerinde havuz açılır ve LP token\'ları YAKILIR — likidite kalıcı olarak havuzda kalır, ekip dahil kimse çekemez. Yakma işleminin linki bu sayfada yayınlanır.',
+    desc: 'TGE günü Raydium (CPMM) havuzuna konur ve LP token\'ları YAKILIR — likidite kalıcı olarak havuzda kalır, ekip dahil kimse çekemez. Yakma işleminin linki bu sayfada yayınlanır.',
   },
   {
     key: 'community',
     label: 'Topluluk / Çekiliş Ödülleri',
     percent: 20,
     color: '#facc15',
-    desc: '777 temalı periyodik çekilişler ve topluluk ödülleri. Katılım anlık görüntüyle (snapshot) belirlenir: çekiliş anında $LUCK tutan cüzdanlar katılır.',
+    desc: '7. günden itibaren her 7 günde bir çekiliş, toplam 14 çekiliş. Her çekilişte 7 cüzdan kazanır — 14 haftada toplam 98 kazanan. Katılım, çekiliş anındaki $LUCK bakiyesine göre (snapshot) belirlenir.',
   },
   {
     key: 'team',
     label: 'Ekip (Kilitli)',
     percent: 10,
     color: '#f87171',
-    desc: '6 ay boyunca hiç açılmaz (cliff), sonraki 18 ay boyunca aylık eşit dilimlerle açılır.',
+    desc: 'İlk 7 ay boyunca tam kilitli — hiç açılmaz. Ardından 7 ay boyunca aylık eşit dilimlerle dağıtılır (14. ayda tamamlanır).',
   },
   {
     key: 'marketing',
     label: 'Pazarlama & CEX',
     percent: 15,
     color: '#34d399',
-    desc: 'Pazarlama, işbirlikleri ve borsa listeleme giderleri. Multisig cüzdanda tutulur, adresi yayınlanır; çeyrekte en fazla toplam arzın %1,25\'i kullanılır.',
+    desc: 'İki bölüm: CEX listeleme rezervi (77.700.000, üç ayrı kasada, adresleri yayınlanır) ve akan kısım (38.850.000; 7 hafta kilit, sonra 7 ay boyunca aylık).',
   },
 ] as const
+
+// Kilit / açılış takvimi — Tokenomics sekmesindeki zaman çizelgesi.
+// Tasarım ilkesi: hiçbir açılış, likidite havuzunun emebileceğinden büyük
+// olmamalı. Bu yüzden her kova kademeli açılıyor ve büyük kilitlerin
+// bitiş günleri birbirinden ayrı.
+export const VESTING_SCHEDULE = [
+  {
+    key: 'presale',
+    label: 'Presale',
+    steps: [
+      { when: 'TGE', what: '%7 açılır', amount: 19_036_500 },
+      { when: '7. – 91. gün', what: 'her 7 günde bir %7 (13 adım)', amount: 19_036_500 },
+      { when: '98. gün', what: 'son %2 — tamamı serbest', amount: 5_439_000 },
+    ],
+  },
+  {
+    key: 'liquidity',
+    label: 'Likidite Havuzu',
+    steps: [{ when: 'TGE', what: 'havuza konur, LP yakılır — hiç açılmaz', amount: 155_400_000 }],
+  },
+  {
+    key: 'community',
+    label: 'Topluluk / Çekiliş',
+    steps: [
+      { when: '7. gün', what: 'ilk çekiliş — 7 cüzdan', amount: 11_100_000 },
+      { when: 'her 7 günde bir', what: '14 çekiliş, çekiliş başına 7 kazanan', amount: 11_100_000 },
+      { when: '98. gün', what: 'son çekiliş — toplam 98 kazanan', amount: 11_100_000 },
+    ],
+  },
+  {
+    key: 'team',
+    label: 'Ekip',
+    steps: [
+      { when: '0 – 7. ay', what: 'tam kilit, hiç açılmaz', amount: 0 },
+      { when: '8. – 14. ay', what: 'aylık eşit dilim (7 ay)', amount: 11_100_000 },
+    ],
+  },
+  {
+    key: 'marketing',
+    label: 'Pazarlama akan kısım',
+    steps: [
+      { when: '0 – 7. hafta', what: 'kilitli', amount: 0 },
+      { when: 'sonraki 7 ay', what: 'aylık eşit dilim', amount: 5_550_000 },
+    ],
+  },
+] as const
+
+// Pazarlama kovasının (116.550.000) iç kırılımı.
+export const MARKETING_BREAKDOWN = {
+  // Üç ayrı kasa; her biri bir borsa listelemesi için. Kilitli DEĞİL —
+  // kasıtlı olarak öyle, çünkü hızlı gelen bir listeleme fırsatında
+  // kırmak zorunda kalacağımız bir kilit sözü vermek istemiyoruz.
+  // Kasa adresleri yayınlanır, her kullanım kanıtlanır.
+  cexReserve: { total: 77_700_000, wallets: 3, perWallet: 25_900_000 },
+  // 6 birime bölünen akan kısım (1 birim = 6.475.000).
+  flow: {
+    total: 38_850_000,
+    unit: 6_475_000,
+    items: [
+      { label: 'İşbirliği / influencer / topluluk kampanyası', units: 5, amount: 32_375_000 },
+      { label: 'Rezerv', units: 1, amount: 6_475_000 },
+    ],
+  },
+} as const
 
 // Presale'de toplanan SOL'un (operasyon payı düşüldükten sonra kalan
 // %92,23'ün) nereye gittiği. Token dağılımından (TOKENOMICS) AYRI bir
