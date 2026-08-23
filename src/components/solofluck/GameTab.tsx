@@ -279,7 +279,13 @@ export function GameTab() {
         // Sonuç anında belli (ücretsiz spin hep kaybeder) ama EKRANDA
         // hemen gösterilmiyor: SlotMachine makaraları 15-20sn döndürüp
         // tek tek durduruyor, sonuç metni ancak o zaman açılıyor.
-        setLastResult({ won: false, prizePaidLamports: BigInt(0), isBigWin: false, easyMode: false })
+        setLastResult({
+          won: false,
+          prizePaidLamports: BigInt(0),
+          isBigWin: false,
+          easyMode: false,
+          opsFeePaidLamports: BigInt(0),
+        })
 
         await refresh()
       } else {
@@ -304,13 +310,21 @@ export function GameTab() {
   }
 
   async function handleResolve() {
-    if (!spinAuthoritySigner || !activeOwnerPublicKey) return
+    // `gameConfig` de şart: resolve(), kazanılan turlarda ödülün üstüne
+    // eklenen operasyon payını hazineye aktardığı için hesap listesinde
+    // zincirdeki `config.treasury` adresini bekliyor.
+    if (!spinAuthoritySigner || !activeOwnerPublicKey || !gameConfig) return
     setError('')
     setBusy('resolve')
     try {
-      const sig = await resolveGame(connection, activeOwnerPublicKey, spinAuthoritySigner, setStatus, {
-        confirmMessage: null,
-      })
+      const sig = await resolveGame(
+        connection,
+        activeOwnerPublicKey,
+        spinAuthoritySigner,
+        gameConfig.treasury,
+        setStatus,
+        { confirmMessage: null },
+      )
       setStatus('Sonuç okunuyor...')
       const result = await parsePlayResolvedFromTx(connection, sig)
       // Sonuç zincirden geldi ama ekranda hemen yazılmıyor — makaralar
@@ -629,7 +643,7 @@ export function GameTab() {
                   type="button"
                   className="btn btn--primary btn--block"
                   onClick={handleResolve}
-                  disabled={busy !== null}
+                  disabled={busy !== null || !gameConfig}
                 >
                   {busy === 'resolve' ? 'Sonuç okunuyor...' : '🎲 Sonucu Gör'}
                 </button>

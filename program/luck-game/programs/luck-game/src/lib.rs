@@ -2,13 +2,18 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::sysvar::slot_hashes;
 use anchor_lang::system_program::{self, Transfer as SolTransfer};
 
-// Spin-kredisi/delegate mimarisine geçişte GameConfig/PlayerState hesap
-// düzeni değiştiği için taze bir Program ID ile deploy edildi (devnet).
+// Devnet adresi. Hesap düzeni değişmese bile her redeploy'da yenileniyor:
+// rust-cache CI önbelleği `target/deploy/luck_game-keypair.json`'ı run'lar
+// arasında korumuyor, `anchor keys sync` de her seferinde taze bir keypair
+// üretiyor. Bunun pratik sonucu: her redeploy'dan sonra oyun yeniden
+// initialize edilmeli ve eski kasadaki bakiye orada kalır (devnet test
+// SOL'ü olduğu için şimdilik önemsiz — mainnet'e çıkmadan önce keypair'i
+// bir GitHub secret'ında saklayacak şekilde düzeltilmeli).
 // NOT: rust-cache CI önbelleği program keypair'ini run'lar arasında
 // korumadı, bu yüzden fresh-keypair redeploy'lar `anchor keys sync`
 // adımıyla (bkz. deploy-luck-game.yml) bu satırı CI checkout'unda otomatik
 // güncelledi — gerçek deploy edilen ve kendi içinde tutarlı adres bu.
-declare_id!("9bnx9R9NzexuY18WepPf1i5PhQhegtsRjYzG3NTGL5Kt");
+declare_id!("3JytBSxbz7W71VyTc44ZLMqP9PC3oBvquPxNkSRxuUJJ");
 
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";
@@ -82,8 +87,14 @@ pub mod luck_game {
         // Kasa eşiği, en büyük olası ödülü (jackpot) ödeyebilecek kadar
         // büyük olmalı — aksi halde "kolay mod" tetiklenip de kasada ödül
         // için para olmayan bir durum tasarım hatası olurdu.
+        // Eşik yalnızca jackpot'u değil, onun üstüne eklenecek operasyon
+        // payını da karşılamalı — aksi halde "kolay mod"a geçmiş bir kasa,
+        // jackpot çıktığında ödülü ödeyip payı ödeyemeyecek duruma düşerdi.
         require!(
-            vault_easy_threshold_lamports >= big_prize_lamports,
+            vault_easy_threshold_lamports
+                >= big_prize_lamports
+                    .checked_add(ops_fee_lamports(big_prize_lamports, treasury_fee_bps)?)
+                    .ok_or(GameError::MathOverflow)?,
             GameError::InvalidParam
         );
         for i in 0..SPIN_TIERS {
@@ -131,6 +142,7 @@ pub mod luck_game {
     /// bekleyen oyunları etkileyebileceğini unutmayın.
     pub fn update_config(
         ctx: Context<UpdateConfig>,
+        new_treasury: Pubkey,
         free_plays: u8,
         small_prize_lamports: u64,
         big_prize_lamports: u64,
@@ -152,8 +164,14 @@ pub mod luck_game {
             GameError::InvalidParam
         );
         require!(easy_win_bps >= normal_win_bps, GameError::InvalidParam);
+        // Eşik yalnızca jackpot'u değil, onun üstüne eklenecek operasyon
+        // payını da karşılamalı — aksi halde "kolay mod"a geçmiş bir kasa,
+        // jackpot çıktığında ödülü ödeyip payı ödeyemeyecek duruma düşerdi.
         require!(
-            vault_easy_threshold_lamports >= big_prize_lamports,
+            vault_easy_threshold_lamports
+                >= big_prize_lamports
+                    .checked_add(ops_fee_lamports(big_prize_lamports, treasury_fee_bps)?)
+                    .ok_or(GameError::MathOverflow)?,
             GameError::InvalidParam
         );
         for i in 0..SPIN_TIERS {
@@ -163,7 +181,14 @@ pub mod luck_game {
             );
         }
 
+        // Hazine cüzdanı sonradan değiştirilebilir: hem buy_spins()'teki
+        // %20 pay hem resolve()'daki ödül payı bu adrese gider. Sıfır
+        // adres kabul edilmiyor — yanlışlıkla boş bırakılan bir alan tüm
+        // geliri yakılmış bir adrese gönderirdi.
+        require_keys_neq!(new_treasury, Pubkey::default(), GameError::InvalidParam);
+
         let config = &mut ctx.accounts.config;
+        config.treasury = new_treasury;
         config.free_plays = free_plays;
         config.small_prize_lamports = small_prize_lamports;
         config.big_prize_lamports = big_prize_lamports;
@@ -502,14 +527,23 @@ pub mod luck_game {
         // kalıcı olarak `pending = true` durumunda, forfeit_stuck_play
         // penceresi açılana kadar sıkıştırırdı) sessizce kayıp say —
         // oyuncu parasını kaybeder ama en azından tekrar oynayabilir.
-        // Kasanın en büyük olası ödülü (jackpot) karşılayabildiğini burada
-        // kontrol ediyoruz ki hangi katman tutarsa tutsun ödeme garantili
-        // olsun; `vault_easy_threshold_lamports >= big_prize_lamports` zaten
+        // Kasanın en büyük olası ÖDEMEYİ karşılayabildiğini burada kontrol
+        // ediyoruz ki hangi katman tutarsa tutsun ödeme garantili olsun:
+        // jackpot + onun üstüne eklenen operasyon payı. Payı bu hesaba dahil
+        // etmezsek, kasa tam jackpot kadar doluyken kazanan bir tur ödülü
+        // öder ama payı ödeyemez, TÜM işlem geri alınır ve oyuncu
+        // `pending = true` durumunda sıkışırdı. Eşik kontrolü
+        // (`vault_easy_threshold_lamports >= jackpot + pay`) zaten
         // initialize/update_config'te zorunlu kılındığı için "kolay modda"
         // bu dala hiç girilmemesi beklenir; bu tamamen savunma amaçlı.
-        let won = roll < win_bps as u32 && vault_balance >= config.big_prize_lamports;
+        let max_payout = config
+            .big_prize_lamports
+            .checked_add(ops_fee_lamports(config.big_prize_lamports, config.treasury_fee_bps)?)
+            .ok_or(GameError::MathOverflow)?;
+        let won = roll < win_bps as u32 && vault_balance >= max_payout;
 
         let mut prize_paid: u64 = 0;
+        let mut ops_fee_paid: u64 = 0;
         let mut is_big_win = false;
         if won {
             is_big_win = tier_roll < config.big_prize_bps as u32;
@@ -535,6 +569,25 @@ pub mod luck_game {
                 prize_amount,
             )?;
 
+            // Operasyon payı: ödülün `treasury_fee_bps` kadarı, ödülden
+            // KESİLMEDEN, kasadan ayrıca hazineye. Oyuncu ilan edilen ödülün
+            // tamamını alır (0,5 SOL ödülde tam 0,5 SOL); kasadan çıkan
+            // toplam 0,6 SOL olur.
+            ops_fee_paid = ops_fee_lamports(prize_amount, config.treasury_fee_bps)?;
+            if ops_fee_paid > 0 {
+                system_program::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.system_program.to_account_info(),
+                        SolTransfer {
+                            from: ctx.accounts.vault.to_account_info(),
+                            to: ctx.accounts.treasury.to_account_info(),
+                        },
+                        &[signer_seeds],
+                    ),
+                    ops_fee_paid,
+                )?;
+            }
+
             prize_paid = prize_amount;
             player_state.wins_count = player_state
                 .wins_count
@@ -554,6 +607,7 @@ pub mod luck_game {
             prize_paid,
             is_big_win,
             easy_mode,
+            ops_fee_paid,
         });
 
         Ok(())
@@ -614,6 +668,28 @@ fn ensure_owner(player_state: &mut PlayerState, owner: Pubkey) -> Result<()> {
 /// doğrulayamıyoruz (bkz. program/sell-lock/programs/sell-lock/Cargo.toml'daki
 /// aynı uyarı) — ham bayt formatı ise Solana runtime'ının dokümante edilmiş,
 /// kararlı bir parçası.
+/// Bir ödül ödemesinin üstüne eklenen operasyon payını hesaplar.
+///
+/// Oyunun para akışında TEK bir "ev payı" oranı var: `treasury_fee_bps`
+/// (varsayılan 2000 = %20). İki yerde birden uygulanıyor —
+///   1. `buy_spins()`: ödenen paketin %20'si doğrudan hazineye gider,
+///      %80'i kasaya (vault) girer.
+///   2. `resolve()`: kazanılan her ödülde, ödülün %20'si KADAR EK bir tutar
+///      kasadan hazineye aktarılır — oyuncunun ödülünden KESİLMEZ. Yani
+///      0,5 SOL'luk bir ödülde oyuncu tam 0,5 SOL alır, hazineye ayrıca
+///      0,1 SOL gider; kasadan toplam 0,6 SOL çıkar.
+///
+/// İkisinin tek orana bağlı olması kasıtlı: "biz %20 alıyoruz" cümlesi hem
+/// yatırmada hem ödülde aynı anlama gelsin, iki ayrı sayı takip etmek
+/// gerekmesin.
+fn ops_fee_lamports(prize_lamports: u64, fee_bps: u16) -> Result<u64> {
+    Ok((prize_lamports as u128)
+        .checked_mul(fee_bps as u128)
+        .ok_or(GameError::MathOverflow)?
+        .checked_div(BPS_DENOMINATOR as u128)
+        .ok_or(GameError::MathOverflow)? as u64)
+}
+
 fn find_slot_hash(sysvar_data: &[u8], target_slot: u64) -> Option<[u8; 32]> {
     if sysvar_data.len() < 8 {
         return None;
@@ -870,6 +946,12 @@ pub struct Resolve<'info> {
     )]
     pub vault: UncheckedAccount<'info>,
 
+    /// Kazanılan turlarda, ödülün üstüne eklenen operasyon payının gittiği
+    /// adres — `buy_spins()`'teki %20 payla aynı cüzdan.
+    /// CHECK: yalnızca `config.treasury` ile eşleştiği doğrulanan bir adres.
+    #[account(mut, address = config.treasury)]
+    pub treasury: UncheckedAccount<'info>,
+
     /// CHECK: adresi elle `slot_hashes::ID` ile karşılaştırılıyor (require_keys_eq!).
     pub slot_hashes: UncheckedAccount<'info>,
 
@@ -917,6 +999,10 @@ pub struct PlayResolved {
     pub prize_paid: u64,
     pub is_big_win: bool,
     pub easy_mode: bool,
+    // Ödülün üstüne, kasadan hazineye ayrıca aktarılan operasyon payı.
+    // Alanın SONA eklenmesi kasıtlı: önceki alanların bayt konumları
+    // değişmediği için eski istemciler olayı okumaya devam edebilir.
+    pub ops_fee_paid: u64,
 }
 
 #[error_code]

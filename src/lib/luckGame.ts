@@ -420,10 +420,13 @@ function buildPlayIx(owner: PublicKey, authority: PublicKey): TransactionInstruc
 
 // `resolve()` izinsizdir (permissionless) — program hangi cüzdanın
 // gönderdiğini hiç kontrol etmiyor, bu yüzden instruction'ın hesap
-// listesinde bir "caller" alanı yok. İşlemin ücretini ödeyen imzacı
+// listesinde bir "caller" alanı yok. `treasury` hesabı, kazanılan turlarda
+// ödülün üstüne eklenen operasyon payının hedefi; program bunu
+// `config.treasury` ile birebir eşleştirmek zorunda tuttuğu için yanlış bir
+// adres geçirilemez (işlem başarısız olur). İşlemin ücretini ödeyen imzacı
 // (feePayer), aşağıdaki `sendIxs` içinde ayarlanıyor — delegate anahtarıyla
 // da imzalanabilir, kazanç her zaman `owner`'a (gerçek cüzdana) gider.
-function buildResolveIx(owner: PublicKey): TransactionInstruction {
+function buildResolveIx(owner: PublicKey, treasury: PublicKey): TransactionInstruction {
   const config = getConfigPda()
   const vault = getVaultPda(config)
   const playerState = getPlayerStatePda(owner)
@@ -434,6 +437,7 @@ function buildResolveIx(owner: PublicKey): TransactionInstruction {
       { pubkey: config, isSigner: false, isWritable: false },
       { pubkey: playerState, isSigner: false, isWritable: true },
       { pubkey: vault, isSigner: false, isWritable: true },
+      { pubkey: treasury, isSigner: false, isWritable: true },
       { pubkey: SYSVAR_SLOT_HASHES_PUBKEY, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
@@ -693,10 +697,11 @@ export async function resolveGame(
   connection: Connection,
   owner: PublicKey,
   feePayerSigner: TxSigner,
+  treasury: PublicKey,
   onStatus?: (status: string) => void,
   options?: SendOptions,
 ): Promise<string> {
-  return sendIxs(connection, feePayerSigner, [buildResolveIx(owner)], onStatus, options)
+  return sendIxs(connection, feePayerSigner, [buildResolveIx(owner, treasury)], onStatus, options)
 }
 
 /** Resolve penceresi kapandıktan sonra sıkışan denemeyi temizler — GERÇEK cüzdan imzası şart. */
@@ -721,6 +726,8 @@ export interface PlayResolvedResult {
   prizePaidLamports: bigint
   isBigWin: boolean
   easyMode: boolean
+  /** Ödülün üstüne, kasadan hazineye ayrıca aktarılan operasyon payı. */
+  opsFeePaidLamports: bigint
 }
 
 export interface PlayCommittedResult {
@@ -842,8 +849,12 @@ export async function parsePlayResolvedFromTx(
   const isBigWin = raw.readUInt8(o) !== 0
   o += 1
   const easyMode = raw.readUInt8(o) !== 0
+  o += 1
+  // Olayın en sonuna eklenen alan; programın eski sürümüyle üretilmiş
+  // (daha kısa) bir log okunursa 0 kabul ediliyor.
+  const opsFeePaidLamports = raw.length >= o + 8 ? raw.readBigUInt64LE(o) : 0n
 
-  return { won, prizePaidLamports, isBigWin, easyMode }
+  return { won, prizePaidLamports, isBigWin, easyMode, opsFeePaidLamports }
 }
 
 /** `play()` işleminin `PlayCommitted` olayını okur — bonus spin bildirimi için gerekli. */

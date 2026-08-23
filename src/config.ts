@@ -284,7 +284,11 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  programId: '9bnx9R9NzexuY18WepPf1i5PhQhegtsRjYzG3NTGL5Kt', // Devnet'te deploy edildi (spin-kredisi/delegate mimarisi)
+  // Devnet. Hazine cüzdanı operasyon cüzdanına taşınıp resolve()'a ödül
+  // payı eklendiğinde yeniden deploy edildi; CI önbelleği program
+  // keypair'ini koruyamadığı için adres de yenilendi (bkz. lib.rs'teki
+  // declare_id notu).
+  programId: '3JytBSxbz7W71VyTc44ZLMqP9PC3oBvquPxNkSRxuUJJ',
   freePlays: 3,
   // Spin-kredisi tarifesi: 3 ücretsiz deneme bitince (+1 bonus spin
   // hediye), her paket bir defada satın alınıp bakiyeye eklenir. Sırayla
@@ -305,7 +309,14 @@ export const GAME_CONFIG = {
   bigPrizeSol: 1,
   bigPrizeBps: 3000, // kazananların %30'u büyük ödül alır
   vaultEasyThresholdSol: 2,
-  treasuryFeeBps: 2000, // %20 hazineye, %80 kasaya
+  // Tek bir "ev payı" oranı, iki yerde birden uygulanıyor:
+  //   1. Paket satın alımlarında ödenen tutarın %20'si hazineye, %80'i
+  //      oyun kasasına (vault) girer.
+  //   2. Kazanılan turlarda, ödülün %20'si KADAR EK bir tutar kasadan
+  //      hazineye aktarılır — oyuncunun ödülünden kesilmez. 0,5 SOL
+  //      kazanan tam 0,5 SOL alır, hazineye ayrıca 0,1 SOL gider
+  //      (kasadan toplam 0,6 SOL çıkar).
+  treasuryFeeBps: 2000,
   normalWinBps: 50, // zor mod: %0.5
   easyWinBps: 1000, // kolay mod (kasa ≥ eşik): %10
   // `initialize()`'a verilecek reveal_delay_slots ile aynı olmalı.
@@ -313,8 +324,17 @@ export const GAME_CONFIG = {
   // Program sabiti MAX_RESOLVE_WINDOW_SLOTS ile aynı olmalı — yalnızca
   // "sıkışan oyunu ne zaman iptal edebilirsin" mesajı için kullanılıyor.
   maxResolveWindowSlots: 300,
-  // Ücret payının gönderildiği hazine cüzdanı.
-  treasuryWallet: '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
+  // Ev payının (hem paket satışlarından hem ödüllerden) gönderildiği
+  // hazine cüzdanı = operasyon cüzdanı, presale operasyon payıyla AYNI
+  // adres (PRESALE_OPS_WALLET). Böylece token yayınlanana kadarki tüm
+  // gelir tek bir cüzdanda toplanıyor.
+  //
+  // ÖNEMLİ: bu değer yalnızca kurulum/dokümantasyon içindir. Oyun
+  // sekmesi hazine adresini HER ZAMAN zincirdeki GameConfig'ten okur
+  // (gameConfig.treasury). Buradaki adresi değiştirmek tek başına
+  // yetmez — zincirdeki değeri de update_config() ile güncellemek
+  // gerekir (bkz. .github/workflows/update-luck-game-config.yml).
+  treasuryWallet: '2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9',
   // "Oyun cüzdanı" (delegate) artık GERÇEKTEN ücretsiz etkinleştiriliyor:
   // gaz bakiyesi oyuncudan değil, ilk register_delegate() çağrısında
   // zincirin kendisi tarafından kasadan (vault) sponsor ediliyor (bkz.

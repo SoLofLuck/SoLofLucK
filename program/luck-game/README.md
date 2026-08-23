@@ -34,6 +34,11 @@ tetikleyip yeni Program ID'yi şuraya işlemek gerekir:
   Dönüştür").
 - Her paket ödemesi aynı işlemde otomatik ikiye bölünür: **%20'si hazine
   cüzdanına** (site işletme geliri), **%80'i oyun kasasına (vault)**.
+- Kazanılan her turda, ödülün **%20'si kadar EK bir tutar** kasadan hazineye
+  aktarılır — oyuncunun ödülünden **kesilmez**. 0,5 SOL kazanan tam 0,5 SOL
+  alır, hazineye ayrıca 0,1 SOL gider; kasadan toplam 0,6 SOL çıkar. İki
+  yerde de aynı `treasury_fee_bps` oranı kullanılıyor, yani takip edilmesi
+  gereken tek bir "ev payı" var.
 - **İki katmanlı ödül**: kazananların %(`big_prize_bps`/100)'i büyük ödülü
   (jackpot, varsayılan 1 SOL), geri kalanı küçük ödülü (varsayılan 0.5 SOL)
   kazanır — hangisi tutacağı `resolve()` içinde ikinci, bağımsız bir zarla
@@ -108,8 +113,10 @@ denemeyi kayıp sayıp (ücret iadesi yok) tekrar oynayabilir hale gelir.
 - `initialize(...)` — bir kez, program sahibi tarafından çağrılır; ücret,
   ödül, olasılık, spin paketi tarifesi ve hazine cüzdanı parametrelerini
   ayarlar.
-- `update_config(...)` — yalnızca `authority` çağırabilir; parametreleri
-  sonradan günceller.
+- `update_config(new_treasury, ...)` — yalnızca `authority` çağırabilir;
+  hazine cüzdanı dahil tüm parametreleri sonradan günceller. TÜM alanları
+  baştan yazar (kısmi güncelleme yok), bkz.
+  `scripts/update-config.mjs` ve `.github/workflows/update-luck-game-config.yml`.
 - `buy_spins(tier_index)` — oyuncu çağırır (gerçek cüzdan imzası); seçilen
   paketin ücretini böler (%20 hazine/%80 kasa), spin bakiyesine ekler.
 - `register_delegate(delegate)` — oyuncu çağırır (gerçek cüzdan imzası); bir
@@ -120,6 +127,9 @@ denemeyi kayıp sayıp (ücret iadesi yok) tekrar oynayabilir hale gelir.
   "commit" adımını zincire yazar.
 - `resolve()` — izinsiz; commit'ten `reveal_delay_slots` sonra çağrılabilir,
   sonucu belirler ve kazanıldıysa öder, `total_won_lamports`'u günceller.
+  Kazanılan turlarda ödülün üstündeki operasyon payını da kasadan hazineye
+  aktarır — bu yüzden hesap listesinde `config.treasury` ile eşleşmesi
+  zorunlu bir `treasury` hesabı bekler.
 - `forfeit_stuck_play()` — yalnızca oyuncunun kendisi (gerçek cüzdan),
   resolve penceresi kapandıktan sonra; sıkışan denemeyi temizler.
 
@@ -131,7 +141,8 @@ denemeyi kayıp sayıp (ücret iadesi yok) tekrar oynayabilir hale gelir.
    Gerçek parayla mainnet'e çıkmadan önce Switchboard/ORAO VRF gibi
    denetlenmiş bir çözüme geçmek düşünülmeli.
 2. **Unaudited.** Hiçbir bağımsız güvenlik denetiminden geçmedi.
-3. **`vault_easy_threshold_lamports >= big_prize_lamports` kısıtı korunmalı** —
+3. **`vault_easy_threshold_lamports >= big_prize_lamports + ödül payı` kısıtı
+   korunmalı** —
    `update_config` ile bu ilişkiyi bozacak bir kombinasyon girilmeye
    çalışılırsa işlem reddedilir, ama parametreleri güncellerken yine de
    dikkatli olun.
