@@ -284,10 +284,9 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  // Devnet. Hazine cüzdanı operasyon cüzdanına taşınıp resolve()'a ödül
-  // payı eklendiğinde yeniden deploy edildi; CI önbelleği program
-  // keypair'ini koruyamadığı için adres de yenilendi (bkz. lib.rs'teki
-  // declare_id notu).
+  // Devnet. resolve()'a ödül payı eklendiğinde yeniden deploy edildi; CI
+  // önbelleği program keypair'ini koruyamadığı için adres de yenilendi
+  // (bkz. lib.rs'teki declare_id notu).
   programId: '3JytBSxbz7W71VyTc44ZLMqP9PC3oBvquPxNkSRxuUJJ',
   freePlays: 3,
   // Spin-kredisi tarifesi: 3 ücretsiz deneme bitince (+1 bonus spin
@@ -325,16 +324,16 @@ export const GAME_CONFIG = {
   // "sıkışan oyunu ne zaman iptal edebilirsin" mesajı için kullanılıyor.
   maxResolveWindowSlots: 300,
   // Ev payının (hem paket satışlarından hem ödüllerden) gönderildiği
-  // hazine cüzdanı = operasyon cüzdanı, presale operasyon payıyla AYNI
-  // adres (PRESALE_OPS_WALLET). Böylece token yayınlanana kadarki tüm
-  // gelir tek bir cüzdanda toplanıyor.
+  // hazine cüzdanı. Oyun gelirleri, presale operasyon payından AYRI
+  // tutuluyor: presale payı operasyon cüzdanına (PRESALE_OPS_WALLET),
+  // oyun gelirleri ise bu ayrı oyun hazinesine gidiyor.
   //
   // ÖNEMLİ: bu değer yalnızca kurulum/dokümantasyon içindir. Oyun
   // sekmesi hazine adresini HER ZAMAN zincirdeki GameConfig'ten okur
   // (gameConfig.treasury). Buradaki adresi değiştirmek tek başına
   // yetmez — zincirdeki değeri de update_config() ile güncellemek
   // gerekir (bkz. .github/workflows/update-luck-game-config.yml).
-  treasuryWallet: '2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9',
+  treasuryWallet: '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
   // "Oyun cüzdanı" (delegate) artık GERÇEKTEN ücretsiz etkinleştiriliyor:
   // gaz bakiyesi oyuncudan değil, ilk register_delegate() çağrısında
   // zincirin kendisi tarafından kasadan (vault) sponsor ediliyor (bkz.
