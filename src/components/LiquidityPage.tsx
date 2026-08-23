@@ -871,9 +871,7 @@ function PoolLock({
       <p className="subtab-desc">
         LP token'ınızı, belirlediğiniz süre boyunca kimsenin (siz dahil) çekemeyeceği şekilde
         kilitleyin — alıcılara likiditeyi aniden çekmeyeceğinizi zincir üzerinde ispatlamanın bir
-        yolu. Bu, <strong>Streamflow</strong>'un Devnet ve Mainnet'te halihazırda çalışan, yaygın
-        kullanılan kilit/vesting programı üzerinden yapılır; bu sitenin kendi yazıp deploy ettiği
-        bir program değildir.
+        yolu.
       </p>
 
       <div className="alert alert--warning">
