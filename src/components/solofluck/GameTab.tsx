@@ -48,12 +48,14 @@ const POLL_MS = 8000
 // Liderlik tablosu getProgramAccounts kullanıyor (tüm PlayerState
 // hesaplarını tarar) — bu POLL_MS'den daha ağır, o yüzden daha seyrek.
 const LEADERBOARD_POLL_MS = 30_000
-// Solana'da ortalama slot süresi ~400-500ms — bu yalnızca kullanıcıya
-// kabaca bir bekleme süresi göstermek için, kesin bir taahhüt değil.
-const APPROX_SECONDS_PER_SLOT = 0.45
-
 function fmtSol(n: number): string {
   return n.toLocaleString('tr-TR', { maximumFractionDigits: 3 })
+}
+
+// Gaz bakiyesi binde birin çok altında (0,0002 SOL mertebesinde) olduğu için
+// fmtSol onu "0" diye gösteriyordu. Bu ölçek için ayrı bir biçimlendirici.
+function fmtGas(n: number): string {
+  return n.toLocaleString('tr-TR', { maximumFractionDigits: 6 })
 }
 
 // Solana'nın çiğ İngilizce RPC hatalarını anlaşılır Türkçe mesajlara çevirir.
@@ -652,26 +654,24 @@ export function GameTab() {
             </div>
           )}
 
-          {delegateActive && (
+          {/* Bu bant eskiden oyun cüzdanı aktifken SÜREKLİ duruyordu ve
+              "Gaz bakiyesi: 0 SOL" yazıyordu — fmtSol 3 basamağa yuvarladığı
+              için 0,0002 SOL "0" görünüyordu, yani hem gereksiz hem
+              yanıltıcıydı (oyun gayet çalışıyordu). Kasa her satın alımda
+              gazı zaten kendisi tazeliyor; bu yüzden bant artık yalnızca
+              GERÇEKTEN işlem gerektiğinde, yani gaz tükenmek üzereyken
+              görünüyor. */}
+          {delegateLowBalance && (
             <div className="luck-game__delegate-status">
-              🔑 Oyun cüzdanı aktif — spinler onaysız oynanıyor.{' '}
-              {delegateGasLamports !== null && (
-                <>Gaz bakiyesi: {fmtSol(lamportsToSol(delegateGasLamports))} SOL.</>
-              )}
-              {delegateLowBalance && (
-                <>
-                  {' '}
-                  Bakiye düşük —{' '}
-                  <button
-                    type="button"
-                    className="btn btn--secondary btn--small"
-                    onClick={handleTopUpDelegate}
-                    disabled={busy !== null || !realWalletSigner}
-                  >
-                    {busy === 'topup' ? 'Dolduruluyor...' : 'Doldur'}
-                  </button>
-                </>
-              )}
+              ⛽ Oyun cüzdanının gazı azaldı ({fmtGas(lamportsToSol(delegateGasLamports ?? 0))} SOL) —{' '}
+              <button
+                type="button"
+                className="btn btn--secondary btn--small"
+                onClick={handleTopUpDelegate}
+                disabled={busy !== null || !realWalletSigner}
+              >
+                {busy === 'topup' ? 'Dolduruluyor...' : 'Doldur'}
+              </button>
             </div>
           )}
 
@@ -729,24 +729,27 @@ export function GameTab() {
             </button>
           )}
 
-          {pending && !windowExpired && (
+          {/* Çeviriş sırasında ARA DURUM METNİ GÖSTERMİYORUZ ("Sonuç
+              hazırlanıyor...", "Sonuç açılıyor..."). Makaralar zaten dönüyor,
+              butonun kendisi "Makaralar dönüyor..." diyor ve sonuç iki-üç
+              saniye içinde kendiliğinden açılıyor — araya giren kutular
+              kazanç/kayıp mesajının yerini kapatıp gürültü yaratıyordu.
+              Ekranda yalnızca gerçekten yeni bilgi olan kazandın/kaybettin
+              mesajı kalıyor.
+
+              Tek istisna: otomatik açma HATA verirse elle deneyebilmek için
+              buton geri geliyor. Bu bir bildirim değil, kullanıcının
+              sıkışmasını önleyen bir çıkış yolu. */}
+          {pending && !windowExpired && readyToResolve && autoResolveFailed && (
             <div className="luck-game__pending">
-              {!readyToResolve ? (
-                <div className="alert alert--info">
-                  Sonuç hazırlanıyor... (~{Math.max(0, Math.round((slotsRemaining ?? 0) * APPROX_SECONDS_PER_SLOT))} sn)
-                </div>
-              ) : autoResolveFailed ? (
-                <button
-                  type="button"
-                  className="btn btn--primary btn--block"
-                  onClick={handleResolve}
-                  disabled={busy !== null || !gameConfig}
-                >
-                  {busy === 'resolve' ? 'Sonuç okunuyor...' : '🎲 Sonucu Gör (tekrar dene)'}
-                </button>
-              ) : (
-                <div className="alert alert--info">Sonuç açılıyor...</div>
-              )}
+              <button
+                type="button"
+                className="btn btn--primary btn--block"
+                onClick={handleResolve}
+                disabled={busy !== null || !gameConfig}
+              >
+                {busy === 'resolve' ? 'Sonuç okunuyor...' : '🎲 Sonucu Gör (tekrar dene)'}
+              </button>
             </div>
           )}
 
