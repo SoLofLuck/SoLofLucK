@@ -82,6 +82,32 @@ jobs:
       - name: Devnet'i yapılandır
         run: solana config set --url devnet --keypair ~/.config/solana/id.json
 
+      # Program keypair'i, programın zincirdeki ADRESİNİ belirliyor. Bu dosya
+      # daha önce yalnızca rust-cache'in içinde (target/ altında) taşınıyordu;
+      # o önbelleğin anahtarı Cargo.lock ve rustc sürümüne bağlı olduğu için
+      # her değiştiğinde keypair kayboluyor, `anchor keys sync` yenisini
+      # üretiyor ve program BAŞKA bir adrese deploy oluyordu. Sonuç: her
+      # deploy'dan sonra site config.ts güncellenmek, initialize() yeniden
+      # çalıştırılmak zorunda kalıyor ve eski kasadaki bakiye orada kalıyordu.
+      #
+      # Bu yüzden keypair'in artık kendi önbelleği var: restore, "en son
+      # kaydedilen" girdiyi önek eşleşmesiyle geri getiriyor; save ise
+      # keypair'in kendi pubkey'iyle anahtarlanıyor, böylece
+      # force_new_program_id ile bilerek üretilen yeni adres eskisinin
+      # üzerine yazmıyor.
+      #
+      # NOT: GitHub Actions önbellekleri 7 gün dokunulmazsa siliniyor — bu
+      # yüzden bu yalnızca aktif geliştirme sırasında adresi sabit tutar.
+      # Kalıcı çözüm (mainnet için ŞART): keypair'i bir repo secret'ında
+      # saklayıp buraya yazmak, tıpkı LUCK_GAME_DEPLOY_KEY gibi.
+      - name: Program keypair'ini önbellekten geri yükle
+        if: inputs.force_new_program_id != true
+        uses: actions/cache/restore@v4
+        with:
+          path: program/luck-game/target/deploy/luck_game-keypair.json
+          key: luck-game-program-keypair-
+          restore-keys: luck-game-program-keypair-
+
       # GameConfig hesabının boyutu değiştiğinde (ör. küçük/büyük ödül
       # alanları eklendiğinde), ÖNCEKİ deploy'un rust-cache'te önbelleklenmiş
       # program keypair'ini (target/deploy/luck_game-keypair.json) tekrar
@@ -190,3 +216,12 @@ jobs:
           echo " PROGRAM ID: $PROGRAM_ID"
           echo "================================================"
           echo "Bu ID'yi declare_id!() ve site config.ts'e işlemek için kullanılacak."
+          echo "PROGRAM_ID=$PROGRAM_ID" >> "$GITHUB_ENV"
+
+      # Kaydetme adımı BİLEREK deploy'dan sonra: keypair'i ancak gerçekten
+      # bu adrese deploy ettiysek saklıyoruz.
+      - name: Program keypair'ini önbelleğe kaydet
+        uses: actions/cache/save@v4
+        with:
+          path: program/luck-game/target/deploy/luck_game-keypair.json
+          key: luck-game-program-keypair-${{ env.PROGRAM_ID }}

@@ -13,7 +13,7 @@ use anchor_lang::system_program::{self, Transfer as SolTransfer};
 // korumadı, bu yüzden fresh-keypair redeploy'lar `anchor keys sync`
 // adımıyla (bkz. deploy-luck-game.yml) bu satırı CI checkout'unda otomatik
 // güncelledi — gerçek deploy edilen ve kendi içinde tutarlı adres bu.
-declare_id!("3JytBSxbz7W71VyTc44ZLMqP9PC3oBvquPxNkSRxuUJJ");
+declare_id!("E5Q9sVVvCZFfFvcey2B4EwWJu8yYXuVrWWgtKKWr8zyP");
 
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";
