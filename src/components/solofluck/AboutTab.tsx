@@ -54,7 +54,7 @@ const ROADMAP = [
 const FAQ = [
   {
     q: '$LUCK nedir?',
-    a: 'SoLofLuck ($LUCK), Solana ağında bu siteye özel oluşturulan, şans/kumarhane esintili temaya sahip bir SPL token\'dır. Presale ve topluluk çekilişleri etrafında kurgulanmıştır.',
+    a: 'SoLofLuck ($LUCK), Solana ağında bu siteye özel oluşturulan, şans esintili temaya sahip bir SPL token\'dır. Presale ve topluluk çekilişleri etrafında kurgulanmıştır.',
   },
   {
     q: 'Presale\'e nasıl katılırım?',
@@ -76,7 +76,7 @@ export function AboutTab() {
       <p className="luck-about__lead">
         <strong>{LUCK_TOKEN.name}</strong> ({LUCK_TOKEN.symbol}), bu sitenin kendi kimliğine
         adanmış Solana SPL token'ıdır. Sayfanın arka planında akan dijital yağmur ve arada geçen
-        dört yapraklı yoncalar ile "777" figürleri, projenin şans/kumarhane esintili temasını
+        dört yapraklı yoncalar ile "777" figürleri, projenin şans esintili temasını
         temsil eder — coin'in kendisi ise tamamen zincir üzerinde, şeffaf ve cüzdanınızdan
         yönetilen gerçek bir SPL token'dır.
       </p>
