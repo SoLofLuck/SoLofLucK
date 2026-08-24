@@ -321,15 +321,17 @@ export const SOCIAL_LINKS = {
 // çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
 // gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
 export const GAME_CONFIG = {
-  // Devnet. Katılım depozitosunun iadesi (buy_spins) eklendiğinde yeniden
-  // deploy edildi. Adres de yenilendi çünkü program keypair'i rust-cache'in
-  // içinde taşınıyordu ve o önbelleğin anahtarı Cargo.lock/rustc sürümüne
-  // bağlı — değişince keypair kayboluyor, `anchor keys sync` YENİ bir
-  // Program ID üretiyor. Artık keypair'in kendi sabit anahtarlı önbelleği
-  // var (bkz. .github/workflows/deploy-luck-game.yml), yani adres
-  // deploy'lar arasında korunuyor. Kalıcı çözüm (mainnet için şart):
-  // keypair'i bir repo secret'ında tutmak.
-  programId: 'E5Q9sVVvCZFfFvcey2B4EwWJu8yYXuVrWWgtKKWr8zyP',
+  // Devnet. Program keypair'i eskiden yalnızca rust-cache'in içinde
+  // taşınıyordu; o önbelleğin anahtarı Cargo.lock/rustc sürümüne bağlı
+  // olduğu için her değiştiğinde keypair kayboluyor ve `anchor keys sync`
+  // YENİ bir Program ID üretiyordu — adres üst üste iki deploy'da değişti.
+  // Keypair'e kendi sabit anahtarlı önbelleği verildi (bkz.
+  // .github/workflows/deploy-luck-game.yml) ve ilk kayıt bu adreste
+  // yapıldı, yani bundan sonraki yükseltmeler adresi koruyacak.
+  // Kalıcı çözüm (mainnet için ŞART): keypair'i bir repo secret'ında
+  // tutmak — önbellek 7 gün dokunulmazsa siliniyor ve keypair kaybolursa
+  // program bir daha hiç güncellenemez.
+  programId: 'H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf',
   freePlays: 3,
   // Spin-kredisi tarifesi: 3 ücretsiz deneme bitince (+1 bonus spin
   // hediye), her paket bir defada satın alınıp bakiyeye eklenir. Sırayla
