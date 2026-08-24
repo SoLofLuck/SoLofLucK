@@ -33,31 +33,22 @@ const MAX_RESOLVE_WINDOW_SLOTS: u64 = 300;
 // birimle ifade ediliyor — ör. 200 bps = %2.
 const BPS_DENOMINATOR: u32 = 10_000;
 
-// Oyuncunun yerel delege anahtarının play()/resolve() işlem ücretlerini
-// ödeyebilmesi için gereken küçük SOL bakiyesi — OYUNCUDAN değil, KASADAN
-// (vault) karşılanır: ücretsiz deneme gerçekten ücretsiz olsun diye, ilk
-// register_delegate() çağrısında (yeni oyuncu) bir kereliğine kasa
-// sponsorluğu yapılır. Kasa zaten her satın alımın %80'ini topladığından
-// bu, oynanan oyunların doğal bir müşteri kazanma maliyeti sayılabilir.
-const DELEGATE_GAS_SPONSOR_LAMPORTS: u64 = 200_000; // ~0.0002 SOL, ~20 tur
+// Delegenin ("oyun cüzdanı") play()/resolve() işlem ücretlerini ödeyebilmesi
+// için gereken, GERÇEKTEN HARCANABİLİR gaz payı — oyuncudan değil, KASADAN
+// karşılanır. Kasa zaten her satın alımın büyük kısmını topladığından bu,
+// oynanan oyunların doğal bir maliyeti sayılabilir.
 //
-// DİKKAT — bu tutar TEK BAŞINA yeni bir hesabı ayakta tutmaya YETMEZ:
-// Solana'da 0 baytlık bir hesabın kira muafiyeti (rent-exempt) tabanı
-// ~890_880 lamport'tur ve bir hesap bu tabanın altında bakiyeyle
-// bırakılamaz. Delege zincirde hiç var olmayan yeni bir anahtar olduğu
-// için, yalnızca bu sponsorluk gönderildiğinde işlem —program hatasız
-// çalışsa bile— `InsufficientFundsForRent` ile reddediliyordu. İstemci
-// (src/lib/luckGame.ts registerAndFundDelegate) bu yüzden aynı işlemde
-// delegeyi önce kira tabanına kadar dolduruyor; buradaki sponsorluk onun
-// üstüne binen, gerçekten HARCANABİLİR gaz payı. Bu sabit ileride
-// değiştirilirse kira tabanının yerini almaya çalışmamalı — istemcideki
-// dolgu kaldırılacaksa, bu değer `Rent::minimum_balance(0)` + gaz payı
-// olacak şekilde hesaplanmalı.
-// Her buy_spins() çağrısında, eğer arayan kendi kayıtlı delegesini
-// hesap listesinde verdiyse, kasadan delegeye eklenen küçük bir ek gaz
-// payı — oyuncu zaten imzaladığı ödeme işleminin İÇİNDE, ayrı bir "gazı
-// doldur" onayına gerek kalmadan gaz bakiyesi tazelenmiş olur.
-const DELEGATE_GAS_TOPUP_LAMPORTS: u64 = 50_000; // ~0.00005 SOL
+// DİKKAT — bu tutar tek başına bir hesabı ayakta TUTMAZ: Solana'da 0 baytlık
+// bir hesabın kira muafiyeti (rent-exempt) tabanı ~890_880 lamport ve bir
+// hesap bu tabanın altında bakiyeyle bırakılamaz. Bu yüzden delegeye
+// gönderilen tutar her zaman `Rent::minimum_balance(0) + bu sabit` olarak
+// hesaplanıyor (bkz. buy_spins içindeki `delegate_target`); bu sabit yalnızca
+// tabanın ÜSTÜNE binen, harcanabilir kısmı ifade ediyor.
+//
+// Kasadan çıktığı için ödemesi bilerek `buy_spins()`'e bağlandı: izinsiz
+// çağrılabilen `register_delegate()` içinde olsaydı, boş cüzdanlarla art arda
+// kayıt olup kasayı boşaltmak kârlı bir saldırı olurdu.
+const DELEGATE_GAS_SPONSOR_LAMPORTS: u64 = 200_000; // ~0.0002 SOL, ~30 tur
 
 #[program]
 pub mod luck_game {
@@ -232,58 +223,95 @@ pub mod luck_game {
         let price = config.spin_tier_prices[tier_index as usize];
 
         // -------------------------------------------------------------------
-        // Katılım depozitosunun geri ödenmesi
+        // Katılım maliyeti: oyuncudan değil, KASADAN
         // -------------------------------------------------------------------
         // Solana'da hesap açmak ücretsiz değil: bir hesap, "rent-exempt"
         // (kira muafiyeti) tabanının altında bakiyeyle var olamaz. Yeni bir
-        // oyuncunun zincirde iki hesabı doğuyor ve ikisinin de tabanını
-        // OYUNCU ödüyor:
+        // oyuncu zincire girerken iki hesap doğuyor:
         //   * `player_state` PDA'sı (spin kredisi, bekleyen oyun, delege
-        //     kaydı burada tutuluyor) — ~0,00162 SOL,
+        //     kaydı burada tutuluyor) — rent(PlayerState::LEN), ~0,00162 SOL.
+        //     Bunu Anchor'ın `init_if_needed`'i OYUNCUYA ödetiyor.
         //   * delege / "oyun cüzdanı" (0 baytlık sıradan bir hesap) —
-        //     ~0,00089 SOL (istemci aynı işlemde dolduruyor, bkz.
-        //     src/lib/luckGame.ts registerAndFundDelegate).
+        //     rent(0) + gaz payı. Bunu doğrudan kasadan gönderiyoruz.
         //
-        // Bu tutar bize gelir olarak KALMIYOR; oyuncunun kendi hesaplarında
-        // duruyor. Yine de oyuncu açısından "paket fiyatının üstüne çıkan
-        // sürpriz bir masraf" gibi görünüyordu. Bu yüzden ilk satın alımda
-        // kasadan oyuncuya AYNEN geri ödeniyor: oyuncunun cebinden çıkan
-        // net tutar, ilan edilen paket fiyatı + Solana'nın kaçınılmaz işlem
-        // ücreti (~0,0000065 SOL) kadar oluyor.
+        // İkisi de bize gelir olarak kalmıyor (oyuncunun kendi hesaplarında
+        // duruyorlar) ama oyuncu açısından "ilan edilen paket fiyatının
+        // üstüne çıkan sürpriz masraf" gibi görünüyordu. Artık:
+        //   - player_state kirası oyuncuya AYNEN geri ödeniyor,
+        //   - delegenin kirası + gazı zaten kasadan gidiyor,
+        // yani oyuncunun cebinden çıkan net tutar = ilan edilen paket
+        // fiyatı + Solana'nın kaçınılmaz işlem ücreti (~0,0000065 SOL).
         //
         // Maliyeti bizim payımızdan düşürüyoruz: ev payı (treasury_fee_bps)
-        // artık paketin TAMAMI üzerinden değil, depozito düşüldükten sonraki
-        // tutar üzerinden hesaplanıyor.
+        // paketin TAMAMI üzerinden değil, bu katılım maliyeti düşüldükten
+        // sonraki tutar üzerinden hesaplanıyor.
         //
-        // Neden `register_delegate()` içinde değil de BURADA: geri ödemenin
-        // ücretli bir satın alıma bağlı olması şart. Kayıt sırasında
-        // yapılsaydı, bir saldırgan binlerce boş cüzdanla art arda kayıt
-        // olup kasayı kuru kuruya boşaltabilirdi. Satın almaya bağlıyken
-        // "sömürmek" için her seferinde depozitodan çok daha büyük bir paket
+        // NEDEN `register_delegate()` İÇİNDE DEĞİL DE BURADA: kasadan çıkan
+        // her kuruşun ücretli bir satın alıma bağlı olması şart. Kayıt
+        // sırasında yapılsaydı, bir saldırgan binlerce boş cüzdanla art arda
+        // kayıt olup kasayı kuru kuruya boşaltabilirdi — üstelik bu yalnızca
+        // teorik değil, kârlı bir saldırı olurdu (işlem ücreti, çekilen
+        // tutardan çok daha küçük). Satın almaya bağlıyken "sömürmek" için
+        // her seferinde katılım maliyetinden onlarca kat büyük bir paket
         // bedeli ödemek gerekiyor.
-        //
-        // `is_first_touch`, `ensure_owner`'dan (aşağıda) ÖNCE okunuyor:
-        // player_state'e daha önce hiç dokunulmamış olması, bunun gerçekten
-        // ilk kez oluşturulduğunun tek güvenilir işareti.
-        let is_first_touch = !ctx.accounts.player_state.initialized;
         let rent = Rent::get()?;
-        let mut onboarding_cost = if is_first_touch {
+
+        // "İlk satın alım" tespiti: hiç oynanmamış VE elde hiç spin yok.
+        // Bu ikisi yalnızca player_state'in ömründe BİR KEZ aynı anda
+        // doğru olabilir — ilk satın alımdan sonra spins_remaining > 0,
+        // spinler tükendiğinde ise plays_count > 0 olur.
+        //
+        // Burada bilerek `initialized` bayrağına BAKMIYORUZ: delege kaydı
+        // artık satın almayla AYNI işlemde, ondan hemen önce gidiyor ve
+        // `register_delegate()` bayrağı çoktan set ediyor. `initialized`
+        // kullanıldığında geri ödeme hiç tetiklenmiyordu — oyuncudan
+        // 0,00162 SOL fazladan çıkıyordu.
+        let is_first_purchase = ctx.accounts.player_state.plays_count == 0
+            && ctx.accounts.player_state.spins_remaining == 0;
+
+        let player_refund = if is_first_purchase {
             rent.minimum_balance(PlayerState::LEN)
-                .checked_add(rent.minimum_balance(0))
-                .ok_or(GameError::MathOverflow)?
         } else {
             0
         };
-        // Depozito paket bedelinden büyük olamaz — aksi halde kasa her yeni
-        // oyuncuda para kaybederdi. Tarifedeki en ucuz paket bile
-        // depozitonun onlarca katı, bu yüzden pratikte hiç tetiklenmiyor;
-        // yine de ileride çok ucuz bir paket eklenirse sessizce zarar
-        // etmek yerine geri ödemeyi tamamen kapatıyoruz.
-        if onboarding_cost >= price {
-            onboarding_cost = 0;
-        }
 
-        // Ev payı, depozito DÜŞÜLDÜKTEN SONRAKİ tutar üzerinden.
+        // Delegenin hedef bakiyesi: kira tabanı (hesabın var olabilmesi
+        // için asla harcanamaz) + harcanabilir gaz payı. Her satın alımda
+        // bu seviyeye geri dolduruluyor, yani oynadıkça eriyen gaz, oyuncu
+        // zaten imzaladığı ödemenin İÇİNDE sessizce tazeleniyor — ayrı bir
+        // "doldur" onayı istemeye gerek kalmıyor.
+        //
+        // Yalnızca oyuncunun GERÇEKTEN kayıtlı delegesi fonlanıyor; hesap
+        // listesine rastgele bir adres koyup kasadan oraya para
+        // göndertilemesin diye.
+        let delegate_target = rent
+            .minimum_balance(0)
+            .checked_add(DELEGATE_GAS_SPONSOR_LAMPORTS)
+            .ok_or(GameError::MathOverflow)?;
+        let delegate_funding = if ctx.accounts.player_state.delegate == ctx.accounts.delegate.key()
+            && ctx.accounts.player_state.delegate != Pubkey::default()
+        {
+            delegate_target.saturating_sub(ctx.accounts.delegate.lamports())
+        } else {
+            0
+        };
+
+        let mut onboarding_cost = player_refund
+            .checked_add(delegate_funding)
+            .ok_or(GameError::MathOverflow)?;
+        // Katılım maliyeti paket bedelinden büyük olamaz — aksi halde kasa
+        // her yeni oyuncuda para kaybederdi. Tarifedeki en ucuz paket bile
+        // bunun onlarca katı, bu yüzden pratikte hiç tetiklenmiyor; yine de
+        // ileride çok ucuz bir paket eklenirse sessizce zarar etmek yerine
+        // kasadan çıkışı tamamen kapatıyoruz.
+        let (player_refund, delegate_funding) = if onboarding_cost >= price {
+            onboarding_cost = 0;
+            (0, 0)
+        } else {
+            (player_refund, delegate_funding)
+        };
+
+        // Ev payı, katılım maliyeti DÜŞÜLDÜKTEN SONRAKİ tutar üzerinden.
         let fee_base = price
             .checked_sub(onboarding_cost)
             .ok_or(GameError::MathOverflow)?;
@@ -318,33 +346,59 @@ pub mod luck_game {
             vault_amount,
         )?;
 
-        // Katılım depozitosunu kasadan oyuncuya geri öde (yukarıdaki uzun
-        // açıklamaya bakınız). Kasa bu satırdan hemen önce `vault_amount`
+        // Katılım maliyetini kasadan öde (yukarıdaki uzun açıklamaya
+        // bakınız): player_state kirası oyuncuya geri, delegenin kirası +
+        // gazı delegeye. Kasa bu satırlardan hemen önce `vault_amount`
         // aldığı için karşılığı her zaman var; yine de kasanın kendi kira
-        // tabanının altına düşmemesi için tavanlıyoruz — sıfıra düşerse
-        // geri ödeme sessizce atlanır, satın alma yine de tamamlanır.
+        // tabanının altına düşmemesi için tavanlıyoruz — karşılayamazsa
+        // ödeme sessizce atlanır, satın alma yine de tamamlanır (bir gaz
+        // tamponu eksikliği asıl ödemeyi düşürmemeli).
         if onboarding_cost > 0 {
-            let vault_available = ctx
-                .accounts
-                .vault
-                .lamports()
-                .saturating_sub(rent.minimum_balance(0));
-            let refund = onboarding_cost.min(vault_available);
-            if refund > 0 {
-                let config_key = ctx.accounts.config.key();
-                let vault_bump = ctx.accounts.config.vault_bump;
-                let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
-                system_program::transfer(
-                    CpiContext::new_with_signer(
-                        ctx.accounts.system_program.to_account_info(),
-                        SolTransfer {
-                            from: ctx.accounts.vault.to_account_info(),
-                            to: ctx.accounts.player.to_account_info(),
-                        },
-                        &[signer_seeds],
-                    ),
-                    refund,
-                )?;
+            let config_key = ctx.accounts.config.key();
+            let vault_bump = ctx.accounts.config.vault_bump;
+            let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
+            let vault_floor = rent.minimum_balance(0);
+
+            if player_refund > 0 {
+                let available = ctx.accounts.vault.lamports().saturating_sub(vault_floor);
+                let amount = player_refund.min(available);
+                if amount > 0 {
+                    system_program::transfer(
+                        CpiContext::new_with_signer(
+                            ctx.accounts.system_program.to_account_info(),
+                            SolTransfer {
+                                from: ctx.accounts.vault.to_account_info(),
+                                to: ctx.accounts.player.to_account_info(),
+                            },
+                            &[signer_seeds],
+                        ),
+                        amount,
+                    )?;
+                }
+            }
+
+            if delegate_funding > 0 {
+                let available = ctx.accounts.vault.lamports().saturating_sub(vault_floor);
+                let amount = delegate_funding.min(available);
+                // Delege hesabı zincirde YOKSA, kira tabanının ALTINDA bir
+                // tutar göndermek işlemin tamamını `InsufficientFundsForRent`
+                // ile düşürür. Bu yüzden ya tam yeter, ya hiç göndermiyoruz.
+                let creates_account = ctx.accounts.delegate.lamports() == 0;
+                let would_be_rent_exempt =
+                    ctx.accounts.delegate.lamports().saturating_add(amount) >= vault_floor;
+                if amount > 0 && (!creates_account || would_be_rent_exempt) {
+                    system_program::transfer(
+                        CpiContext::new_with_signer(
+                            ctx.accounts.system_program.to_account_info(),
+                            SolTransfer {
+                                from: ctx.accounts.vault.to_account_info(),
+                                to: ctx.accounts.delegate.to_account_info(),
+                            },
+                            &[signer_seeds],
+                        ),
+                        amount,
+                    )?;
+                }
             }
         }
 
@@ -356,7 +410,6 @@ pub mod luck_game {
             .checked_add(spin_count)
             .ok_or(GameError::MathOverflow)?;
         player_state.bump = ctx.bumps.player_state;
-        let registered_delegate = player_state.delegate;
 
         emit!(SpinsPurchased {
             player: owner,
@@ -365,35 +418,6 @@ pub mod luck_game {
             price_lamports: price,
             spins_remaining: player_state.spins_remaining,
         });
-
-        // Arayan, kendi kayıtlı delegesini `delegate` hesabı olarak verdiyse
-        // (client her zaman verir), kasadan delegeye küçük bir gaz payı
-        // daha ekliyoruz — böylece uzun süre oynayan bir oyuncunun gaz
-        // bakiyesi, zaten yaptığı ödemelerin İÇİNDE sessizce tazelenir,
-        // ayrı bir "doldur" onayı istemeye gerek kalmaz. Kasa yeterli
-        // bakiyeye sahip değilse (aşırı uç durum) sessizce atlanır — bir
-        // gaz tamponu eksikliği yüzünden asıl satın alma başarısız olmamalı.
-        if registered_delegate != Pubkey::default() && registered_delegate == ctx.accounts.delegate.key() {
-            let rent_exempt = Rent::get()?.minimum_balance(0);
-            let vault_balance = ctx.accounts.vault.lamports().saturating_sub(rent_exempt);
-            let topup = DELEGATE_GAS_TOPUP_LAMPORTS.min(vault_balance);
-            if topup > 0 {
-                let config_key = ctx.accounts.config.key();
-                let vault_bump = ctx.accounts.config.vault_bump;
-                let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
-                system_program::transfer(
-                    CpiContext::new_with_signer(
-                        ctx.accounts.system_program.to_account_info(),
-                        SolTransfer {
-                            from: ctx.accounts.vault.to_account_info(),
-                            to: ctx.accounts.delegate.to_account_info(),
-                        },
-                        &[signer_seeds],
-                    ),
-                    topup,
-                )?;
-            }
-        }
 
         Ok(())
     }
@@ -412,11 +436,6 @@ pub mod luck_game {
     /// gerçekten ücretsiz kalsın diye (bkz. DELEGATE_GAS_SPONSOR_LAMPORTS).
     pub fn register_delegate(ctx: Context<RegisterDelegate>) -> Result<()> {
         let owner = ctx.accounts.player.key();
-        // `ensure_owner`'dan (aşağıda) ÖNCE okunuyor: bu, player_state'e
-        // gerçekten hiç dokunulmamış mı (ilk kez play/buy_spins/
-        // register_delegate) sorusunun cevabı — kasa sponsorluğunun tek
-        // seferlik olmasını garanti eden bayrak bu.
-        let is_first_touch = !ctx.accounts.player_state.initialized;
         let delegate_key = ctx.accounts.delegate.key();
 
         let player_state = &mut ctx.accounts.player_state;
@@ -424,36 +443,24 @@ pub mod luck_game {
         player_state.delegate = delegate_key;
         player_state.bump = ctx.bumps.player_state;
 
-        // Yeni bir oyuncu (player_state'e hiç dokunulmamışken) delege
-        // anahtarını kaydettiğinde, kasadan (vault) bir kereliğine küçük
-        // bir gaz sponsorluğu yapılır — ücretsiz deneme GERÇEKTEN ücretsiz
-        // olsun diye oyuncudan ayrı bir SOL transferi istenmiyor.
-        // `is_first_touch` yukarıda `ensure_owner`'dan ÖNCE hesaplandığı
-        // için, aynı oyuncu register_delegate()'i tekrar tekrar çağırarak
-        // (ör. yeni bir yerel delege anahtarına geçerken) kasadan tekrar
-        // tekrar sponsorluk çekemez — yalnızca gerçekten ilk temasta verilir.
-        if is_first_touch {
-            let rent_exempt = Rent::get()?.minimum_balance(0);
-            let vault_balance = ctx.accounts.vault.lamports().saturating_sub(rent_exempt);
-            let sponsor = DELEGATE_GAS_SPONSOR_LAMPORTS.min(vault_balance);
-            if sponsor > 0 {
-                let config_key = ctx.accounts.config.key();
-                let vault_bump = ctx.accounts.config.vault_bump;
-                let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
-                system_program::transfer(
-                    CpiContext::new_with_signer(
-                        ctx.accounts.system_program.to_account_info(),
-                        SolTransfer {
-                            from: ctx.accounts.vault.to_account_info(),
-                            to: ctx.accounts.delegate.to_account_info(),
-                        },
-                        &[signer_seeds],
-                    ),
-                    sponsor,
-                )?;
-            }
-        }
-
+        // Bu çağrı KASADAN HİÇ PARA ÇIKARMIYOR — sadece defter tutuyor.
+        //
+        // Eskiden burada delegeye bir kereliğine gaz sponsorluğu yapılıyordu.
+        // İki sorunu vardı:
+        //   1. Sponsorluk (200_000 lamport) 0 baytlık bir hesabın kira
+        //      tabanının (~890_880) ALTINDA kaldığı için, delege hesabı
+        //      zincirde yeni doğduğunda işlemin tamamı
+        //      `InsufficientFundsForRent` ile düşüyordu.
+        //   2. Çağrı izinsiz (permissionless): bir saldırgan binlerce boş
+        //      cüzdanla art arda kayıt olup kasayı 200_000'er 200_000'er
+        //      boşaltabilirdi — işlem ücretinden daha çok çektiği için
+        //      KÂRLI bir saldırı.
+        //
+        // Bu yüzden delegenin kirası da gazı da artık `buy_spins()` içinde,
+        // yani ÜCRETLİ bir satın almaya bağlı olarak gönderiliyor. Kayıt ile
+        // satın alma zaten tek işlemde birlikte gittiği için (bkz.
+        // src/lib/luckGame.ts buySpins/setupDelegate) oyuncu açısından
+        // hiçbir şey değişmiyor: tek imza, delege dolu.
         Ok(())
     }
 

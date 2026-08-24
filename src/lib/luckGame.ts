@@ -501,26 +501,18 @@ async function delegateBalanceOrZero(connection: Connection, delegate: PublicKey
  * onayında, tek işlemde.
  */
 export async function buildDelegateSetupIxs(
-  connection: Connection,
+  _connection: Connection,
   owner: PublicKey,
   delegate: PublicKey,
 ): Promise<TransactionInstruction[]> {
-  const ixs: TransactionInstruction[] = []
-
-  const rentReserve = await delegateRentReserveLamports(connection)
-  const balance = await delegateBalanceOrZero(connection, delegate)
-  if (balance < rentReserve) {
-    ixs.push(
-      SystemProgram.transfer({
-        fromPubkey: owner,
-        toPubkey: delegate,
-        lamports: rentReserve - balance,
-      }),
-    )
-  }
-
-  ixs.push(buildRegisterDelegateIx(owner, delegate))
-  return ixs
+  // Delegenin kira tabanı da gaz payı da artık KASADAN, `buy_spins()`'in
+  // içinde gönderiliyor (bkz. lib.rs). Burada oyuncudan hiçbir transfer
+  // istemiyoruz: eskiden istiyorduk ve paket fiyatının üstüne 0,00089 SOL
+  // olarak biniyordu. Kayıt talimatı satın alma talimatının hemen ÖNÜNE
+  // eklendiği için kasadan gelen para aynı işlemin içinde yerine ulaşıyor —
+  // Solana'nın kira kontrolü işlem SONUNDAKİ bakiyeye baktığından bu
+  // sıralama sorun çıkarmıyor.
+  return [buildRegisterDelegateIx(owner, delegate)]
 }
 
 export async function registerAndFundDelegate(

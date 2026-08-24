@@ -388,6 +388,10 @@ export const GAME_CONFIG = {
   // gazı biterse, oyuncunun kendi cüzdanından elle doldurabileceği miktar
   // (bkz. handleTopUpDelegate / topUpDelegateGas).
   delegateTopUpSol: 0.001,
-  // Delegate bakiyesi bunun altına düşünce "gaz doldur" uyarısı gösterilir.
-  delegateLowBalanceSol: 0.0002,
+  // Delegate'in HARCANABİLİR gaz bakiyesi (kira tabanı düşülmüş hali) bunun
+  // altına düşünce "gaz doldur" uyarısı gösterilir. Kasa her satın alımda
+  // delegeyi 0,0002 SOL'lük tam gaz payına geri dolduruyor (bkz. lib.rs
+  // DELEGATE_GAS_SPONSOR_LAMPORTS); bir spin (play + resolve) ~0,000013 SOL
+  // yaktığı için bu eşik "yaklaşık 3-4 spinlik gaz kaldı" demek.
+  delegateLowBalanceSol: 0.00005,
 }
