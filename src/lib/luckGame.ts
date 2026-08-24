@@ -7,7 +7,7 @@ import {
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js'
 import { GAME_CONFIG } from '../config'
-import { sendInstructions, type SendOptions, type TxSigner } from './sendTx'
+import { sendInstructions, withRetry, type SendOptions, type TxSigner } from './sendTx'
 
 // İmzalama arayüzü ve sertleştirilmiş gönderim mantığı artık ortak
 // src/lib/sendTx.ts'te — yakma gibi oyun dışı akışlar da aynı korumaları
@@ -429,13 +429,76 @@ function sendIxs(
   return sendInstructions(connection, signer, ixs, onStatus, options)
 }
 
+// ---------------------------------------------------------------------------
+// Delege hesabının kira (rent) tabanı
+// ---------------------------------------------------------------------------
+// Solana'da bir hesap, "rent-exempt" (kira muafiyeti) alt sınırının ALTINDA
+// bakiyeyle bırakılamaz. Veri tutmayan (0 baytlık) sıradan bir cüzdan
+// hesabı için bu sınır ~0,00089 SOL'dür. Zincirde hiç var olmayan bir
+// hesaba bu sınırın altında SOL göndermek, işlemi ZİNCİR DÜZEYİNDE
+// `InsufficientFundsForRent` ile reddettirir — program başarıyla çalışmış
+// olsa bile (loglarda "Program ... success" görünür, işlem yine de düşer).
+//
+// Delege ("oyun cüzdanı") tam olarak böyle bir hesap: tarayıcıda yeni
+// üretilen, zincirde hiç var olmayan bir anahtar. Kasanın ilk kayıtta
+// yaptığı sponsorluk (lib.rs DELEGATE_GAS_SPONSOR_LAMPORTS = 200_000
+// lamport) tek başına bu sınırın ALTINDA kaldığı için `register_delegate()`
+// işlemi —program hatasız çalışmasına rağmen— reddediliyordu. Spin satın
+// almanın ilk adımı bu kayıt olduğundan, satın alma da hiç tamamlanamıyordu.
+//
+// Çözüm: kaydı gönderirken AYNI işlemde delegeyi önce kira tabanına kadar
+// dolduruyoruz. Bu tutar harcanmıyor — delege hesabının zincirde açık
+// kalabilmesi için orada duran, oyuncunun KENDİ anahtarına ait bir
+// depozito. Kasanın sponsorluğu bunun ÜSTÜNE biniyor ve harcanabilir gaz
+// olarak kalıyor.
+const RENT_EXEMPT_ZERO_FALLBACK_LAMPORTS = 890_880
+
+let rentReserveCache: number | null = null
+
+/** 0 baytlık bir hesabın kira muafiyeti alt sınırı (lamport). */
+export async function delegateRentReserveLamports(connection: Connection): Promise<number> {
+  if (rentReserveCache !== null) return rentReserveCache
+  try {
+    rentReserveCache = await withRetry(() => connection.getMinimumBalanceForRentExemption(0))
+  } catch {
+    // RPC'ye ulaşılamazsa sabitle devam ediyoruz: değer küme genelinde
+    // yıllardır aynı; fazladan göndermek zararsız (para oyuncunun kendi
+    // delege hesabında kalır), eksik göndermek ise işlemi düşürür.
+    rentReserveCache = RENT_EXEMPT_ZERO_FALLBACK_LAMPORTS
+  }
+  return rentReserveCache
+}
+
+/**
+ * Delegenin GERÇEKTEN harcayabileceği bakiye — kira depozitosu düşülmüş
+ * hali. Ham bakiyeyi göstermek yanıltıcı olurdu: taban tutar hiçbir zaman
+ * işlem ücretine gidemez, çünkü bakiyeyi tabanın altına düşüren işlem de
+ * aynı `InsufficientFundsForRent` hatasıyla reddedilir.
+ */
+export function delegateSpendableLamports(balance: number, rentReserve: number): number {
+  return Math.max(0, balance - rentReserve)
+}
+
+/** Delegenin zincirdeki güncel bakiyesi; okunamazsa 0 varsayılır. */
+async function delegateBalanceOrZero(connection: Connection, delegate: PublicKey): Promise<number> {
+  try {
+    return await withRetry(() => connection.getBalance(delegate, 'confirmed'))
+  } catch {
+    // Fazladan gönderilen lamport oyuncunun kendi delege hesabında kalır;
+    // eksik gönderilmesi ise işlemin tamamını düşürür. Şüphede kalırsak
+    // "hesap hiç yok" varsayımı güvenli olan taraf.
+    return 0
+  }
+}
+
 /**
  * Oyuncunun yerel delegate anahtarını zincirde yetkilendirir — bundan
  * sonraki tüm play()/resolve() çağrılarını bu anahtar imzalayabilir.
- * Delegenin işlem-ücreti gaz bakiyesi OYUNCUDAN DEĞİL, ilk kayıtta
- * (yeni oyuncu) kasadan (vault) sponsor edilir (bkz. lib.rs
- * register_delegate) — bu yüzden burada oyuncudan HİÇBİR SOL transferi
- * istenmiyor; TEK bir gerçek cüzdan onayı, gerçekten ücretsiz.
+ * Delegenin HARCANABİLİR gaz bakiyesi oyuncudan değil, ilk kayıtta (yeni
+ * oyuncu) kasadan (vault) sponsor edilir (bkz. lib.rs register_delegate);
+ * oyuncudan yalnızca hesabın zincirde var olabilmesi için zorunlu olan
+ * kira depozitosu isteniyor (yukarıdaki açıklama). İkisi de TEK bir cüzdan
+ * onayında, tek işlemde.
  */
 export async function registerAndFundDelegate(
   connection: Connection,
@@ -443,10 +506,30 @@ export async function registerAndFundDelegate(
   delegate: PublicKey,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  return sendIxs(connection, ownerSigner, [buildRegisterDelegateIx(ownerSigner.publicKey, delegate)], onStatus)
+  const ixs: TransactionInstruction[] = []
+
+  const rentReserve = await delegateRentReserveLamports(connection)
+  const balance = await delegateBalanceOrZero(connection, delegate)
+  if (balance < rentReserve) {
+    ixs.push(
+      SystemProgram.transfer({
+        fromPubkey: ownerSigner.publicKey,
+        toPubkey: delegate,
+        lamports: rentReserve - balance,
+      }),
+    )
+  }
+
+  ixs.push(buildRegisterDelegateIx(ownerSigner.publicKey, delegate))
+  return sendIxs(connection, ownerSigner, ixs, onStatus)
 }
 
-/** Delegate'in gaz bakiyesini gerçek cüzdandan küçük bir transferle doldurur. */
+/**
+ * Delegate'in gaz bakiyesini gerçek cüzdandan küçük bir transferle
+ * doldurur. Gönderilen tutar, hesap kira tabanının altındaysa en az o
+ * tabana tamamlanır — aksi halde transferin kendisi
+ * `InsufficientFundsForRent` ile reddedilirdi.
+ */
 export async function topUpDelegateGas(
   connection: Connection,
   ownerSigner: TxSigner,
@@ -454,7 +537,13 @@ export async function topUpDelegateGas(
   lamports: number,
   onStatus?: (status: string) => void,
 ): Promise<string> {
-  const ix = SystemProgram.transfer({ fromPubkey: ownerSigner.publicKey, toPubkey: delegate, lamports })
+  const rentReserve = await delegateRentReserveLamports(connection)
+  const balance = await delegateBalanceOrZero(connection, delegate)
+  const ix = SystemProgram.transfer({
+    fromPubkey: ownerSigner.publicKey,
+    toPubkey: delegate,
+    lamports: Math.max(lamports, rentReserve - balance),
+  })
   return sendIxs(connection, ownerSigner, [ix], onStatus)
 }
 

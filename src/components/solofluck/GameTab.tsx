@@ -20,6 +20,8 @@ import {
   parseSpinsPurchasedFromTx,
   playFreeSpin,
   playGame,
+  delegateRentReserveLamports,
+  delegateSpendableLamports,
   registerAndFundDelegate,
   resolveGame,
   saveFreeSpinsState,
@@ -72,6 +74,14 @@ function friendlyErrorMessage(err: unknown): string {
   if (/NoSpinsRemaining|0x1776/i.test(message)) {
     return 'Spin hakkın kalmadı — önce bir paket satın al.'
   }
+  // Zincir düzeyinde kira (rent) reddi: bir hesap, 0 baytlık hesaplar için
+  // ~0,00089 SOL olan kira muafiyeti tabanının ALTINDA bakiyeyle
+  // bırakılamaz. Bu hatada program genelde hatasız çalışmış olur
+  // (loglarda "success" görünür), işlem yine de düşer — bu yüzden ayrı ve
+  // açık bir mesajı hak ediyor.
+  if (/InsufficientFundsForRent|insufficient funds for rent/i.test(message)) {
+    return 'İşlem, Solana\'nın kira (rent) kuralı yüzünden reddedildi: bir hesap ~0,00089 SOL\'lük tabanın altında bakiyeyle bırakılamıyor. Sayfayı yenileyip tekrar dene — sorun sürerse bize bildir.'
+  }
   if (/insufficient funds|insufficient lamports|InsufficientFundsForFee/i.test(message)) {
     return 'Cüzdanında yeterli SOL yok — işlem ücreti ve paket bedeli için biraz SOL gerekiyor.'
   }
@@ -89,6 +99,10 @@ export function GameTab() {
   const [initialized, setInitialized] = useState<boolean | null>(null)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const [delegateBalance, setDelegateBalance] = useState<number | null>(null)
+  // Delege hesabının kira depozitosu (0 baytlık hesabın rent-exempt tabanı).
+  // Bu tutar zincirde durmak zorunda — harcanabilir gaz DEĞİL, bu yüzden
+  // bakiyeyi kullanıcıya gösterirken düşüyoruz (bkz. lib/luckGame.ts).
+  const [delegateRentReserve, setDelegateRentReserve] = useState<number | null>(null)
 
   const [busy, setBusy] = useState<string | null>(null)
   // İşlem ilerleme metni artık ekranda GÖSTERİLMİYOR (kullanıcı geri
@@ -186,7 +200,12 @@ export function GameTab() {
         if (testWalletOn) {
           setTestBalance(await connection.getBalance(activeOwnerPublicKey))
         } else {
-          setDelegateBalance(await connection.getBalance(delegateKeypair.publicKey))
+          const [balance, reserve] = await Promise.all([
+            connection.getBalance(delegateKeypair.publicKey),
+            delegateRentReserveLamports(connection),
+          ])
+          setDelegateBalance(balance)
+          setDelegateRentReserve(reserve)
         }
       } else {
         setPlayerState(null)
@@ -510,8 +529,17 @@ export function GameTab() {
   const needsDelegateSetup = isActive && !testWalletOn && !delegateActive
   // Cüzdan bağlı olmalı ve gerçekten oynanabilir bir hak bulunmalı.
   const canPlay = isActive && playableSpins > 0
+  // "Harcanabilir" bakiye: ham bakiyeden kira depozitosu düşülmüş hali.
+  // Ham bakiyeye bakmak yanıltıcıydı — 0,00089 SOL'lük taban hiçbir zaman
+  // işlem ücretine gidemez.
+  const delegateGasLamports =
+    delegateBalance !== null && delegateRentReserve !== null
+      ? delegateSpendableLamports(delegateBalance, delegateRentReserve)
+      : null
   const delegateLowBalance =
-    delegateActive && delegateBalance !== null && lamportsToSol(delegateBalance) < GAME_CONFIG.delegateLowBalanceSol
+    delegateActive &&
+    delegateGasLamports !== null &&
+    lamportsToSol(delegateGasLamports) < GAME_CONFIG.delegateLowBalanceSol
 
   const targetSlot = playerState ? playerState.commitSlot + revealDelaySlots : null
   const slotsRemaining =
@@ -572,7 +600,9 @@ export function GameTab() {
           {delegateActive && (
             <div className="luck-game__delegate-status">
               🔑 Oyun cüzdanı aktif — spinler onaysız oynanıyor.{' '}
-              {delegateBalance !== null && <>Gaz bakiyesi: {fmtSol(lamportsToSol(delegateBalance))} SOL.</>}
+              {delegateGasLamports !== null && (
+                <>Gaz bakiyesi: {fmtSol(lamportsToSol(delegateGasLamports))} SOL.</>
+              )}
               {delegateLowBalance && (
                 <>
                   {' '}

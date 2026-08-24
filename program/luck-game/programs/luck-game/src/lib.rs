@@ -40,6 +40,19 @@ const BPS_DENOMINATOR: u32 = 10_000;
 // sponsorluğu yapılır. Kasa zaten her satın alımın %80'ini topladığından
 // bu, oynanan oyunların doğal bir müşteri kazanma maliyeti sayılabilir.
 const DELEGATE_GAS_SPONSOR_LAMPORTS: u64 = 200_000; // ~0.0002 SOL, ~20 tur
+//
+// DİKKAT — bu tutar TEK BAŞINA yeni bir hesabı ayakta tutmaya YETMEZ:
+// Solana'da 0 baytlık bir hesabın kira muafiyeti (rent-exempt) tabanı
+// ~890_880 lamport'tur ve bir hesap bu tabanın altında bakiyeyle
+// bırakılamaz. Delege zincirde hiç var olmayan yeni bir anahtar olduğu
+// için, yalnızca bu sponsorluk gönderildiğinde işlem —program hatasız
+// çalışsa bile— `InsufficientFundsForRent` ile reddediliyordu. İstemci
+// (src/lib/luckGame.ts registerAndFundDelegate) bu yüzden aynı işlemde
+// delegeyi önce kira tabanına kadar dolduruyor; buradaki sponsorluk onun
+// üstüne binen, gerçekten HARCANABİLİR gaz payı. Bu sabit ileride
+// değiştirilirse kira tabanının yerini almaya çalışmamalı — istemcideki
+// dolgu kaldırılacaksa, bu değer `Rent::minimum_balance(0)` + gaz payı
+// olacak şekilde hesaplanmalı.
 // Her buy_spins() çağrısında, eğer arayan kendi kayıtlı delegesini
 // hesap listesinde verdiyse, kasadan delegeye eklenen küçük bir ek gaz
 // payı — oyuncu zaten imzaladığı ödeme işleminin İÇİNDE, ayrı bir "gazı

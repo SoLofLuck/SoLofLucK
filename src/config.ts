@@ -371,9 +371,11 @@ export const GAME_CONFIG = {
   // yetmez — zincirdeki değeri de update_config() ile güncellemek
   // gerekir (bkz. .github/workflows/update-luck-game-config.yml).
   treasuryWallet: '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
-  // "Oyun cüzdanı" (delegate) artık GERÇEKTEN ücretsiz etkinleştiriliyor:
-  // gaz bakiyesi oyuncudan değil, ilk register_delegate() çağrısında
-  // zincirin kendisi tarafından kasadan (vault) sponsor ediliyor (bkz.
+  // "Oyun cüzdanı" (delegate) etkinleştirilirken oyuncudan yalnızca,
+  // hesabın zincirde var olabilmesi için zorunlu olan kira depozitosu
+  // (~0,00089 SOL) alınır — bu tutar harcanmaz, oyuncunun kendi delege
+  // hesabında durur. HARCANABİLİR gaz bakiyesi ise oyuncudan değil, ilk
+  // register_delegate() çağrısında kasadan (vault) sponsor ediliyor (bkz.
   // program/luck-game/src/lib.rs DELEGATE_GAS_SPONSOR_LAMPORTS), her
   // buy_spins() çağrısında da sessizce tazeleniyor
   // (DELEGATE_GAS_TOPUP_LAMPORTS). Aşağıdaki değer SADECE nadir bir yedek
