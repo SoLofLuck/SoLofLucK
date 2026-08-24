@@ -61,7 +61,16 @@ const KEYPAIR_PATH = process.env.KEYPAIR_PATH || `${process.env.HOME}/.config/so
 const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 
 const LAMPORTS_PER_SOL = 1_000_000_000
-const freePlays = envInt('FREE_PLAYS', 3)
+// Zincir üstü ücretsiz deneme: 0.
+//
+// Ücretsiz denemeler (3 + 1 bonus) TAMAMEN tarayıcıda, localStorage
+// üzerinde veriliyor (bkz. src/lib/luckGame.ts) — zincire hiç yazılmadıkları
+// için ne işlem ücreti ne de hesap kirası doğuruyorlar. Program da ilk
+// play() çağrısında ayrıca `free_plays` kadar kredi yüklüyordu; ikisi
+// birlikte çalışınca 0,1 SOL'e 1 spin alan oyuncu toplam 8 kez
+// çevirebiliyordu. Zincir üstü tarafı 0'a çekmek bunu kapatıyor (0 iken
+// program içindeki tek seferlik +1 bonus koşulu da hiç tetiklenmiyor).
+const freePlays = envInt('FREE_PLAYS', 0)
 const smallPrizeLamports = BigInt(Math.round(envFloat('SMALL_PRIZE_SOL', 0.5) * LAMPORTS_PER_SOL))
 const bigPrizeLamports = BigInt(Math.round(envFloat('BIG_PRIZE_SOL', 1) * LAMPORTS_PER_SOL))
 const bigPrizeBps = envInt('BIG_PRIZE_BPS', 3000)

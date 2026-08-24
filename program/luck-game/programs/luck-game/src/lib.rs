@@ -222,13 +222,72 @@ pub mod luck_game {
     /// Tutar aynı `play()`'in eski davranışındaki gibi ikiye bölünüyor:
     /// bir payı hazineye (treasury), kalanı oyun kasasına (vault). Satın
     /// alınan spin sayısı `player_state.spins_remaining`'e ekleniyor.
+    ///
+    /// İLK satın alımda ayrıca "katılım depozitosu" geri ödemesi yapılır —
+    /// bkz. aşağıdaki `onboarding_cost` açıklaması.
     pub fn buy_spins(ctx: Context<BuySpins>, tier_index: u8) -> Result<()> {
         let config = &ctx.accounts.config;
         require!((tier_index as usize) < SPIN_TIERS, GameError::InvalidParam);
         let spin_count = config.spin_tier_counts[tier_index as usize] as u32;
         let price = config.spin_tier_prices[tier_index as usize];
 
-        let treasury_amount = (price as u128)
+        // -------------------------------------------------------------------
+        // Katılım depozitosunun geri ödenmesi
+        // -------------------------------------------------------------------
+        // Solana'da hesap açmak ücretsiz değil: bir hesap, "rent-exempt"
+        // (kira muafiyeti) tabanının altında bakiyeyle var olamaz. Yeni bir
+        // oyuncunun zincirde iki hesabı doğuyor ve ikisinin de tabanını
+        // OYUNCU ödüyor:
+        //   * `player_state` PDA'sı (spin kredisi, bekleyen oyun, delege
+        //     kaydı burada tutuluyor) — ~0,00162 SOL,
+        //   * delege / "oyun cüzdanı" (0 baytlık sıradan bir hesap) —
+        //     ~0,00089 SOL (istemci aynı işlemde dolduruyor, bkz.
+        //     src/lib/luckGame.ts registerAndFundDelegate).
+        //
+        // Bu tutar bize gelir olarak KALMIYOR; oyuncunun kendi hesaplarında
+        // duruyor. Yine de oyuncu açısından "paket fiyatının üstüne çıkan
+        // sürpriz bir masraf" gibi görünüyordu. Bu yüzden ilk satın alımda
+        // kasadan oyuncuya AYNEN geri ödeniyor: oyuncunun cebinden çıkan
+        // net tutar, ilan edilen paket fiyatı + Solana'nın kaçınılmaz işlem
+        // ücreti (~0,0000065 SOL) kadar oluyor.
+        //
+        // Maliyeti bizim payımızdan düşürüyoruz: ev payı (treasury_fee_bps)
+        // artık paketin TAMAMI üzerinden değil, depozito düşüldükten sonraki
+        // tutar üzerinden hesaplanıyor.
+        //
+        // Neden `register_delegate()` içinde değil de BURADA: geri ödemenin
+        // ücretli bir satın alıma bağlı olması şart. Kayıt sırasında
+        // yapılsaydı, bir saldırgan binlerce boş cüzdanla art arda kayıt
+        // olup kasayı kuru kuruya boşaltabilirdi. Satın almaya bağlıyken
+        // "sömürmek" için her seferinde depozitodan çok daha büyük bir paket
+        // bedeli ödemek gerekiyor.
+        //
+        // `is_first_touch`, `ensure_owner`'dan (aşağıda) ÖNCE okunuyor:
+        // player_state'e daha önce hiç dokunulmamış olması, bunun gerçekten
+        // ilk kez oluşturulduğunun tek güvenilir işareti.
+        let is_first_touch = !ctx.accounts.player_state.initialized;
+        let rent = Rent::get()?;
+        let mut onboarding_cost = if is_first_touch {
+            rent.minimum_balance(PlayerState::LEN)
+                .checked_add(rent.minimum_balance(0))
+                .ok_or(GameError::MathOverflow)?
+        } else {
+            0
+        };
+        // Depozito paket bedelinden büyük olamaz — aksi halde kasa her yeni
+        // oyuncuda para kaybederdi. Tarifedeki en ucuz paket bile
+        // depozitonun onlarca katı, bu yüzden pratikte hiç tetiklenmiyor;
+        // yine de ileride çok ucuz bir paket eklenirse sessizce zarar
+        // etmek yerine geri ödemeyi tamamen kapatıyoruz.
+        if onboarding_cost >= price {
+            onboarding_cost = 0;
+        }
+
+        // Ev payı, depozito DÜŞÜLDÜKTEN SONRAKİ tutar üzerinden.
+        let fee_base = price
+            .checked_sub(onboarding_cost)
+            .ok_or(GameError::MathOverflow)?;
+        let treasury_amount = (fee_base as u128)
             .checked_mul(config.treasury_fee_bps as u128)
             .ok_or(GameError::MathOverflow)?
             .checked_div(BPS_DENOMINATOR as u128)
@@ -258,6 +317,36 @@ pub mod luck_game {
             ),
             vault_amount,
         )?;
+
+        // Katılım depozitosunu kasadan oyuncuya geri öde (yukarıdaki uzun
+        // açıklamaya bakınız). Kasa bu satırdan hemen önce `vault_amount`
+        // aldığı için karşılığı her zaman var; yine de kasanın kendi kira
+        // tabanının altına düşmemesi için tavanlıyoruz — sıfıra düşerse
+        // geri ödeme sessizce atlanır, satın alma yine de tamamlanır.
+        if onboarding_cost > 0 {
+            let vault_available = ctx
+                .accounts
+                .vault
+                .lamports()
+                .saturating_sub(rent.minimum_balance(0));
+            let refund = onboarding_cost.min(vault_available);
+            if refund > 0 {
+                let config_key = ctx.accounts.config.key();
+                let vault_bump = ctx.accounts.config.vault_bump;
+                let signer_seeds: &[&[u8]] = &[VAULT_SEED, config_key.as_ref(), &[vault_bump]];
+                system_program::transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.system_program.to_account_info(),
+                        SolTransfer {
+                            from: ctx.accounts.vault.to_account_info(),
+                            to: ctx.accounts.player.to_account_info(),
+                        },
+                        &[signer_seeds],
+                    ),
+                    refund,
+                )?;
+            }
+        }
 
         let owner = ctx.accounts.player.key();
         let player_state = &mut ctx.accounts.player_state;

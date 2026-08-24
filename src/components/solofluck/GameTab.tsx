@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { GAME_CONFIG } from '../../config'
@@ -22,7 +22,6 @@ import {
   playGame,
   delegateRentReserveLamports,
   delegateSpendableLamports,
-  registerAndFundDelegate,
   resolveGame,
   saveFreeSpinsState,
   solToLamports,
@@ -119,6 +118,11 @@ export function GameTab() {
   const [revealedResult, setRevealedResult] = useState<PlayResolvedResult | null>(null)
   const [spinAnimating, setSpinAnimating] = useState(false)
   const [bonusNotice, setBonusNotice] = useState(false)
+  // Sonuç normalde OTOMATİK açılıyor (aşağıdaki useEffect). Bu bayrak
+  // yalnızca otomatik deneme hata verdiğinde true oluyor ve elle
+  // "Sonucu Gör" butonunu geri getiriyor — yani buton bir yedek, akışın
+  // normal parçası değil.
+  const [autoResolveFailed, setAutoResolveFailed] = useState(false)
   const [purchaseNotice, setPurchaseNotice] = useState('')
   const [convertAmount, setConvertAmount] = useState('')
 
@@ -288,6 +292,11 @@ export function GameTab() {
     setLastResult(null)
     setRevealedResult(null)
     setBonusNotice(false)
+    // "+N spin eklendi!" bildirimi satın almadan kalmıştı ve hiç
+    // temizlenmediği için her çevirişten sonra ekranda duruyordu —
+    // kullanıcı bunu "her spinde bana spin ekleniyor" diye okudu.
+    setPurchaseNotice('')
+    setAutoResolveFailed(false)
     setSpinAnimating(true)
     setBusy('play')
     try {
@@ -358,6 +367,7 @@ export function GameTab() {
       // sırayla durup animasyon bitince (onLanded) açıklanıyor.
       setLastResult(result)
       setStatus('')
+      setAutoResolveFailed(false)
       await refresh()
       if (result?.won) refreshLeaderboard()
     } catch (err) {
@@ -365,6 +375,10 @@ export function GameTab() {
       setError(friendlyErrorMessage(err))
       setStatus('')
       setSpinAnimating(false)
+      // Otomatik açma başarısız oldu — elle deneyebilmesi için butonu geri
+      // getiriyoruz (ve otomatik denemeyi bir daha tetiklemiyoruz ki aynı
+      // hatayı sonsuz döngüde tekrarlamayalım).
+      setAutoResolveFailed(true)
     } finally {
       setBusy(null)
     }
@@ -396,20 +410,18 @@ export function GameTab() {
     setPurchaseNotice('')
     setBusy(`buy-${tierIndex}`)
     try {
-      // Delegate henüz register değilse (ilk satın alma), önce register et
+      // Delege kaydı (ilk satın alma) ARTIK AYRI BİR İŞLEM DEĞİL: kurulum
+      // talimatları satın alma talimatının önüne ekleniyor ve hepsi TEK
+      // imzayla, TEK işlemde gidiyor. Eskiden iki ayrı onay isteniyordu;
+      // mobil cüzdanda iki kez uygulama değiştirmek hem yavaştı hem de
+      // aradaki işlem başarısız olursa yarım kalmış bir kuruluma yol
+      // açıyordu.
       const needsDelegate = !playerState || !playerState.delegate.equals(delegateKeypair.publicKey)
-      if (needsDelegate) {
-        console.log('[BuySpins] Delegate kaydı gerekli, register ediliyor...', {
-          delegateKeypair: delegateKeypair.publicKey.toBase58(),
-          playerStateDelegate: playerState?.delegate?.toBase58(),
-        })
-        setStatus('Oyun cüzdanı kuruluyor (1/2)...')
-        await registerAndFundDelegate(connection, paymentSigner, delegateKeypair.publicKey, setStatus)
-        console.log('[BuySpins] Delegate kayıt tamamlandı')
-        setStatus('Spinler satın alınıyor (2/2)...')
-      }
-
-      console.log('[BuySpins] Spin satın alınıyor...', { tierIndex, treasury: gameConfig.treasury.toBase58() })
+      console.log('[BuySpins] Spin satın alınıyor...', {
+        tierIndex,
+        treasury: gameConfig.treasury.toBase58(),
+        needsDelegate,
+      })
       const sig = await buySpins(
         connection,
         paymentSigner,
@@ -417,6 +429,7 @@ export function GameTab() {
         gameConfig.treasury,
         delegateKeypair.publicKey,
         setStatus,
+        needsDelegate,
       )
       console.log('[BuySpins] Satın alma tx başarılı:', sig)
       const purchased = await parseSpinsPurchasedFromTx(connection, sig)
@@ -458,6 +471,7 @@ export function GameTab() {
     setBusy('convert')
     try {
       const budget = solToLamports(Number.parseFloat(convertAmount))
+      const needsDelegate = !playerState || !playerState.delegate.equals(delegateKeypair.publicKey)
       const result = await buyBestFitSpins(
         connection,
         paymentSigner,
@@ -466,6 +480,7 @@ export function GameTab() {
         gameConfig.treasury,
         delegateKeypair.publicKey,
         setStatus,
+        needsDelegate,
       )
       const totalSpins = result.purchases.reduce(
         (sum, p) => sum + effectiveSpinTiers[p.tierIndex].count * p.count,
@@ -490,6 +505,41 @@ export function GameTab() {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Sonucu otomatik aç
+  // ---------------------------------------------------------------------
+  // Oyun iki adımlı: play() "şu slot'ta oynadım" diye zincire yazıyor,
+  // resolve() birkaç slot sonra sonucu açıyor (neden böyle olmak zorunda
+  // olduğu program/luck-game/src/lib.rs'te resolve()'un başında anlatılıyor).
+  // Bu ikinci adım için kullanıcıya "Sonucu Gör" butonu gösteriliyordu —
+  // ama imzayı zaten oyun cüzdanı atıyor, yani onay penceresi hiç açılmıyor:
+  // kullanıcı için bu buton, makaralar zaten dönerken basılması gereken
+  // gereksiz bir adımdı. Artık hazır olur olmaz kendiliğinden çağrılıyor;
+  // buton yalnızca otomatik deneme hata verirse geri geliyor.
+  //
+  // Hook'un koşullu olmaması için (aşağıdaki "yapılandırılmadı" erken
+  // return'ünden ÖNCE duruyor) türetilmiş değerler burada yeniden
+  // hesaplanıyor.
+  const autoResolvedKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (busy !== null) return
+    if (!spinAuthoritySigner || !activeOwnerPublicKey || !gameConfig || !playerState) return
+    if (!playerState.pending || currentSlot === null) return
+
+    const slotsLeft = Number(playerState.commitSlot + gameConfig.revealDelaySlots) - currentSlot
+    if (slotsLeft > 0) return
+    // Resolve penceresi kaçtıysa artık açılamaz — "Denemeyi Temizle"
+    // akışına bırakıyoruz.
+    if (-slotsLeft > GAME_CONFIG.maxResolveWindowSlots) return
+
+    // Aynı deneme için ikinci kez tetiklenmesin: commit slot'u denemeyi
+    // benzersiz tanımlıyor.
+    const key = `${activeOwnerPublicKey.toBase58()}:${playerState.commitSlot}`
+    if (autoResolvedKeyRef.current === key) return
+    autoResolvedKeyRef.current = key
+    void handleResolve()
+  }, [busy, spinAuthoritySigner, activeOwnerPublicKey, gameConfig, playerState, currentSlot])
+
   if (!configured) {
     return (
       <div className="luck-game">
@@ -503,7 +553,12 @@ export function GameTab() {
   }
 
   const revealDelaySlots = gameConfig?.revealDelaySlots ?? BigInt(GAME_CONFIG.revealDelaySlots)
-  const freePlays = gameConfig?.freePlays ?? GAME_CONFIG.freePlays
+  // Ücretsiz denemeler TAMAMEN istemci tarafında (localStorage) veriliyor —
+  // zincire hiç yazılmadıkları için hesap/işlem ücreti doğurmuyorlar.
+  // Zincirdeki `GameConfig.free_plays` bu yüzden 0'a çekildi (bkz.
+  // scripts/update-config.mjs): ikisi birden verilince oyuncu 3 yerel + 3
+  // zincir üstü + bonuslar kadar bedava çevirebiliyordu.
+  const freePlays = GAME_CONFIG.freePlays
   const smallPrizeSol = gameConfig ? lamportsToSol(gameConfig.smallPrizeLamports) : GAME_CONFIG.smallPrizeSol
   const bigPrizeSol = gameConfig ? lamportsToSol(gameConfig.bigPrizeLamports) : GAME_CONFIG.bigPrizeSol
 
@@ -676,19 +731,21 @@ export function GameTab() {
 
           {pending && !windowExpired && (
             <div className="luck-game__pending">
-              {readyToResolve ? (
+              {!readyToResolve ? (
+                <div className="alert alert--info">
+                  Sonuç hazırlanıyor... (~{Math.max(0, Math.round((slotsRemaining ?? 0) * APPROX_SECONDS_PER_SLOT))} sn)
+                </div>
+              ) : autoResolveFailed ? (
                 <button
                   type="button"
                   className="btn btn--primary btn--block"
                   onClick={handleResolve}
                   disabled={busy !== null || !gameConfig}
                 >
-                  {busy === 'resolve' ? 'Sonuç okunuyor...' : '🎲 Sonucu Gör'}
+                  {busy === 'resolve' ? 'Sonuç okunuyor...' : '🎲 Sonucu Gör (tekrar dene)'}
                 </button>
               ) : (
-                <div className="alert alert--info">
-                  Sonuç hazırlanıyor... (~{Math.max(0, Math.round((slotsRemaining ?? 0) * APPROX_SECONDS_PER_SLOT))} sn)
-                </div>
+                <div className="alert alert--info">Sonuç açılıyor...</div>
               )}
             </div>
           )}

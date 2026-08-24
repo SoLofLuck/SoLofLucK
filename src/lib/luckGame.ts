@@ -500,12 +500,11 @@ async function delegateBalanceOrZero(connection: Connection, delegate: PublicKey
  * kira depozitosu isteniyor (yukarıdaki açıklama). İkisi de TEK bir cüzdan
  * onayında, tek işlemde.
  */
-export async function registerAndFundDelegate(
+export async function buildDelegateSetupIxs(
   connection: Connection,
-  ownerSigner: TxSigner,
+  owner: PublicKey,
   delegate: PublicKey,
-  onStatus?: (status: string) => void,
-): Promise<string> {
+): Promise<TransactionInstruction[]> {
   const ixs: TransactionInstruction[] = []
 
   const rentReserve = await delegateRentReserveLamports(connection)
@@ -513,14 +512,24 @@ export async function registerAndFundDelegate(
   if (balance < rentReserve) {
     ixs.push(
       SystemProgram.transfer({
-        fromPubkey: ownerSigner.publicKey,
+        fromPubkey: owner,
         toPubkey: delegate,
         lamports: rentReserve - balance,
       }),
     )
   }
 
-  ixs.push(buildRegisterDelegateIx(ownerSigner.publicKey, delegate))
+  ixs.push(buildRegisterDelegateIx(owner, delegate))
+  return ixs
+}
+
+export async function registerAndFundDelegate(
+  connection: Connection,
+  ownerSigner: TxSigner,
+  delegate: PublicKey,
+  onStatus?: (status: string) => void,
+): Promise<string> {
+  const ixs = await buildDelegateSetupIxs(connection, ownerSigner.publicKey, delegate)
   return sendIxs(connection, ownerSigner, ixs, onStatus)
 }
 
@@ -561,13 +570,11 @@ export async function buySpins(
   treasury: PublicKey,
   delegate: PublicKey,
   onStatus?: (status: string) => void,
+  setupDelegate = false,
 ): Promise<string> {
-  return sendIxs(
-    connection,
-    ownerSigner,
-    [buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury, delegate)],
-    onStatus,
-  )
+  const ixs = setupDelegate ? await buildDelegateSetupIxs(connection, ownerSigner.publicKey, delegate) : []
+  ixs.push(buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury, delegate))
+  return sendIxs(connection, ownerSigner, ixs, onStatus)
 }
 
 export interface BestFitTierPurchase {
@@ -632,18 +639,24 @@ export async function buyBestFitSpins(
   treasury: PublicKey,
   delegate: PublicKey,
   onStatus?: (status: string) => void,
+  setupDelegate = false,
 ): Promise<{ signature: string; purchases: BestFitTierPurchase[]; totalCostLamports: bigint; leftoverLamports: bigint }> {
   const { purchases, totalCostLamports, leftoverLamports } = computeBestFitSpinPurchase(budgetLamports, tiers)
   if (purchases.length === 0) {
     throw new Error('Bu miktar, en küçük paketimizi bile karşılamıyor.')
   }
   const totalIxs = purchases.reduce((sum, p) => sum + p.count, 0)
-  if (totalIxs > MAX_PURCHASE_IXS) {
+  // Delege kurulumu da aynı işleme biniyorsa (ilk satın alım) iki
+  // instruction'lık yerini şimdiden ayırıyoruz.
+  const maxIxs = setupDelegate ? MAX_PURCHASE_IXS - 2 : MAX_PURCHASE_IXS
+  if (totalIxs > maxIxs) {
     throw new Error(
-      `Bu miktar tek işlemde satın alınamayacak kadar çok paket gerektiriyor (${totalIxs} paket, üst sınır ${MAX_PURCHASE_IXS}) — daha küçük bir miktarla dene ya da birkaç kez dönüştür.`,
+      `Bu miktar tek işlemde satın alınamayacak kadar çok paket gerektiriyor (${totalIxs} paket, üst sınır ${maxIxs}) — daha küçük bir miktarla dene ya da birkaç kez dönüştür.`,
     )
   }
-  const ixs: TransactionInstruction[] = []
+  const ixs: TransactionInstruction[] = setupDelegate
+    ? await buildDelegateSetupIxs(connection, ownerSigner.publicKey, delegate)
+    : []
   for (const { tierIndex, count } of purchases) {
     for (let i = 0; i < count; i++) {
       ixs.push(buildBuySpinsIx(ownerSigner.publicKey, tierIndex, treasury, delegate))
