@@ -2442,3 +2442,18 @@ button {
   margin-bottom: 1rem;
   line-height: 1.55;
 }
+
+/* Claim ("Payım") sekmesi — her tur kendi kartında, çekilebilir tutar öne
+   çıkacak şekilde. */
+.luck-claim__round {
+  margin-bottom: 1.25rem;
+}
+
+.luck-claim__round h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.luck-claim__claimable {
+  color: #4ade80;
+}

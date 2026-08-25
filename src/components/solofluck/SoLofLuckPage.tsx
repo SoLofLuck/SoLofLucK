@@ -5,13 +5,15 @@ import { AboutTab } from './AboutTab'
 import { TokenomicsTab } from './TokenomicsTab'
 import { PresaleTab } from './PresaleTab'
 import { GameTab } from './GameTab'
+import { ClaimTab } from './ClaimTab'
 
-type SubTab = 'about' | 'tokenomics' | 'presale' | 'game'
+type SubTab = 'about' | 'tokenomics' | 'presale' | 'claim' | 'game'
 
 const SUBTABS: { id: SubTab; label: string }[] = [
   { id: 'about', label: 'Hakkında' },
   { id: 'tokenomics', label: 'Tokenomics' },
   { id: 'presale', label: 'Presale' },
+  { id: 'claim', label: '🎁 Payım' },
   { id: 'game', label: '🎰 Oyun' },
 ]
 
@@ -60,6 +62,7 @@ export function SoLofLuckPage({ network }: Props) {
           {tab === 'about' && <AboutTab />}
           {tab === 'tokenomics' && <TokenomicsTab />}
           {tab === 'presale' && <PresaleTab network={network} />}
+          {tab === 'claim' && <ClaimTab network={network} />}
           {tab === 'game' && <GameTab />}
         </div>
 

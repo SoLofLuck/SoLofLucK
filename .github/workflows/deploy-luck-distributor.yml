@@ -1,0 +1,229 @@
+name: luck-distributor — Devnet'e Derle ve Deploy Et
+
+on:
+  workflow_dispatch:
+    inputs:
+      first_deploy:
+        description: "false (VARSAYILAN): kaynaktaki declare_id adresindeki programi YUKSELT - adres degismez. true: YENI bir adres uret ve ilk kez deploy et (yalnizca hesap duzeni degistiginde ya da ilk kurulumda; ardindan yazdirilan ID declare_id/Anchor.toml/config.ts'e islenmeli)"
+        required: false
+        type: boolean
+        default: false
+
+# Bu iş akışı, claim/dağıtım programını (program/luck-distributor) derleyip
+# Devnet'e kurar. luck-game workflow'uyla aynı deploy cüzdanını
+# (LUCK_GAME_DEPLOY_KEY) ve aynı "adrese yükseltme" mantığını kullanıyor.
+#
+# Rust/Solana/Anchor
+# araç zincirini GitHub'ın kendi runner'ında kurup Devnet'e deploy eder.
+# Neden CI üzerinden: bu depoyu geliştiren AI ajanının çalıştığı sandbox'ın
+# internet erişimi Solana ağına (hatta çoğu dış siteye) kapalı — GitHub
+# Actions runner'ları ise tam internet erişimine sahip, bu yüzden build ve
+# deploy işini burada yapıyoruz.
+#
+# Gerekli tek seferlik kurulum: repo Settings → Secrets and variables →
+# Actions → "New repository secret" → adı LUCK_GAME_DEPLOY_KEY, değeri ise
+# Devnet'e özel, deploy yetkisi için üretilmiş 64 sayılık bir JSON dizisi
+# (solana-keygen'in ürettiği formatla aynı). Bu anahtarın SADECE Devnet'te
+# değeri var, gerçek parayla hiçbir ilgisi yok.
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust kurulumu
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo önbelleği
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: program/luck-distributor -> target
+
+      - name: Solana CLI kurulumu
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      # `anchor build`, PATH'te `solana-install` isimli bir komut bulamayınca
+      # (modern Agave kurulumları bunu `agave-install` olarak yeniden
+      # adlandırdı) kendi hardcoded eski Solana sürümünü (v1.18.17,
+      # rustc 1.75.0 bundle ediyor) indirip kullanıyor — bu da modern
+      # paketlerin gerektirdiği edition2024'ü derleyemiyor. Az önce
+      # kurduğumuz güncel Solana araç zincirini zorlamak için PATH'e,
+      # gerçek `solana-install`/`agave-install`'a (o da yoksa `solana`
+      # binary'sine) işaret eden bir uyumluluk sembolik linki ekliyoruz —
+      # böylece anchor build kendi eski indirmesini atlayıp bizim
+      # kurduğumuz güncel araç zincirini kullanabilir.
+      - name: Solana araç zinciri uyumluluk shim'i
+        run: |
+          BIN_DIR="$HOME/.local/share/solana/install/active_release/bin"
+          echo "Kurulu binary'ler:"
+          ls -la "$BIN_DIR"
+          if [ ! -e "$BIN_DIR/solana-install" ]; then
+            if [ -e "$BIN_DIR/agave-install" ]; then
+              ln -s "$BIN_DIR/agave-install" "$BIN_DIR/solana-install"
+            else
+              ln -s "$BIN_DIR/solana" "$BIN_DIR/solana-install"
+            fi
+            echo "solana-install shim'i oluşturuldu -> $(readlink -f "$BIN_DIR/solana-install")"
+          fi
+          command -v solana-install && solana-install --version || echo "solana-install hâlâ bulunamadı"
+
+      - name: Anchor CLI kurulumu
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/avm" install 0.30.1
+          "$HOME/.cargo/bin/avm" use 0.30.1
+
+      - name: Deploy anahtarını yaz
+        run: |
+          mkdir -p ~/.config/solana
+          cat > ~/.config/solana/id.json <<'KEYFILE'
+          ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
+          KEYFILE
+
+      - name: Devnet'i yapılandır
+        run: solana config set --url devnet --keypair ~/.config/solana/id.json
+
+      - name: Devnet SOL airdrop (deploy ücreti için)
+        # GitHub'ın paylaşımlı runner IP'leri devnet faucet'inde sık sık rate
+        # limit'e takılıyor — bu yüzden hem daha uzun/çok deneme yapıyoruz
+        # hem de burada başarısız olması job'ı durdurmuyor. Airdrop hiç
+        # tutmazsa, deploy adımı yetersiz bakiye yüzünden zaten net bir
+        # hatayla duracak; o durumda deploy anahtarına (aşağıda yazdırılan
+        # public key) manuel olarak devnet SOL göndermek gerekir.
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            if solana airdrop 3; then break; fi
+            echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar denenecek..."
+            sleep 20
+          done
+          echo "Deploy cüzdanı: $(solana address)"
+          solana balance
+
+      # anchor-cli 0.30.1, `anchor build` sırasında kendi eski Solana araç
+      # zincirini (v1.18.17) indirip kullanıyor; onun bundle ettiği eski Rust
+      # derleyicisi, host'un güncel stable Rust'ının ürettiği Cargo.lock v4
+      # formatını okuyamıyor ("lock file version 4 requires
+      # -Znext-lockfile-bump" hatası). Program kendi dependency ağacı için
+      # küçük olduğundan, lockfile'ı burada elle üretip v3'e düşürüyoruz —
+      # host cargo hâlâ güncel kalıyor (anchor-cli derlemesi için gerekli),
+      # sadece dosyanın format işareti eski araç zincirine uyumlu hale
+      # getiriliyor.
+      - name: Cargo.lock oluştur (eski lockfile formatına düşür)
+        working-directory: program/luck-distributor
+        run: |
+          cargo generate-lockfile
+          sed -i 's/^version = 4$/version = 3/' Cargo.lock
+          head -n 5 Cargo.lock
+
+      # rust-version MSRV fallback'i çoğu paketi eski rustc'ye uygun sürüme
+      # düşürebiliyor ama bazı paketlerde (ör. constant_time_eq, block-buffer)
+      # geriye uyumlu bir sürüm yok — bunları hangi üst bağımlılığın
+      # zorladığını görmek için loglara yazdırıyoruz (build başarısız olursa
+      # bir sonraki düzeltme bu bilgiye göre yapılacak).
+      - name: Bağımlılık zincirini incele (debug)
+        working-directory: program/luck-distributor
+        if: always()
+        run: |
+          echo "--- constant_time_eq ---"
+          cargo tree -i constant_time_eq 2>&1 || true
+          echo "--- block-buffer ---"
+          cargo tree -i block-buffer 2>&1 || true
+          echo "--- blake3 ---"
+          cargo tree -i blake3 2>&1 || true
+
+      # ---------------------------------------------------------------
+      # Program ID artık KAYNAK KODDAN geliyor, keypair dosyasından değil.
+      # ---------------------------------------------------------------
+      # Eskiden her deploy'da `anchor keys sync` çalışıyordu: keypair
+      # dosyası yoksa yenisini üretip declare_id!()'yi ONA göre yazıyordu.
+      # Keypair yalnızca CI önbelleğinde durduğu ve o önbellek Cargo.lock
+      # değişince ıskaladığı için, program üst üste ÜÇ KEZ yeni bir adrese
+      # deploy oldu — her seferinde config.ts güncellendi, initialize()
+      # yeniden koştu, eski kasadaki bakiye orada kaldı.
+      #
+      # Artık tersi: declare_id!() tek doğru kaynak. Normal deploy'lar o
+      # adresteki programı YÜKSELTİYOR ve keypair'e hiç ihtiyaç duymuyor —
+      # yükseltme için gereken tek imza upgrade authority'nin (deploy
+      # cüzdanı) imzası. Bu yüzden önbellek adımları da tamamen kaldırıldı.
+      #
+      # `anchor keys sync` yalnızca BİLEREK yeni bir program açarken
+      # (first_deploy=true) çalışıyor.
+      - name: Yeni program keypair'i üret (yalnızca first_deploy=true ise)
+        if: inputs.first_deploy == true
+        working-directory: program/luck-distributor
+        run: |
+          mkdir -p target/deploy
+          rm -f target/deploy/luck_distributor-keypair.json
+          solana-keygen new --no-bip39-passphrase --silent -o target/deploy/luck_distributor-keypair.json
+          anchor keys sync
+          echo "Yeni declare_id!():"
+          grep declare_id programs/luck-distributor/src/lib.rs
+
+      - name: Hedef Program ID'yi belirle
+        working-directory: program/luck-distributor
+        run: |
+          PROGRAM_ID=$(grep -oP 'declare_id!\("\K[^"]+' programs/luck-distributor/src/lib.rs)
+          if [ -z "$PROGRAM_ID" ]; then
+            echo "declare_id!() okunamadı" >&2
+            exit 1
+          fi
+          echo "PROGRAM_ID=$PROGRAM_ID" >> "$GITHUB_ENV"
+          echo "Hedef Program ID: $PROGRAM_ID"
+
+      # Anchor'ın ayrı "IDL üretim" adımı (host toolchain ile, on-chain SBF
+      # derlemesinden bağımsız — istemci SDK'ları için target/idl/*.json
+      # üretiyor, deploy'un kendisi için gerekli değil) anchor-syn/
+      # proc-macro2 sürüm çakışmalarına saplanıp kaldı: proc-macro2'yi
+      # eski sürüme sabitlemek anchor-syn'i düzeltti ama sonra kendi içindeki
+      # nightly-uyum kodu, host rustc'nin GERÇEK proc_macro::Span API'siyle
+      # çakıştı ("no method named source_file found for &proc_macro::Span").
+      # On-chain SBF derlemesi zaten sorunsuz çalışıyor — IDL'i tamamen
+      # atlayarak bu ayrı, gereksiz sorun kaynağını devre dışı bırakıyoruz.
+      - name: anchor build
+        working-directory: program/luck-distributor
+        run: anchor build --no-idl
+
+      # İlk deploy: programı keypair'in adresine doğuruyor.
+      - name: İlk deploy (yalnızca first_deploy=true ise)
+        if: inputs.first_deploy == true
+        working-directory: program/luck-distributor
+        run: anchor deploy --provider.cluster devnet --provider.wallet ~/.config/solana/id.json
+
+      # Normal yol: ADRESE yükseltme. Keypair GEREKMİYOR — zincir yalnızca
+      # upgrade authority'nin imzasını arıyor. Program o adreste yoksa
+      # sessizce yeni bir şey yaratmak yerine net bir hatayla duruyoruz.
+      - name: Yükselt (varsayılan)
+        if: inputs.first_deploy != true
+        working-directory: program/luck-distributor
+        run: |
+          if ! solana program show "$PROGRAM_ID" >/dev/null 2>&1; then
+            echo "::error::$PROGRAM_ID adresinde kurulu bir program yok." \
+                 "Yeni bir program açmak istiyorsanız bu workflow'u first_deploy=true ile çalıştırın."
+            exit 1
+          fi
+          echo "Mevcut program:"
+          solana program show "$PROGRAM_ID"
+          solana program deploy \
+            --program-id "$PROGRAM_ID" \
+            --upgrade-authority ~/.config/solana/id.json \
+            target/deploy/luck_distributor.so
+
+      - name: Sonucu doğrula
+        working-directory: program/luck-distributor
+        run: |
+          # first_deploy'da `anchor keys sync` declare_id'yi zaten yeni
+          # adrese yazdı ve "Hedef Program ID" adımı onu okudu — yani
+          # PROGRAM_ID her iki yolda da doğru.
+          echo "================================================"
+          echo " PROGRAM ID: $PROGRAM_ID"
+          echo "================================================"
+          # Zincirdeki hâli yazdırıyoruz: yükseltmenin gerçekten olduğunu
+          # (ve authority'nin beklediğimiz cüzdan olduğunu) loglardan
+          # doğrulayabilmek için.
+          solana program show "$PROGRAM_ID"
+          if [ "${{ inputs.first_deploy }}" = "true" ]; then
+            echo "::notice::YENİ program açıldı. Bu ID'yi declare_id!(), Anchor.toml ve src/config.ts'e işleyin."
+          fi

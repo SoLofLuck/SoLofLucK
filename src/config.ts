@@ -209,6 +209,28 @@ export const TOKENOMICS = [
 ] as const
 
 // ---------------------------------------------------------------------------
+// Claim (dağıtım) programı
+// ---------------------------------------------------------------------------
+// Presale payları ve çekiliş ödülleri, TGE'de bu programa kilitleniyor;
+// alıcı açılan kısmı kendisi çekiyor. Programda "parayı geri çek" diye bir
+// talimat YOK — kilitlenen token yalnızca hak sahibine, yalnızca takvime
+// göre çıkabiliyor (bkz. program/luck-distributor/src/lib.rs).
+//
+// `programId` boşken Claim sekmesi "henüz yapılandırılmadı" der ve hiçbir
+// buton çalışmaz — presale cüzdanıyla aynı güvenlik freni deseni.
+export const CLAIM_CONFIG = {
+  programId: '',
+  /** Tur kimlikleri: 0 = presale vesting, 1..14 = haftalık çekilişler. */
+  presaleRoundId: 0,
+  /**
+   * Yayınlanan merkle dosyalarının bulunduğu klasör. Her tur için
+   * `round-<id>.json`. Bu dosyalar bilerek herkese açık: alıcı, gördüğü
+   * sayıyı scripts/build-merkle.mjs ile kendi üretip doğrulayabilsin diye.
+   */
+  merkleBasePath: '/merkle',
+} as const
+
+// ---------------------------------------------------------------------------
 // Çekiliş kuralları
 // ---------------------------------------------------------------------------
 // Topluluk kovası (155.400.000 $LUCK) İKİ AYRI çekilişe bölünüyor. Ayrı

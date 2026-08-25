@@ -610,12 +610,32 @@ pub mod luck_game {
         preimage.extend_from_slice(ctx.accounts.player.key.as_ref());
         preimage.extend_from_slice(&player_state.plays_count.to_le_bytes());
         let digest = anchor_lang::solana_program::hash::hash(&preimage).to_bytes();
-        let roll = (u16::from_le_bytes([digest[0], digest[1]]) as u32) % BPS_DENOMINATOR;
+        // Zarı 8 BAYTTAN üretiyoruz, 2 bayttan değil — sebebi modulo
+        // yanlılığı (modulo bias):
+        //
+        // 2 bayt = 0..65535 arası 65536 değer. 65536, 10000'in tam katı
+        // değil (65536 = 6 × 10000 + 5536), dolayısıyla 0..5535 arası her
+        // sonuç 7 kez, 5536..9999 arası her sonuç 6 kez temsil ediliyordu.
+        // Kazanma eşiği hep aralığın BAŞINDA olduğu için (roll < win_bps)
+        // bu, ilan edilen oranların hepsini kasa aleyhine kaydırıyordu:
+        //   zor mod  %0,50 → %0,534   (göreli +%6,8)
+        //   kolay    %10,00 → %10,681 (göreli +%6,8)
+        //   jackpot  %30,00 → %32,043 (göreli +%6,8)
+        // Tek bir turda fark edilmez ama binlerce turda kasadan sistematik
+        // olarak sızar ve ilan ettiğimiz oranlar gerçeği yansıtmaz.
+        //
+        // 8 baytta (0..2^64-1) aynı yanlılık ~5×10^-16 mertebesine düşüyor,
+        // yani ölçülemez hale geliyor.
+        let roll = (u64::from_le_bytes(
+            digest[0..8].try_into().map_err(|_| GameError::MathOverflow)?,
+        ) % BPS_DENOMINATOR as u64) as u32;
         // İkinci, bağımsız bir zar: SADECE kazanıldığında hangi ödül
         // katmanının (küçük/büyük) ödeneceğine karar verir. Aynı digest'in
-        // farklı baytlarını kullanmak (0-1 win/lose için, 2-3 burada) ayrı
+        // AYRI baytlarını kullanmak (0-7 win/lose için, 8-15 burada) ayrı
         // bir hash hesaplamaya gerek bırakmıyor.
-        let tier_roll = (u16::from_le_bytes([digest[2], digest[3]]) as u32) % BPS_DENOMINATOR;
+        let tier_roll = (u64::from_le_bytes(
+            digest[8..16].try_into().map_err(|_| GameError::MathOverflow)?,
+        ) % BPS_DENOMINATOR as u64) as u32;
 
         let rent_exempt = Rent::get()?.minimum_balance(0);
         let vault_balance = ctx
