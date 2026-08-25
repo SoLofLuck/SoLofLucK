@@ -2435,3 +2435,10 @@ button {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* Presale'deki borsa uyarısı — form kartlarının hemen üstünde, gözden
+   kaçmayacak kadar belirgin ama sayfayı ezmeyecek kadar sade. */
+.luck-presale__exchange-warning {
+  margin-bottom: 1rem;
+  line-height: 1.55;
+}

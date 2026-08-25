@@ -8,6 +8,7 @@ import {
   PRESALE_SOFT_CAP_SOL,
   PRESALE_TARGET_SOL,
   PRESALE_TICKET_UNIT_SOL,
+  RAFFLE,
   PRESALE_TIERS,
   PRESALE_TOKENS_PER_SOL,
   PRESALE_WALLET,
@@ -240,13 +241,27 @@ export function PresaleTab({ network }: Props) {
         </div>
       )}
 
+      {/* Bu uyarı bilerek gönderme formlarının HEMEN ÜSTÜNDE ve kırmızı
+          tonda: presale dağıtımı, parayı GÖNDEREN adrese yapılıyor. Borsa
+          hesabından gönderen biri, tokenleri borsanın toplama adresine
+          göndermemizi istemiş oluyor — o tokenler pratikte kaybolur ve geri
+          getirilemez. Sayfanın altındaki kurallar listesine gömülse
+          kaçırılırdı. */}
+      <div className="alert alert--error luck-presale__exchange-warning">
+        <strong>⚠️ Borsa hesabından GÖNDERMEYİN.</strong> Tokenler yalnızca SOL'u gönderen
+        adrese dağıtılır. Binance, OKX, Bybit gibi bir borsadan gönderirseniz tokenler
+        borsanın adresine gider ve <strong>geri getirilemez</strong>. Phantom, Solflare gibi
+        kendi anahtarınızın olduğu bir cüzdandan gönderin.
+      </div>
+
       <div className="luck-presale__grid">
         <form className="token-form luck-presale__card" onSubmit={handleFlexSubmit}>
           <h2>Serbest Katkı</h2>
           <p className="subtab-desc">
             İstediğin kadar SOL gönder. Fiyat sabit:{' '}
-            <strong>1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>. Bu seçenekte
-            çekiliş bileti yoktur; tokenlerin presale sonunda cüzdanına transfer edilir.
+            <strong>1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>. Her{' '}
+            {PRESALE_TICKET_UNIT_SOL} SOL {'\u2014'} hangi modu kullandığından bağımsız {'\u2014'}{' '}
+            <strong>1 çekiliş bileti</strong> kazandırır.
           </p>
           <label className="field">
             <span>Miktar (SOL)</span>
@@ -276,11 +291,11 @@ export function PresaleTab({ network }: Props) {
         </form>
 
         <div className="token-form luck-presale__card">
-          <h2>Sabit Paket + Çekiliş</h2>
+          <h2>Hazır Paketler</h2>
           <p className="subtab-desc">
-            Aşağıdan bir tutar seç ve gönder — her {PRESALE_TICKET_UNIT_SOL} SOL için{' '}
-            <strong>1 çekiliş bileti</strong> kazanırsın. 777 temalı topluluk çekilişlerine
-            otomatik katılırsın.
+            Hazır tutarlardan birini seç — her {PRESALE_TICKET_UNIT_SOL} SOL için{' '}
+            <strong>1 çekiliş bileti</strong>. Serbest katkıyla aynı oran; bu sekme sadece
+            hızlı seçim kolaylığı.
           </p>
           <div className="luck-tier-grid">
             {PRESALE_TIERS.map((tier) => (
@@ -345,6 +360,23 @@ export function PresaleTab({ network }: Props) {
           <strong>Taban {PRESALE_SOFT_CAP_SOL} SOL.</strong> Bu tutara ulaşılmazsa TGE yapılmaz ve
           katkılar iade edilir. İade işlemleri zincirde takip edilebilir.
         </li>
+        <li>
+          <strong>Dağıtım claim ile.</strong> Tokenler TGE'de bir claim programına kilitlenir;
+          açılan kısmı bu sayfadan sen çekersin. TGE'de %9, sonraki 13 hafta boyunca her hafta
+          %7 daha açılır — 91. günde tamamı serbest.
+        </li>
+        <li>
+          <strong>Alıcı listesi zincirden çıkar.</strong> Kim ne kadar gönderdiği presale
+          kasasının işlem geçmişinde herkese açık. Listeyi bizden bağımsız olarak sen de
+          üretip kendi payını doğrulayabilirsin — bize güvenmen gerekmiyor.
+        </li>
+        <li>
+          <strong>Çekiliş biletleri.</strong> Her {PRESALE_TICKET_UNIT_SOL} SOL = 1 bilet.
+          Haftalık çekilişlerde her hafta {RAFFLE.ticket.winnersPerRound} biletli kazanan
+          çıkar, her biri {formatTokens(RAFFLE.perWinnerTokens)} $LUCK alır. Kazananlar,
+          gelecekteki bir Solana slot'unun blockhash'iyle seçilir: o slot henüz oluşmadığı
+          için sonucu kimse (biz dahil) önceden bilemez, oluştuktan sonra herkes doğrulayabilir.
+        </li>
       </ul>
 
       {error && <div className="alert alert--error">{error}</div>}
@@ -372,7 +404,7 @@ export function PresaleTab({ network }: Props) {
               <li key={h.signature}>
                 <span>{h.mode === 'fixed' ? 'Sabit paket' : 'Serbest katkı'}</span>
                 <span>{h.amountSol} SOL</span>
-                <span>{h.mode === 'fixed' ? `🎟 ${h.tickets}` : '—'}</span>
+                <span>🎟 {h.tickets}</span>
                 <a
                   href={`https://explorer.solana.com/tx/${h.signature}${cluster}`}
                   target="_blank"

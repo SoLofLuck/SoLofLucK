@@ -183,7 +183,11 @@ export async function sendPresaleContribution(
   const payer = wallet.publicKey
   // Biletler HER ZAMAN gönderilen brüt tutar üzerinden hesaplanır —
   // operasyon payı bilet sayısını düşürmez.
-  const tickets = mode === 'fixed' ? calcTickets(amountSol) : 0
+  // Bilet artık moda bakılmaksızın tutardan hesaplanıyor (bkz. config.ts
+  // PRESALE_TICKET_UNIT_SOL notu): mod, gönderenin kendi yazdığı memo'dan
+  // okunuyordu ve taklit edilebilirdi; ayrıca aynı parayı gönderen iki
+  // kişiden birine bilet verip diğerine vermemek savunulabilir değildi.
+  const tickets = calcTickets(amountSol)
 
   const totalLamports = Math.round(amountSol * LAMPORTS_PER_SOL)
   const { poolLamports, opsLamports } = splitContributionLamports(totalLamports)

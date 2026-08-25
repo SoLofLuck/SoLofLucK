@@ -155,7 +155,15 @@ export const PRESALE_DURATION_WEEKS = 7
 // Bitiş, başlangıçtan PRESALE_DURATION_WEEKS hafta sonrasıdır.
 export const PRESALE_START_ISO = ''
 
-// Sabit paket seçeneklerinde her 0.5 SOL için kazanılan çekiliş bileti.
+// Her 0.5 SOL için 1 çekiliş bileti — HANGİ MODLA gönderildiğinden bağımsız.
+//
+// Eskiden bilet yalnızca "sabit paket" modunda veriliyordu. İki sorunu vardı:
+// (1) modu işleme yazdığımız memo'dan okuyorduk, memo ise gönderenin kendi
+// yazdığı serbest metin — elle işlem oluşturan biri hiç hak etmediği modu
+// yazabilirdi; (2) aynı parayı gönderen iki kişiden birinin bilet alıp
+// diğerinin almaması, açıklaması zor ve gereksiz bir ayrımdı. Artık bilet
+// sayısı YALNIZCA presale cüzdanına ulaşan gerçek tutardan hesaplanıyor —
+// taklit edilemez ve herkes kendi başına doğrulayabilir.
 export const PRESALE_TICKET_UNIT_SOL = 0.5
 
 // Sabit paket sekmesindeki hazır tutar seçenekleri (SOL).
@@ -168,7 +176,7 @@ export const TOKENOMICS = [
     label: 'Presale',
     percent: 35,
     color: '#22d3ee',
-    desc: 'İki modlu presale (serbest katkı + çekilişli sabit paketler) ile topluluğa dağıtılır. TGE\'de %7 açılır, sonra her 7 günde bir %7 daha; 98. günde (14. hafta) tamamı serbest.',
+    desc: 'Sabit fiyatlı presale ile topluluğa dağıtılır. TGE\'de %9 açılır, sonra 13 hafta boyunca her 7 günde bir %7 daha; 91. günde (13. hafta) tamamı serbest. Dağıtım claim programı üzerinden yapılır — açılan kısmı alıcı kendi çeker, tokenler o ana kadar kimsenin çekemeyeceği bir programda durur.',
   },
   {
     key: 'liquidity',
@@ -182,7 +190,7 @@ export const TOKENOMICS = [
     label: 'Topluluk / Çekiliş Ödülleri',
     percent: 20,
     color: '#facc15',
-    desc: '7. günden itibaren her 7 günde bir çekiliş, toplam 14 çekiliş. Her çekilişte 7 cüzdan kazanır — 14 haftada toplam 98 kazanan. Katılım, çekiliş anındaki $LUCK bakiyesine göre (snapshot) belirlenir.',
+    desc: '7. günden itibaren her 7 günde bir çekiliş, toplam 14 çekiliş. Her çekilişte 10 cüzdan kazanır ve her kazanan 1.110.000 $LUCK alır: 7\'si presale biletleri arasından (zincirden hesaplanır, otomatik dağıtılır), 3\'ü Twitter/X kampanyalarından. 14 haftada toplam 140 kazanan.',
   },
   {
     key: 'team',
@@ -200,6 +208,46 @@ export const TOKENOMICS = [
   },
 ] as const
 
+// ---------------------------------------------------------------------------
+// Çekiliş kuralları
+// ---------------------------------------------------------------------------
+// Topluluk kovası (155.400.000 $LUCK) İKİ AYRI çekilişe bölünüyor. Ayrı
+// tutmalarının sebebi, doğrulanabilirliklerinin farklı olması:
+//
+//   * BİLETLİ ÇEKİLİŞ tamamen zincirden türetilebilir. Presale cüzdanına
+//     gelen her transfer herkese açık olduğu için "kim kaç bilet aldı"
+//     listesini bizden bağımsız olarak herkes üretebilir. Kazananlar da
+//     gelecekteki bir Solana slot'unun blockhash'iyle seçiliyor: o slot
+//     henüz oluşmadığı için sonucu kimse (biz dahil) önceden bilemez,
+//     oluştuktan sonra ise herkes aynı hesabı yapıp doğrulayabilir. Oyunda
+//     kullandığımız rastgelelik kaynağının aynısı.
+//
+//   * TWITTER ÇEKİLİŞİ zincirden doğrulanamaz — katılım Twitter/X üzerinde
+//     gerçekleşiyor, kazanan adresleri ekip giriyor. Bu yüzden aynı kovada
+//     karıştırmıyoruz: biletli çekilişin "kimseye güvenmeniz gerekmiyor"
+//     iddiası, yanına elle girilen bir liste konunca zayıflardı.
+//
+// Sayılar: çekiliş başına 11.100.000 ÷ 10 kazanan = kazanan başına tam
+// 1.110.000 $LUCK. 14 çekiliş × 10 = 140 kazanan.
+export const RAFFLE = {
+  rounds: 14,
+  intervalDays: 7,
+  /** İlk çekiliş TGE'den kaç gün sonra. */
+  firstRoundDay: 7,
+  perRoundTokens: 11_100_000,
+  perWinnerTokens: 1_110_000,
+  ticket: {
+    winnersPerRound: 7,
+    totalWinners: 98,
+    totalTokens: 108_780_000,
+  },
+  twitter: {
+    winnersPerRound: 3,
+    totalWinners: 42,
+    totalTokens: 46_620_000,
+  },
+} as const
+
 // Kilit / açılış takvimi — Tokenomics sekmesindeki zaman çizelgesi.
 // Tasarım ilkesi: hiçbir açılış, likidite havuzunun emebileceğinden büyük
 // olmamalı. Bu yüzden her kova kademeli açılıyor ve büyük kilitlerin
@@ -209,9 +257,8 @@ export const VESTING_SCHEDULE = [
     key: 'presale',
     label: 'Presale',
     steps: [
-      { when: 'TGE', what: '%7 açılır', amount: 19_036_500 },
+      { when: 'TGE', what: '%9 açılır', amount: 24_475_500 },
       { when: '7. – 91. gün', what: 'her 7 günde bir %7 (13 adım)', amount: 19_036_500 },
-      { when: '98. gün', what: 'son %2 — tamamı serbest', amount: 5_439_000 },
     ],
   },
   {
@@ -223,9 +270,9 @@ export const VESTING_SCHEDULE = [
     key: 'community',
     label: 'Topluluk / Çekiliş',
     steps: [
-      { when: '7. gün', what: 'ilk çekiliş — 7 cüzdan', amount: 11_100_000 },
-      { when: 'her 7 günde bir', what: '14 çekiliş, çekiliş başına 7 kazanan', amount: 11_100_000 },
-      { when: '98. gün', what: 'son çekiliş — toplam 98 kazanan', amount: 11_100_000 },
+      { when: '7. gün', what: 'ilk çekiliş — 7 biletli + 3 Twitter kazanan', amount: 11_100_000 },
+      { when: 'her 7 günde bir', what: '14 çekiliş, çekiliş başına 10 kazanan × 1.110.000', amount: 11_100_000 },
+      { when: '98. gün', what: 'son çekiliş — toplam 140 kazanan', amount: 11_100_000 },
     ],
   },
   {

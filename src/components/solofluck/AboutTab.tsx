@@ -5,7 +5,7 @@ const PILLARS = [
   {
     icon: '🍀',
     title: 'Şans Herkese Açık',
-    text: 'Presale\'e küçük ya da büyük katkı fark etmeksizin herkes katılabilir; sabit paketlerde her 0.5 SOL bir çekiliş bileti kazandırır.',
+    text: 'Presale\'e küçük ya da büyük katkı fark etmeksizin herkes katılabilir; gönderilen her 0.5 SOL bir çekiliş bileti kazandırır.',
   },
   {
     icon: '🎰',
@@ -58,15 +58,15 @@ const FAQ = [
   },
   {
     q: 'Presale\'e nasıl katılırım?',
-    a: 'Presale sekmesinde iki seçenek var: istediğin kadar SOL gönderdiğin "Serbest Katkı" (çekilişsiz) ya da hazır tutarlardan seçtiğin "Sabit Paket" (her 0.5 SOL için 1 çekiliş bileti). Her ikisi de cüzdanından imzaladığın gerçek bir Solana işlemidir.',
+    a: 'Presale sekmesinden istediğin kadar SOL gönderirsin; fiyat sabittir ve her 0.5 SOL sana 1 çekiliş bileti kazandırır. "Serbest katkı" ile "hazır paketler" arasındaki tek fark tutarı elle mi yazdığın yoksa hazır bir seçenekten mi seçtiğin — bilet oranı ikisinde de aynı. ÖNEMLİ: borsa hesabından göndermeyin, tokenler gönderen adrese dağıtılır.',
   },
   {
     q: 'Çekiliş nasıl işliyor?',
-    a: 'Sabit paket modunda gönderdiğin her 0.5 SOL, 777 temalı topluluk çekilişleri için 1 bilet kazandırır. Bilet sayın presale sekmesinde, cihazındaki katkı geçmişinde görünür.',
+    a: 'İki ayrı çekiliş var. (1) BİLETLİ ÇEKİLİŞ: presale\'de gönderdiğin her 0.5 SOL = 1 bilet. TGE\'den sonra 14 hafta boyunca her hafta 7 biletli kazanan çıkar, her biri 1.110.000 $LUCK alır. Kazananlar gelecekteki bir Solana slot\'unun blockhash\'iyle seçilir — sonucu kimse önceden bilemez, herkes sonradan doğrulayabilir; ödemeler otomatik dağıtılır. (2) TWITTER/X ÇEKİLİŞİ: aynı haftalarda 3 kazanan daha, sosyal medya kampanyalarından. Toplam 14 hafta × 10 kazanan = 140 kazanan.',
   },
   {
     q: 'Fonlar nereye gidiyor?',
-    a: 'Tokenomics sekmesindeki dağılıma göre: %35 presale katılımcılarına, %20 likidite havuzuna (TGE\'de LP yakılır), %20 topluluk/çekiliş ödüllerine, %10 kilitli ekip payına, %15 pazarlama & CEX giderlerine ayrılır.',
+    a: 'Tokenomics sekmesindeki dağılıma göre: %35 presale katılımcılarına (claim programı üzerinden, TGE\'de %9 + 13 hafta boyunca haftalık %7), %20 likidite havuzuna (TGE\'de LP yakılır), %20 topluluk/çekiliş ödüllerine (108.780.000 biletli çekiliş + 46.620.000 Twitter çekilişi), %10 kilitli ekip payına, %15 pazarlama & CEX giderlerine ayrılır.',
   },
 ]
 
