@@ -26,7 +26,8 @@
     "buffer": "^6.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "vite-plugin-node-polyfills": "^0.28.0"
+    "vite-plugin-node-polyfills": "^0.28.0",
+    "@noble/hashes": "^1.8.0"
   },
   "devDependencies": {
     "@types/bn.js": "^5.2.0",

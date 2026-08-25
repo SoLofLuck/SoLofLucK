@@ -1,0 +1,50 @@
+[package]
+name = "luck-distributor"
+version = "0.1.0"
+description = "Merkle tabanlı $LUCK dağıtıcısı: presale vesting'i ve haftalık çekiliş ödemeleri tek bir hesap tipiyle, kimsenin elle müdahale edemeyeceği şekilde dağıtır."
+edition = "2021"
+# Gerekçesi luck-game/Cargo.toml'daki notla aynı: anchor-cli 0.30.1 build
+# sırasında rustc 1.75.0 bundle eden eski bir Solana aracı indiriyor ve
+# rust-version bildirilmezse cargo, transitive bağımlılıkları o derleyicinin
+# okuyamadığı edition2024 sürümlerine kilitliyor.
+rust-version = "1.75.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "luck_distributor"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+default = []
+
+[dependencies]
+anchor-lang = { version = "0.30", features = ["init-if-needed"] }
+anchor-spl = "0.30"
+# Aşağıdaki pinlerin tamamı luck-game ile birebir aynı gerekçelere sahip
+# (blake3 → edition2024 zinciri, anchor-syn'in eski proc-macro2 API'si,
+# borsh-derive'ın yeni syn varyantı). Ayrıntılı açıklama için
+# program/luck-game/programs/luck-game/Cargo.toml'a bakınız — iki program
+# aynı araç zinciriyle derlendiği için pinleri ayrı tutmak, birinde
+# düzeltilen bir çakışmanın diğerinde geri gelmesi demek olurdu.
+blake3 = "~1.5"
+arrayref = ">=0.3.5, <0.3.10"
+proc-macro2 = "=1.0.81"
+borsh = "=1.5.1"
+borsh-derive = "=1.5.1"
+
+# Testler ZİNCİRE HİÇ BAĞLANMADAN, süreç içinde koşuyor: solana-program-test
+# tüm çalışma zamanını (BanksClient) belleğe kuruyor. Bu, "TGE'de hata
+# vermesin" gereksiniminin karşılanabilmesinin tek pratik yolu — devnet'e
+# deploy edip elle denemek yerine onlarca senaryoyu saniyeler içinde,
+# istendiği kadar tekrar koşturabiliyoruz. Zaman ilerletmek de aynı
+# sebeple mümkün: 91 günlük vesting takvimini beklemeden test edebiliyoruz.
+[dev-dependencies]
+solana-program-test = "~1.18"
+solana-sdk = "~1.18"
+spl-token = { version = "4", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "2", features = ["no-entrypoint"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

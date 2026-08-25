@@ -3,8 +3,8 @@ name: luck-game — Devnet'e Derle ve Deploy Et
 on:
   workflow_dispatch:
     inputs:
-      force_new_program_id:
-        description: "true: onbellekteki eski program keypair dosyasini sil, YENI bir Program ID uret (GameConfig hesap boyutu degistiginde gerekir - ardindan declare_id!()/Anchor.toml/site config.ts yeni ID ile guncellenip bu workflow tekrar false ile calistirilmali ki asil deploy o adrese dogru binary ile yapilsin)"
+      first_deploy:
+        description: "false (VARSAYILAN): kaynaktaki declare_id adresindeki programi YUKSELT - adres degismez. true: YENI bir adres uret ve ilk kez deploy et (yalnizca hesap duzeni degistiginde ya da ilk kurulumda; ardindan yazdirilan ID declare_id/Anchor.toml/config.ts'e islenmeli)"
         required: false
         type: boolean
         default: false
@@ -82,46 +82,6 @@ jobs:
       - name: Devnet'i yapılandır
         run: solana config set --url devnet --keypair ~/.config/solana/id.json
 
-      # Program keypair'i, programın zincirdeki ADRESİNİ belirliyor. Bu dosya
-      # daha önce yalnızca rust-cache'in içinde (target/ altında) taşınıyordu;
-      # o önbelleğin anahtarı Cargo.lock ve rustc sürümüne bağlı olduğu için
-      # her değiştiğinde keypair kayboluyor, `anchor keys sync` yenisini
-      # üretiyor ve program BAŞKA bir adrese deploy oluyordu. Sonuç: her
-      # deploy'dan sonra site config.ts güncellenmek, initialize() yeniden
-      # çalıştırılmak zorunda kalıyor ve eski kasadaki bakiye orada kalıyordu.
-      #
-      # Bu yüzden keypair'in artık kendi önbelleği var: restore, "en son
-      # kaydedilen" girdiyi önek eşleşmesiyle geri getiriyor; save ise
-      # keypair'in kendi pubkey'iyle anahtarlanıyor, böylece
-      # force_new_program_id ile bilerek üretilen yeni adres eskisinin
-      # üzerine yazmıyor.
-      #
-      # NOT: GitHub Actions önbellekleri 7 gün dokunulmazsa siliniyor — bu
-      # yüzden bu yalnızca aktif geliştirme sırasında adresi sabit tutar.
-      # Kalıcı çözüm (mainnet için ŞART): keypair'i bir repo secret'ında
-      # saklayıp buraya yazmak, tıpkı LUCK_GAME_DEPLOY_KEY gibi.
-      - name: Program keypair'ini önbellekten geri yükle
-        if: inputs.force_new_program_id != true
-        uses: actions/cache/restore@v4
-        with:
-          path: program/luck-game/target/deploy/luck_game-keypair.json
-          key: luck-game-program-keypair-
-          restore-keys: luck-game-program-keypair-
-
-      # GameConfig hesabının boyutu değiştiğinde (ör. küçük/büyük ödül
-      # alanları eklendiğinde), ÖNCEKİ deploy'un rust-cache'te önbelleklenmiş
-      # program keypair'ini (target/deploy/luck_game-keypair.json) tekrar
-      # kullanmak tehlikelidir: aynı Program ID'de zaten eski (küçük)
-      # boyutlu bir GameConfig hesabı var, yeni kod onu daha büyük struct
-      # olarak okumaya çalışınca deserialize hatası verir. Bu adım SADECE
-      # `force_new_program_id=true` ile elle tetiklendiğinde eski keypair'i
-      # silip yeni bir Program ID üretilmesini zorluyor — normal
-      # (upgrade) deploy'larda bu adım atlanır ki mevcut adres korunsun.
-      - name: Önbellekteki eski program keypair'ini temizle (yalnızca force_new_program_id=true ise)
-        if: inputs.force_new_program_id == true
-        working-directory: program/luck-game
-        run: rm -f target/deploy/luck_game-keypair.json
-
       - name: Devnet SOL airdrop (deploy ücreti için)
         # GitHub'ın paylaşımlı runner IP'leri devnet faucet'inde sık sık rate
         # limit'e takılıyor — bu yüzden hem daha uzun/çok deneme yapıyoruz
@@ -170,26 +130,44 @@ jobs:
           echo "--- blake3 ---"
           cargo tree -i blake3 2>&1 || true
 
-      # `anchor build`, target/deploy/luck_game-keypair.json yoksa YENİ bir
-      # keypair üretir ama kaynak koddaki declare_id!()/Anchor.toml'u BU
-      # YENİ adrese göre GÜNCELLEMEZ (bu varsayım daha önce burada yanlış
-      # yapılmıştı ve "DeclaredProgramIdMismatch" ile deploy'u fiilen
-      # kullanılamaz hale getirmişti — derlenen bytecode kendi içinde eski/
-      # yanlış bir ID'yi doğru kabul ediyor ama gerçekte BAŞKA bir adrese
-      # deploy ediliyordu). `anchor keys sync`, tam bunun için var: keypair
-      # yoksa üretir, declare_id!()/Anchor.toml'u o keypair'in gerçek
-      # pubkey'iyle EŞLER — böylece hemen ardından gelen `anchor build`,
-      # deploy edileceği adresle kendi içinde tutarlı bir bytecode üretir.
-      - name: Program ID'yi keypair ile senkronla (anchor keys sync)
+      # ---------------------------------------------------------------
+      # Program ID artık KAYNAK KODDAN geliyor, keypair dosyasından değil.
+      # ---------------------------------------------------------------
+      # Eskiden her deploy'da `anchor keys sync` çalışıyordu: keypair
+      # dosyası yoksa yenisini üretip declare_id!()'yi ONA göre yazıyordu.
+      # Keypair yalnızca CI önbelleğinde durduğu ve o önbellek Cargo.lock
+      # değişince ıskaladığı için, program üst üste ÜÇ KEZ yeni bir adrese
+      # deploy oldu — her seferinde config.ts güncellendi, initialize()
+      # yeniden koştu, eski kasadaki bakiye orada kaldı.
+      #
+      # Artık tersi: declare_id!() tek doğru kaynak. Normal deploy'lar o
+      # adresteki programı YÜKSELTİYOR ve keypair'e hiç ihtiyaç duymuyor —
+      # yükseltme için gereken tek imza upgrade authority'nin (deploy
+      # cüzdanı) imzası. Bu yüzden önbellek adımları da tamamen kaldırıldı.
+      #
+      # `anchor keys sync` yalnızca BİLEREK yeni bir program açarken
+      # (first_deploy=true) çalışıyor.
+      - name: Yeni program keypair'i üret (yalnızca first_deploy=true ise)
+        if: inputs.first_deploy == true
         working-directory: program/luck-game
         run: |
           mkdir -p target/deploy
-          if [ ! -f target/deploy/luck_game-keypair.json ]; then
-            solana-keygen new --no-bip39-passphrase --silent -o target/deploy/luck_game-keypair.json
-          fi
+          rm -f target/deploy/luck_game-keypair.json
+          solana-keygen new --no-bip39-passphrase --silent -o target/deploy/luck_game-keypair.json
           anchor keys sync
-          echo "Senkron sonrası declare_id!():"
+          echo "Yeni declare_id!():"
           grep declare_id programs/luck-game/src/lib.rs
+
+      - name: Hedef Program ID'yi belirle
+        working-directory: program/luck-game
+        run: |
+          PROGRAM_ID=$(grep -oP 'declare_id!\("\K[^"]+' programs/luck-game/src/lib.rs)
+          if [ -z "$PROGRAM_ID" ]; then
+            echo "declare_id!() okunamadı" >&2
+            exit 1
+          fi
+          echo "PROGRAM_ID=$PROGRAM_ID" >> "$GITHUB_ENV"
+          echo "Hedef Program ID: $PROGRAM_ID"
 
       # Anchor'ın ayrı "IDL üretim" adımı (host toolchain ile, on-chain SBF
       # derlemesinden bağımsız — istemci SDK'ları için target/idl/*.json
@@ -204,24 +182,44 @@ jobs:
         working-directory: program/luck-game
         run: anchor build --no-idl
 
-      - name: anchor deploy
+      # İlk deploy: programı keypair'in adresine doğuruyor.
+      - name: İlk deploy (yalnızca first_deploy=true ise)
+        if: inputs.first_deploy == true
         working-directory: program/luck-game
         run: anchor deploy --provider.cluster devnet --provider.wallet ~/.config/solana/id.json
 
-      - name: Program ID'yi yazdır
+      # Normal yol: ADRESE yükseltme. Keypair GEREKMİYOR — zincir yalnızca
+      # upgrade authority'nin imzasını arıyor. Program o adreste yoksa
+      # sessizce yeni bir şey yaratmak yerine net bir hatayla duruyoruz.
+      - name: Yükselt (varsayılan)
+        if: inputs.first_deploy != true
         working-directory: program/luck-game
         run: |
-          PROGRAM_ID=$(solana address -k target/deploy/luck_game-keypair.json)
+          if ! solana program show "$PROGRAM_ID" >/dev/null 2>&1; then
+            echo "::error::$PROGRAM_ID adresinde kurulu bir program yok." \
+                 "Yeni bir program açmak istiyorsanız bu workflow'u first_deploy=true ile çalıştırın."
+            exit 1
+          fi
+          echo "Mevcut program:"
+          solana program show "$PROGRAM_ID"
+          solana program deploy \
+            --program-id "$PROGRAM_ID" \
+            --upgrade-authority ~/.config/solana/id.json \
+            target/deploy/luck_game.so
+
+      - name: Sonucu doğrula
+        working-directory: program/luck-game
+        run: |
+          # first_deploy'da `anchor keys sync` declare_id'yi zaten yeni
+          # adrese yazdı ve "Hedef Program ID" adımı onu okudu — yani
+          # PROGRAM_ID her iki yolda da doğru.
           echo "================================================"
           echo " PROGRAM ID: $PROGRAM_ID"
           echo "================================================"
-          echo "Bu ID'yi declare_id!() ve site config.ts'e işlemek için kullanılacak."
-          echo "PROGRAM_ID=$PROGRAM_ID" >> "$GITHUB_ENV"
-
-      # Kaydetme adımı BİLEREK deploy'dan sonra: keypair'i ancak gerçekten
-      # bu adrese deploy ettiysek saklıyoruz.
-      - name: Program keypair'ini önbelleğe kaydet
-        uses: actions/cache/save@v4
-        with:
-          path: program/luck-game/target/deploy/luck_game-keypair.json
-          key: luck-game-program-keypair-${{ env.PROGRAM_ID }}
+          # Zincirdeki hâli yazdırıyoruz: yükseltmenin gerçekten olduğunu
+          # (ve authority'nin beklediğimiz cüzdan olduğunu) loglardan
+          # doğrulayabilmek için.
+          solana program show "$PROGRAM_ID"
+          if [ "${{ inputs.first_deploy }}" = "true" ]; then
+            echo "::notice::YENİ program açıldı. Bu ID'yi declare_id!(), Anchor.toml ve src/config.ts'e işleyin."
+          fi
