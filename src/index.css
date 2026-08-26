@@ -2457,3 +2457,39 @@ button {
 .luck-claim__claimable {
   color: #4ade80;
 }
+
+/* Oyunun oran/kural paneli — varsayılan kapalı, ama başlığı her zaman
+   görünür: oyuncunun "şansım ne?" sorusunun cevabı tek dokunuş uzakta. */
+.luck-game__rules {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.luck-game__rules summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.luck-game__rules summary::-webkit-details-marker {
+  display: none;
+}
+
+.luck-game__rules-body {
+  margin-top: 0.75rem;
+}
+
+.luck-game__rules-note {
+  font-size: 0.85rem;
+  opacity: 0.75;
+  line-height: 1.5;
+  margin: 0.75rem 0 0;
+}
+
+/* Kalan kontenjan bilgisi — gönderme formlarının hemen üstünde. */
+.luck-presale__quota {
+  margin-bottom: 0.75rem;
+}

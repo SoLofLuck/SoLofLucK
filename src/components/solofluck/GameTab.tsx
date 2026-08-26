@@ -8,6 +8,8 @@ import {
   buySpins,
   computeBestFitSpinPurchase,
   fetchGameConfig,
+  fetchVaultBalanceLamports,
+  getConfigPda,
   fetchLeaderboard,
   fetchPlayerState,
   forfeitStuckPlay,
@@ -104,6 +106,11 @@ export function GameTab() {
   // Bu tutar zincirde durmak zorunda — harcanabilir gaz DEĞİL, bu yüzden
   // bakiyeyi kullanıcıya gösterirken düşüyoruz (bkz. lib/luckGame.ts).
   const [delegateRentReserve, setDelegateRentReserve] = useState<number | null>(null)
+  // Kasa bakiyesi ARTIK okunuyor. Eskiden "kullanıcıya gösterilmiyor" diye
+  // sorgulanmıyordu; ama oyunun en belirleyici kuralı buna bağlı: kasa
+  // jackpot'u karşılayamıyorsa hiçbir tur kazanç yazmıyor. Bunu oyuncudan
+  // saklamak, parasını ödediği bir oyunda gerçek şansını gizlemek olurdu.
+  const [vaultLamports, setVaultLamports] = useState<number | null>(null)
 
   const [busy, setBusy] = useState<string | null>(null)
   // İşlem ilerleme metni artık ekranda GÖSTERİLMİYOR (kullanıcı geri
@@ -198,6 +205,9 @@ export function GameTab() {
       setGameConfig(cfg)
       setInitialized(cfg !== null)
       setCurrentSlot(slot)
+      if (cfg) {
+        setVaultLamports(await fetchVaultBalanceLamports(connection, getConfigPda()))
+      }
       // Kasa bakiyesi kullanıcıya gösterilmiyor, bu yüzden sorgulanmıyor da
       // (her polling turunda gereksiz bir RPC çağrısıydı).
       if (activeOwnerPublicKey) {
@@ -598,6 +608,24 @@ export function GameTab() {
     delegateGasLamports !== null &&
     lamportsToSol(delegateGasLamports) < GAME_CONFIG.delegateLowBalanceSol
 
+  // Kasanın jackpot + hazine payını karşılayıp karşılayamadığı — programın
+  // resolve() içinde uyguladığı kontrolün AYNISI. Karşılayamıyorsa zar ne
+  // gelirse gelsin tur kayıp sayılıyor.
+  const jackpotCost =
+    gameConfig
+      ? gameConfig.bigPrizeLamports +
+        (gameConfig.bigPrizeLamports * BigInt(gameConfig.treasuryFeeBps)) / BigInt(10_000)
+      : BigInt(0)
+  const spendableVault =
+    vaultLamports !== null && delegateRentReserve !== null
+      ? BigInt(Math.max(0, vaultLamports - delegateRentReserve))
+      : null
+  const canPayJackpot = spendableVault === null ? true : spendableVault >= jackpotCost
+  const easyMode =
+    gameConfig !== null &&
+    spendableVault !== null &&
+    spendableVault >= gameConfig.vaultEasyThresholdLamports
+
   const targetSlot = playerState ? playerState.commitSlot + revealDelaySlots : null
   const slotsRemaining =
     targetSlot !== null && currentSlot !== null ? Number(targetSlot) - currentSlot : null
@@ -673,6 +701,75 @@ export function GameTab() {
                 {busy === 'topup' ? 'Dolduruluyor...' : 'Doldur'}
               </button>
             </div>
+          )}
+
+          {/* ---------------------------------------------------------------
+              Oyunun kuralları — ZİNCİRDEN okunan gerçek değerlerle
+              ---------------------------------------------------------------
+              Bu panel eklenene kadar site oyunun oranlarını HİÇBİR YERDE
+              söylemiyordu: oyuncu 0,1 SOL ödüyor ama kazanma şansını,
+              ödülleri, ev payını ya da "kasa jackpot'u karşılayamazsa
+              hiçbir tur kazanamaz" kuralını göremiyordu. Parasını ödediği
+              bir oyunda gerçek şansını bilmemek kabul edilebilir değil.
+
+              Sayılar bilerek config.ts'ten DEĞİL, zincirdeki GameConfig'ten
+              geliyor: ekranda yazan oran, programın gerçekten uyguladığı
+              oranın ta kendisi. İkisi ayrışırsa ekran yalan söylerdi. */}
+          {gameConfig && (
+            <details className="luck-game__rules">
+              <summary>📋 Oranlar ve kurallar (zincirden okunuyor)</summary>
+              <div className="luck-game__rules-body">
+                <div className="result-card__row">
+                  <span>Kazanma şansı</span>
+                  <strong>
+                    {easyMode
+                      ? `%${(gameConfig.easyWinBps / 100).toFixed(2)} (kolay mod açık)`
+                      : `%${(gameConfig.normalWinBps / 100).toFixed(2)}`}
+                  </strong>
+                </div>
+                <div className="result-card__row">
+                  <span>Küçük ödül</span>
+                  <strong>{fmtSol(lamportsToSol(gameConfig.smallPrizeLamports))} SOL</strong>
+                </div>
+                <div className="result-card__row">
+                  <span>Büyük ödül (jackpot)</span>
+                  <strong>{fmtSol(lamportsToSol(gameConfig.bigPrizeLamports))} SOL</strong>
+                </div>
+                <div className="result-card__row">
+                  <span>Kazananların jackpot oranı</span>
+                  <strong>%{(gameConfig.bigPrizeBps / 100).toFixed(0)}</strong>
+                </div>
+                <div className="result-card__row">
+                  <span>Kolay moda geçiş eşiği</span>
+                  <strong>
+                    {fmtSol(lamportsToSol(gameConfig.vaultEasyThresholdLamports))} SOL kasa
+                  </strong>
+                </div>
+                <div className="result-card__row">
+                  <span>Kasa bakiyesi</span>
+                  <strong>
+                    {vaultLamports === null ? '—' : `${fmtSol(lamportsToSol(vaultLamports))} SOL`}
+                  </strong>
+                </div>
+                <div className="result-card__row">
+                  <span>Ev payı</span>
+                  <strong>%{(gameConfig.treasuryFeeBps / 100).toFixed(0)}</strong>
+                </div>
+                <p className="luck-game__rules-note">
+                  Ödediğin paketin %{(gameConfig.treasuryFeeBps / 100).toFixed(0)}'i hazineye,
+                  kalanı ödüllerin ödendiği kasaya gider. Kazandığında ödülünden kesinti
+                  YAPILMAZ — hazine payı kasadan ayrıca çıkar.
+                </p>
+                {!canPayJackpot && (
+                  <div className="alert alert--warning">
+                    ⚠️ Kasa şu an jackpot'u ödeyemiyor. Program, ödeyemeyeceği bir ödülü
+                    kazanç saymıyor — yani kasa{' '}
+                    {fmtSol(lamportsToSol(jackpotCost))} SOL'a ulaşana kadar hiçbir tur
+                    kazanç yazmaz. Paket almadan önce bunu bil.
+                  </div>
+                )}
+              </div>
+            </details>
           )}
 
           <SlotMachine

@@ -109,21 +109,37 @@ impl MerkleTree {
 
 // --- Zincir yardımcıları -----------------------------------------------------
 
+/// Her işlemi BENZERSİZ yapar (bkz. luck-game'deki aynı yardımcı).
+///
+/// Aynı imzacı + aynı talimat + aynı blockhash = birebir aynı işlem; zincir
+/// onu tekrar İŞLEMİYOR ama hata da vermiyor, yani test "başarılı" görürken
+/// zincirde hiçbir şey olmuyor. Artan bir compute-budget limiti mesajı
+/// değiştiriyor; limit hiç bağlayıcı olmayacak kadar yüksek ve ek ücreti
+/// yok, dolayısıyla ölçtüğümüz token bakiyelerine dokunmuyor.
+static TX_NONCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 pub async fn send(
     ctx: &mut ProgramTestContext,
     ixs: &[Instruction],
     signers: &[&Keypair],
 ) -> Result<(), TransportError> {
+    let nonce = TX_NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut all_ixs = vec![
+        solana_sdk::compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(
+            600_000 + nonce % 100_000,
+        ),
+    ];
+    all_ixs.extend_from_slice(ixs);
+
     let blockhash = ctx.banks_client.get_latest_blockhash().await.unwrap();
     let mut all: Vec<&Keypair> = vec![&ctx.payer];
     all.extend_from_slice(signers);
-    let tx = Transaction::new_signed_with_payer(
-        ixs,
-        Some(&ctx.payer.pubkey()),
-        &all,
-        blockhash,
-    );
-    ctx.banks_client.process_transaction(tx).await.map_err(Into::into)
+    let tx =
+        Transaction::new_signed_with_payer(&all_ixs, Some(&ctx.payer.pubkey()), &all, blockhash);
+    ctx.banks_client
+        .process_transaction(tx)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn create_mint(ctx: &mut ProgramTestContext, authority: &Pubkey) -> Pubkey {

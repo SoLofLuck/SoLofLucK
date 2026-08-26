@@ -34,7 +34,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 // tarafından keypair'e göre yazılıyor (bkz. deploy workflow'u). Burada
 // sistem programının adresini (111...) bırakmak testlerde çakışma
 // yaratırdı, o yüzden geçerli ama kullanılmayan bir adres duruyor.
-declare_id!("A4aN3aL2ZTLYBwAfECbh75g51cJfVd7r9tN8k6qvXGYL");
+declare_id!("G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e");
 
 const DISTRIBUTOR_SEED: &[u8] = b"distributor";
 const VAULT_SEED: &[u8] = b"vault";
@@ -235,7 +235,11 @@ pub mod luck_distributor {
 /// Kademe sayısı tavanlandığı ve `initialize` toplam bps'in tam 10000
 /// olmasını zorladığı için, takvim bittiğinde sonuç `total`'a TAM eşit
 /// olur — yuvarlamadan artan toz kalmaz.
-fn unlocked_amount(d: &Distributor, total: u64, now: i64) -> Result<u64> {
+/// `pub` yalnızca doğrulanabilirlik için: aynı formül arayüzde de
+/// (src/lib/luckClaim.ts) yeniden yazıldı ve testler ikisinin birebir aynı
+/// sonucu verdiğini altın vektörle bağlıyor. İkisi ayrışırsa kullanıcı
+/// "çekilebilir" görüp işlemi reddedilir.
+pub fn unlocked_amount(d: &Distributor, total: u64, now: i64) -> Result<u64> {
     if now < d.start_ts {
         return Ok(0);
     }

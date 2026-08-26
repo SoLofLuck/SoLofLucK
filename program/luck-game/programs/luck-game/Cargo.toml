@@ -67,3 +67,15 @@ borsh = "=1.5.1"
 # çözümlemeye devam ediyordu (aynı PreciseCapture hatası). borsh-derive'ı
 # da doğrudan sabitliyoruz.
 borsh-derive = "=1.5.1"
+
+# Testler ZİNCİRE HİÇ BAĞLANMADAN, süreç içinde koşuyor: solana-program-test
+# tüm çalışma zamanını (BanksClient) belleğe kuruyor. luck-distributor'da
+# olduğu gibi buradaki asıl kazanç, zincirin durumunu (slot, SlotHashes
+# sysvar'ı, kasa bakiyesi) İSTEDİĞİMİZ gibi kurabilmek: devnet'te ancak
+# şansa bağlı olarak karşılaşılan durumlar — atlanan bir hedef slot, kasanın
+# jackpot'u karşılayamayacak kadar boş olması, resolve penceresinin
+# kapanması — burada doğrudan kurulup her koşuda sınanabiliyor.
+[dev-dependencies]
+solana-program-test = "~1.18"
+solana-sdk = "~1.18"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

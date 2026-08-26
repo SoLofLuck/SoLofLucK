@@ -596,17 +596,29 @@ pub mod luck_game {
             GameError::InvalidSlotHashesAccount
         );
         let sysvar_data = ctx.accounts.slot_hashes.try_borrow_data()?;
-        let target_hash =
-            find_slot_hash(&sysvar_data, target_slot).ok_or(GameError::SlotHashNotFound)?;
+        // Hedef slot atlanmış olabilir (lideri blok üretememiş olabilir); o
+        // durumda ondan SONRAKİ ilk üretilmiş slot kullanılıyor. Üst sınır
+        // resolve penceresinin kendisi — arama pencerenin dışına taşamaz.
+        let (entropy_slot, target_hash) = find_slot_hash_at_or_after(
+            &sysvar_data,
+            target_slot,
+            target_slot.saturating_add(MAX_RESOLVE_WINDOW_SLOTS),
+        )
+        .ok_or(GameError::SlotHashNotFound)?;
         drop(sysvar_data);
 
-        // Rastgelelik: hedef slot'un hash'i + oyuncunun pubkey'i + oyun
-        // sayacı (nonce). Nonce eklemek, aynı oyuncunun aynı slot'ta yanlışlıkla
+        // Rastgelelik: kullanılan slot'un hash'i + slot numarası + oyuncunun
+        // pubkey'i + oyun sayacı (nonce). Slot numarası preimage'a dahil:
+        // hangi slot'un kullanıldığı artık sabit değil (atlanma durumunda
+        // kayabiliyor), dolayısıyla sonucun hangi slot'a dayandığı da
+        // hash'in içinde kayıtlı olsun — böylece dışarıdan doğrulayan biri
+        // yanlış slot'la aynı sonucu üretemez. Nonce eklemek, aynı oyuncunun aynı slot'ta yanlışlıkla
         // iki kez resolve edilmeye çalışılmasını (olmaması gerekir ama) veya
         // farklı oyuncuların aynı hash'i paylaşmasını (pubkey zaten bunu
         // engelliyor ama nonce ekstra güvenlik) anlamsız kılar.
-        let mut preimage = Vec::with_capacity(32 + 32 + 4);
+        let mut preimage = Vec::with_capacity(32 + 8 + 32 + 4);
         preimage.extend_from_slice(&target_hash);
+        preimage.extend_from_slice(&entropy_slot.to_le_bytes());
         preimage.extend_from_slice(ctx.accounts.player.key.as_ref());
         preimage.extend_from_slice(&player_state.plays_count.to_le_bytes());
         let digest = anchor_lang::solana_program::hash::hash(&preimage).to_bytes();
@@ -787,7 +799,24 @@ fn ensure_owner(player_state: &mut PlayerState, owner: Pubkey) -> Result<()> {
     Ok(())
 }
 
-/// SlotHashes sysvar'ının ham hesap verisini elle çözümler. Bu sysvar
+/// SlotHashes sysvar'ında `target_slot`'tan itibaren blok ÜRETMİŞ ilk
+/// slot'un hash'ini bulur.
+///
+/// Neden "tam olarak target_slot" değil: Solana'da slot'lar atlanabilir —
+/// o slot'un lideri blok üretemezse o slot SlotHashes'e hiç girmez.
+/// Eskiden burada tam eşleşme aranıyordu, dolayısıyla hedef slot
+/// atlandığında o oyun SONSUZA DEK sonuçlandırılamıyordu: oyuncu
+/// pencerenin kapanmasını bekleyip forfeit etmek ve spinini kaybetmek
+/// zorunda kalıyordu. Devnet'te atlanma oranı yer yer %5-15 olduğu için
+/// bu, her 10-20 spinde bir sessizce yaşanan gerçek bir para kaybıydı.
+///
+/// İleri doğru arama rastgeleliği zayıflatmıyor: hangi slot'un
+/// atlanacağını oyuncu ne bilebiliyor ne etkileyebiliyor, ve seçilen slot
+/// bir kez ortaya çıktıktan sonra DEĞİŞMİYOR (daha büyük slot'lar
+/// eklendikçe "target'tan büyük en küçük slot" aynı kalır) — yani sonuç
+/// hâlâ deterministik ve herkesçe doğrulanabilir.
+///
+/// Ham hesap verisini elle çözümler. Bu sysvar
 /// "büyük" sysvar'lardan biri olduğu için (Clock/Rent gibi hızlı syscall'la
 /// değil) hesap verisi olarak geçirilip bincode formatına göre okunmalı:
 /// ilk 8 bayt = kayıt sayısı (u64, little-endian), ardından her kayıt için
@@ -819,25 +848,48 @@ fn ops_fee_lamports(prize_lamports: u64, fee_bps: u16) -> Result<u64> {
         .ok_or(GameError::MathOverflow)? as u64)
 }
 
-fn find_slot_hash(sysvar_data: &[u8], target_slot: u64) -> Option<[u8; 32]> {
+fn find_slot_hash_at_or_after(
+    sysvar_data: &[u8],
+    target_slot: u64,
+    max_slot: u64,
+) -> Option<(u64, [u8; 32])> {
     if sysvar_data.len() < 8 {
         return None;
     }
     let len = u64::from_le_bytes(sysvar_data[0..8].try_into().ok()?) as usize;
     let mut offset = 8usize;
+    let mut best: Option<(u64, [u8; 32])> = None;
     for _ in 0..len {
         if offset + 40 > sysvar_data.len() {
             break;
         }
         let slot = u64::from_le_bytes(sysvar_data[offset..offset + 8].try_into().ok()?);
-        if slot == target_slot {
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&sysvar_data[offset + 8..offset + 40]);
-            return Some(hash);
-        }
         offset += 40;
+
+        // Sysvar en yeniden eskiye sıralı. Baştaki kayıtlar penceremizin
+        // ÜSTÜNDE kalıyor, atlıyoruz.
+        if slot > max_slot {
+            continue;
+        }
+        // Hedefin altına düştük: sıralama azalan olduğu için bundan
+        // sonrakiler daha da küçük, bakmaya gerek yok. Bu erken çıkış
+        // taramayı kısa tutuyor — hedef her zaman yakın geçmişte olduğundan
+        // pratikte birkaç kayıt sonra duruyoruz. 512 kaydın tamamını her
+        // seferinde taramak, resolve() gibi her spinde çağrılan bir
+        // talimatta gereksiz işlem birimi (compute unit) maliyeti olurdu.
+        if slot < target_slot {
+            break;
+        }
+        // Pencerenin içindeyiz. Azalan sırada ilerlediğimiz için her yeni
+        // eşleşme bir öncekinden KÜÇÜK; döngü bittiğinde elimizde hedefe en
+        // yakın (en küçük uygun) slot kalıyor. Hedefe en yakını seçmek
+        // önemli: o slot bir kez ortaya çıktıktan sonra bir daha değişmiyor,
+        // dolayısıyla sonuç deterministik kalıyor.
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&sysvar_data[offset - 32..offset]);
+        best = Some((slot, hash));
     }
-    None
+    best
 }
 
 #[account]

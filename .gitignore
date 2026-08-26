@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# check-claim-abi.mjs, istemci kodunu derleyip çalıştırmak için buraya
+# geçici bir klasör açıyor (node_modules altında olmak zorunda: derlenen
+# modül @solana/web3.js'i import ediyor). Normalde kendini siliyor; koşu
+# yarıda kesilirse artık kalabilir.
+node_modules/.claim-abi-*

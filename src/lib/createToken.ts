@@ -30,6 +30,7 @@ import {
   TokenStandard,
 } from '@metaplex-foundation/mpl-token-metadata'
 import { FEE_WALLET, FEE_AMOUNT_SOL } from '../config'
+import { sendInstructions } from './sendTx'
 import { buildInitializeConfidentialTransferMintIx } from './confidentialTransfer'
 
 export interface TokenFormData {
@@ -247,22 +248,24 @@ export async function createToken(
     )
   }
 
-  onStatus?.('İşlem hazırlanıyor...')
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-  tx.recentBlockhash = blockhash
-  tx.feePayer = payer
-
-  // Mint hesabı yeni oluşturulduğu için mint keypair de imzalamalı
-  tx.partialSign(mintKeypair)
-
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
-  const signedTx = await wallet.signTransaction(tx)
-
-  onStatus?.('İşlem ağa gönderiliyor...')
-  const signature = await connection.sendRawTransaction(signedTx.serialize())
-
-  onStatus?.('Onay bekleniyor...')
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+  // Ortak, sertleştirilmiş gönderim yolu (bkz. sendTx.ts). Burada özellikle
+  // kritik: token oluşturma tek seferlik ve GERİ ALINAMAZ bir işlem.
+  // Eskiden düz `sendRawTransaction + confirmTransaction` kullanılıyordu ve
+  // confirmTransaction'ın websocket aboneliği mobilde cüzdan onayı sırasında
+  // sessizce kopabiliyor. İşlem zincire yazılmış olsa bile hata görünüyor,
+  // kullanıcı tekrar deniyor — ve her deneme YENİ bir mint keypair'i
+  // ürettiği için ortaya İKİNCİ BİR TOKEN çıkıyor. Yanlış mint adresini
+  // yayınlamak, $LUCK gibi bir proje için düzeltilmesi çok pahalı bir hata.
+  //
+  // extraSigners ile mint keypair'i yeniden deneme turlarında da AYNI
+  // kalıyor, yani tekrar denemek yeni bir token doğurmuyor.
+  const signature = await sendInstructions(
+    connection,
+    { publicKey: payer, signTransaction: wallet.signTransaction },
+    tx.instructions,
+    onStatus,
+    { extraSigners: [mintKeypair] },
+  )
 
   return {
     mint: mint.toBase58(),

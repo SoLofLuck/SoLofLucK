@@ -414,3 +414,188 @@ async fn program_accepts_javascript_generated_proof() {
         luck_distributor::leaf_hash(&other, amount)
     ));
 }
+
+// ---------------------------------------------------------------------------
+// 14. ABI altın vektörü — istemci ile programın aynı baytları konuşması
+// ---------------------------------------------------------------------------
+// Claim talimatını SİTE (TypeScript) kuruyor, doğrulamayı PROGRAM (Rust)
+// yapıyor. Aradaki tek baytlık bir fark — yanlış discriminator, ters hesap
+// sırası, hatalı uzunluk alanı — TGE günü HERKESİN claim'inin reddedilmesi
+// demek. O noktada düzeltme şansı sınırlı ve itibar zaten gitmiş olur.
+//
+// Bu test, programın kendi ürettiği talimat baytlarını sabit bir vektöre
+// bağlıyor. Aynı vektör scripts/check-abi.mjs içinde istemci
+// tarafından yeniden üretiliyor. İkisi ayrışırsa TGE'den önce, burada
+// yakalanır.
+#[test]
+fn claim_talimat_baytlari_altin_vektore_uyuyor() {
+    use anchor_lang::InstructionData;
+
+    let proof: Vec<[u8; 32]> = vec![[0x11u8; 32], [0x22u8; 32]];
+    let data = luck_distributor::instruction::Claim {
+        total_amount: 271_950_000_000_000_000u64,
+        proof,
+    }
+    .data();
+
+    let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+    println!("claim ix baytları: {hex}");
+
+    // discriminator = sha256("global:claim")[0..8]
+    assert_eq!(
+        &hex[0..16],
+        "3ec6d6c1d59f6cd2",
+        "claim discriminator değişti — istemci ile program artık farklı \
+         talimat çağırıyor"
+    );
+    // u64 miktar (little-endian) + Vec uzunluğu (u32 LE) + 2 × 32 bayt düğüm
+    assert_eq!(data.len(), 8 + 8 + 4 + 64, "talimat verisi uzunluğu değişti");
+    assert_eq!(
+        &hex[16..32],
+        "00e0aa8a1529c603",
+        "miktar kodlaması değişti (u64 little-endian olmalı)"
+    );
+    assert_eq!(&hex[32..40], "02000000", "kanıt uzunluğu u32 little-endian olmalı");
+    assert!(hex.ends_with(&"22".repeat(32)), "kanıt düğümleri sırası değişti");
+}
+
+// ---------------------------------------------------------------------------
+// 15. initialize ABI altın vektörü
+// ---------------------------------------------------------------------------
+// Turu açan ve tokenleri KİLİTLEYEN talimat bu. Yanlış kodlanırsa iki kötü
+// sonuçtan biri çıkar: ya işlem reddedilir (fark ederiz), ya da yanlış bir
+// takvim/kök sessizce zincire yazılır — ve program güncelleme talimatı
+// içermediği için o noktada geri dönüş yok.
+//
+// Aynı vektör scripts/check-abi.mjs içinde, TGE günü çalışacak GERÇEK
+// script çalıştırılarak yeniden üretiliyor.
+#[test]
+fn initialize_talimat_baytlari_altin_vektore_uyuyor() {
+    use anchor_lang::InstructionData;
+
+    let merkle_root = [
+        0x9b, 0x4c, 0x1b, 0xb9, 0xc4, 0x0f, 0xe4, 0xfe, 0x3d, 0x4e, 0xe9, 0xe1, 0x72, 0xc6, 0x31,
+        0x84, 0x02, 0x50, 0x34, 0x21, 0xb3, 0x4f, 0x26, 0xe7, 0x4c, 0xa9, 0x75, 0x49, 0x38, 0xbb,
+        0xce, 0x84,
+    ];
+    let data = luck_distributor::instruction::Initialize {
+        id: 0,
+        merkle_root,
+        total_allocated: 3_330_000_000_000_000u64,
+        start_ts: 1_788_264_000i64, // 2026-09-01T12:00:00Z
+        cliff_bps: 900,
+        period_bps: 700,
+        period_seconds: 604_800i64,
+        periods: 13,
+    }
+    .data();
+
+    let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+    println!("initialize ix baytları: {hex}");
+
+    assert_eq!(
+        &hex[0..16],
+        "afaf6d1f0d989bed",
+        "initialize discriminator değişti"
+    );
+    // 8 disc + 8 id + 32 kök + 8 toplam + 8 zaman + 2 + 2 + 8 + 2
+    assert_eq!(data.len(), 8 + 8 + 32 + 8 + 8 + 2 + 2 + 8 + 2);
+    assert_eq!(
+        hex,
+        "afaf6d1f0d989bed\
+         0000000000000000\
+         9b4c1bb9c40fe4fe3d4ee9e172c6318402503421b34f26e74ca9754938bbce84\
+         00201a0b9ed40b00\
+         40be966a00000000\
+         8403\
+         bc02\
+         803a090000000000\
+         0d00",
+        "initialize alan kodlaması değişti"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 16. Açılma takvimi altın vektörü — arayüzle programın aynı sayıyı vermesi
+// ---------------------------------------------------------------------------
+// `unlocked_amount` formülü İKİ KEZ yazılmış durumda: burada (Rust) ve
+// arayüzde (src/lib/luckClaim.ts). Bu bilinçli — arayüzün zincire sormadan
+// doğru sayıyı gösterebilmesi gerekiyor. Ama ikisi ayrışırsa kullanıcı
+// "çekilebilir" görüp imza atar ve işlem reddedilir; ya da tersine, hak
+// ettiği tutarı hiç göremez.
+//
+// Aşağıdaki tablo scripts/check-abi.mjs içinde de aynen bulunuyor ve orada
+// arayüzün fonksiyonuyla üretiliyor.
+#[test]
+fn acilma_takvimi_altin_vektore_uyuyor() {
+    use luck_distributor::Distributor;
+    use solana_sdk::pubkey::Pubkey;
+
+    const BASLANGIC: i64 = 1_788_264_000; // 2026-09-01T12:00:00Z
+    const HAFTA: i64 = 604_800;
+    // Presale payı: 271.950.000 $LUCK, 9 ondalık.
+    const TOPLAM: u64 = 271_950_000_000_000_000;
+
+    let d = Distributor {
+        id: 0,
+        authority: Pubkey::default(),
+        mint: Pubkey::default(),
+        vault: Pubkey::default(),
+        merkle_root: [1u8; 32],
+        total_allocated: TOPLAM,
+        total_claimed: 0,
+        start_ts: BASLANGIC,
+        cliff_bps: 900,
+        period_bps: 700,
+        period_seconds: HAFTA,
+        periods: 13,
+        bump: 255,
+    };
+
+    // (saniye, beklenen açılmış miktar)
+    let vektor: &[(i64, u64)] = &[
+        (BASLANGIC - 1, 0),                          // TGE'den 1 sn önce
+        (BASLANGIC, 24_475_500_000_000_000),         // TGE: %9
+        (BASLANGIC + HAFTA - 1, 24_475_500_000_000_000), // 1. haftanın son sn'si
+        (BASLANGIC + HAFTA, 43_512_000_000_000_000), // 1. hafta: %16
+        (BASLANGIC + 6 * HAFTA, 138_694_500_000_000_000), // 6. hafta: %51
+        (BASLANGIC + 13 * HAFTA, TOPLAM),            // 13. hafta: %100
+        (BASLANGIC + 99 * HAFTA, TOPLAM),            // çok sonra: hâlâ %100
+    ];
+
+    for (t, beklenen) in vektor {
+        let gercek = luck_distributor::unlocked_amount(&d, TOPLAM, *t).unwrap();
+        assert_eq!(
+            gercek, *beklenen,
+            "t = başlangıç + {} sn: beklenen {beklenen}, gelen {gercek}",
+            t - BASLANGIC
+        );
+    }
+
+    // YUVARLAMA YÖNÜ. Yukarıdaki vektörde her adım tam bölündüğü için
+    // yuvarlamanın yönünü hiç sınamıyor — bu körlük, formülü bilerek yukarı
+    // yuvarlayacak şekilde bozup testin GEÇMESİYLE ortaya çıktı.
+    //
+    // Yön kritik: yukarı yuvarlansaydı tek tek payların toplamı
+    // total_allocated'ı aşabilir ve SON ALICININ çekimi kasada para
+    // kalmadığı için düşerdi. Aşağı yuvarlamada en kötü ihtimalle birkaç
+    // birim kasada kalır.
+    let bolunmeyen: u64 = 1_000_000_007;
+    for (bps_hedefi, beklenen) in [(900u64, 90_000_000u64), (1_600, 160_000_001), (5_100, 510_000_003)] {
+        let kademe = ((bps_hedefi - 900) / 700) as i64;
+        let gercek =
+            luck_distributor::unlocked_amount(&d, bolunmeyen, BASLANGIC + kademe * HAFTA).unwrap();
+        assert_eq!(
+            gercek, beklenen,
+            "bölünmeyen miktarda yuvarlama yönü değişmiş (bps {bps_hedefi})"
+        );
+    }
+
+    // Takvimin sonunda kasada TOZ KALMAMALI. Yuvarlama aşağı yapıldığı için
+    // ara adımlarda birkaç birim eksik kalabilir; sonda tam kapanması,
+    // "geri çekme talimatı yok" tasarımının doğru çalışmasının şartı.
+    assert_eq!(
+        luck_distributor::unlocked_amount(&d, TOPLAM, BASLANGIC + 13 * HAFTA).unwrap(),
+        TOPLAM
+    );
+}

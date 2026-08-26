@@ -33,6 +33,11 @@ function formatUsd(sol: number, solUsd: number | null): string {
   return `≈ $${(sol * solUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
 }
 
+/** SOL tutarını okunabilir metne — kalan kontenjan uyarılarında kullanılıyor. */
+function fmtSol(n: number): string {
+  return n.toLocaleString('tr-TR', { maximumFractionDigits: 3 })
+}
+
 function formatTokens(n: number): string {
   return n.toLocaleString('tr-TR', { maximumFractionDigits: 0 })
 }
@@ -128,12 +133,31 @@ export function PresaleTab({ network }: Props) {
         : null
   const canContribute = configured && wallet.connected && closedReason === null
 
+  // KALAN KONTENJAN. Site "777 SOL'den fazla katkı kabul edilmez (hard cap)"
+  // diyor ama bunu hiçbir şey uygulamıyordu: 770 SOL'deyken 100 SOL gönderen
+  // birinin işlemi geçer ve toplam 870'e çıkardı — verdiğimiz sözü tutmamış
+  // olurduk. Presale düz bir cüzdan transferi olduğu için zincirde bunu
+  // engelleyecek bir program yok; engelin arayüzde olması ŞART.
+  //
+  // Not: siteyi hiç kullanmadan doğrudan cüzdana gönderen birini bu da
+  // durduramaz. Bu durum için politikayı kurallarda açıkça yazıyoruz:
+  // hedefi aşan tutar iade edilir.
+  const remainingSol = Math.max(0, PRESALE_TARGET_SOL - progress.grossSol)
+  const exceedsQuota = (amount: number) => amount > remainingSol + 1e-9
+
   async function handleFlexSubmit(e: FormEvent) {
     e.preventDefault()
     setError('')
     const amount = Number(flexAmount)
     if (!Number.isFinite(amount) || amount <= 0) {
       setError('Geçerli bir SOL miktarı girin.')
+      return
+    }
+    if (exceedsQuota(amount)) {
+      setError(
+        `Kalan kontenjan ${fmtSol(remainingSol)} SOL. Hedefi (${PRESALE_TARGET_SOL} SOL) aşan ` +
+          'katkı kabul edilmiyor — lütfen miktarı düşür.',
+      )
       return
     }
     setLoading('flex')
@@ -155,6 +179,13 @@ export function PresaleTab({ network }: Props) {
     setError('')
     if (!selectedTier) {
       setError('Önce bir paket seçin.')
+      return
+    }
+    if (exceedsQuota(selectedTier)) {
+      setError(
+        `Kalan kontenjan ${fmtSol(remainingSol)} SOL. Bu paket hedefi aşıyor — daha küçük bir ` +
+          'paket seç ya da serbest katkıdan kalan tutarı gönder.',
+      )
       return
     }
     setLoading('fixed')
@@ -253,6 +284,13 @@ export function PresaleTab({ network }: Props) {
         borsanın adresine gider ve <strong>geri getirilemez</strong>. Phantom, Solflare gibi
         kendi anahtarınızın olduğu bir cüzdandan gönderin.
       </div>
+
+      {closedReason === null && poolSol !== null && (
+        <div className="alert alert--info luck-presale__quota">
+          Kalan kontenjan: <strong>{fmtSol(remainingSol)} SOL</strong> — hedef{' '}
+          {PRESALE_TARGET_SOL} SOL dolunca presale kapanır.
+        </div>
+      )}
 
       <div className="luck-presale__grid">
         <form className="token-form luck-presale__card" onSubmit={handleFlexSubmit}>
@@ -359,6 +397,13 @@ export function PresaleTab({ network }: Props) {
         <li>
           <strong>Taban {PRESALE_SOFT_CAP_SOL} SOL.</strong> Bu tutara ulaşılmazsa TGE yapılmaz ve
           katkılar iade edilir. İade işlemleri zincirde takip edilebilir.
+        </li>
+        <li>
+          <strong>Hedefi aşan katkı iade edilir.</strong> Bu sayfa, kalan kontenjandan büyük bir
+          katkıyı göndermene izin vermez. Ama presale düz bir cüzdan transferi olduğu için,
+          siteyi hiç kullanmadan doğrudan kasaya gönderen birini zincirde durduracak bir program
+          yok — hedefi aşan tutar, gönderen adrese iade edilir ve iade işlemi zincirde
+          görünür.
         </li>
         <li>
           <strong>Dağıtım claim ile.</strong> Tokenler TGE'de bir claim programına kilitlenir;

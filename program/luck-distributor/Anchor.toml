@@ -5,10 +5,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-luck_distributor = "11111111111111111111111111111111"
+luck_distributor = "G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e"
 
 [programs.mainnet]
-luck_distributor = "11111111111111111111111111111111"
+luck_distributor = "G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e"
 
 [registry]
 url = "https://api.apr.dev"

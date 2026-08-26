@@ -1,0 +1,70 @@
+name: luck-distributor — Devnet Uçtan Uca Prova
+
+# Testler zincire hiç bağlanmadan koşuyor (16 senaryo) ve mantığı kapsıyor.
+# Ama TGE günü çalışacak olan şey o testler değil: gerçek bir mint, gerçek
+# bir RPC, gerçek ATA'lar ve initialize-round.mjs script'inin kendisi.
+# Aradaki farkı ancak gerçek bir zincirde koşarak kapatabiliriz.
+#
+# Bu prova atılabilir bir mint ve üç sahte alıcıyla, gerçek presale
+# takvimiyle (%9 + 13 × %7) tam bir tur açıp claim ediyor. Hiçbir gerçek
+# varlığa dokunmuyor.
+
+on:
+  workflow_dispatch:
+    inputs:
+      program_id:
+        description: 'luck-distributor Program ID'
+        required: true
+        default: 'G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e'
+        type: string
+      round_id:
+        description: 'Prova tur numarası (gerçek turlarla çakışmasın)'
+        required: false
+        default: '900'
+        type: string
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bağımlılıkları kur
+        run: npm ci
+
+      - name: Denetimler
+        run: npm run verify
+
+      - name: Solana CLI kurulumu
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Deploy anahtarını yaz
+        run: |
+          mkdir -p ~/.config/solana
+          cat > ~/.config/solana/id.json <<'KEYFILE'
+          ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
+          KEYFILE
+          solana config set --url devnet --keypair ~/.config/solana/id.json
+
+      - name: Devnet SOL
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if solana airdrop 2; then break; fi
+            echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar."
+            sleep 20
+          done
+          solana balance
+
+      - name: Prova
+        env:
+          PROGRAM_ID: ${{ inputs.program_id }}
+          ROUND_ID: ${{ inputs.round_id }}
+          KEYPAIR_PATH: /home/runner/.config/solana/id.json
+          RPC_URL: https://api.devnet.solana.com
+        run: node program/luck-distributor/scripts/rehearsal.mjs

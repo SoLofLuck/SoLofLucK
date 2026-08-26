@@ -219,7 +219,7 @@ export const TOKENOMICS = [
 // `programId` boşken Claim sekmesi "henüz yapılandırılmadı" der ve hiçbir
 // buton çalışmaz — presale cüzdanıyla aynı güvenlik freni deseni.
 export const CLAIM_CONFIG = {
-  programId: '',
+  programId: 'G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e',
   /** Tur kimlikleri: 0 = presale vesting, 1..14 = haftalık çekilişler. */
   presaleRoundId: 0,
   /**

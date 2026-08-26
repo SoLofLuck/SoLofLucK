@@ -222,7 +222,19 @@ function discriminator(name: string): Buffer {
   return Buffer.from(sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8))
 }
 
-function buildClaimIx(claimant: PublicKey, roundId: number, entry: ClaimEntry): TransactionInstruction {
+/**
+ * Claim talimatını kurar.
+ *
+ * `export` yalnızca doğrulanabilirlik için: scripts/check-abi.mjs bu
+ * fonksiyonu çağırıp ürettiği baytları programın kendi ürettiği altın
+ * vektörle karşılaştırıyor. Talimatı kopyalayarak sınamak, iki tarafın
+ * uyuştuğunu değil kopyanın kendisiyle uyuştuğunu kanıtlardı.
+ */
+export function buildClaimIx(
+  claimant: PublicKey,
+  roundId: number,
+  entry: ClaimEntry,
+): TransactionInstruction {
   const mint = mintKey()
   const distributor = distributorPda(roundId)
   const vault = vaultPda(distributor)

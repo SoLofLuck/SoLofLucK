@@ -1,6 +1,7 @@
-import { Connection, PublicKey, SystemProgram, Transaction, TransactionInstruction, LAMPORTS_PER_SOL } from '@solana/web3.js'
+import { Connection, PublicKey, SystemProgram, TransactionInstruction, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
 import type { NetworkId } from '../config'
+import { sendInstructions } from './sendTx'
 import {
   PRESALE_DURATION_WEEKS,
   PRESALE_OPS_FEE_DEN,
@@ -192,9 +193,9 @@ export async function sendPresaleContribution(
   const totalLamports = Math.round(amountSol * LAMPORTS_PER_SOL)
   const { poolLamports, opsLamports } = splitContributionLamports(totalLamports)
 
-  const tx = new Transaction()
+  const ixs: TransactionInstruction[] = []
   // Havuza gidecek kısım presale cüzdanına...
-  tx.add(
+  ixs.push(
     SystemProgram.transfer({
       fromPubkey: payer,
       toPubkey: new PublicKey(PRESALE_WALLET),
@@ -205,7 +206,7 @@ export async function sendPresaleContribution(
   // hiç uğramadığı için TGE'de havuza konacak tutar presale cüzdanının
   // bakiyesine eşit olur; elle ayıklama gerekmez.
   if (opsLamports > 0) {
-    tx.add(
+    ixs.push(
       SystemProgram.transfer({
         fromPubkey: payer,
         toPubkey: new PublicKey(PRESALE_OPS_WALLET),
@@ -213,7 +214,7 @@ export async function sendPresaleContribution(
       }),
     )
   }
-  tx.add(
+  ixs.push(
     buildMemoIx(
       payer,
       JSON.stringify({
@@ -227,19 +228,32 @@ export async function sendPresaleContribution(
     ),
   )
 
-  onStatus?.('İşlem hazırlanıyor...')
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-  tx.recentBlockhash = blockhash
-  tx.feePayer = payer
-
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
-  const signedTx = await wallet.signTransaction(tx)
-
-  onStatus?.('İşlem ağa gönderiliyor...')
-  const signature = await connection.sendRawTransaction(signedTx.serialize())
-
-  onStatus?.('Onay bekleniyor...')
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+  // Ortak, sertleştirilmiş gönderim yolu (bkz. sendTx.ts). Burası eskiden
+  // düz bir `getLatestBlockhash → sign → sendRawTransaction →
+  // confirmTransaction` dizisiydi ve presale, kullanıcının GERÇEK parayla
+  // dokunduğu ilk yer olduğu için en riskli noktadaydı:
+  //
+  // - confirmTransaction bir websocket aboneliği açıyor. Mobilde cüzdan
+  //   onayı için uygulama değiştirilince tarayıcı sayfayı arka plana alıyor
+  //   ve abonelik sessizce kopuyor. Bildirim hiç gelmediği için işlem
+  //   ZİNCİRE YAZILMIŞ olsa bile "block height exceeded" hatası veriliyordu.
+  //   Katkısının gittiğini görmeyen kullanıcının yapacağı ilk şey TEKRAR
+  //   GÖNDERMEK — yani iki kez ödemek.
+  // - Öncelik ücreti yoktu; ağ yoğunken işlem lider tarafından sessizce
+  //   düşürülüyor ve blockhash süresi doluyor.
+  // - Tek gönderim yapılıyordu; paylaşımlı RPC'lerde çoğu zaman yetmiyor.
+  // - signTransaction zaman aşımına bağlı değildi; Phantom'ın deep-link
+  //   akışı geri dönmezse ekran sonsuza kadar kilitli kalıyordu.
+  //
+  // sendInstructions bunların hepsini kapatıyor ve yeniden imza istemeden
+  // önce daha önce gönderilmiş imzaların zincire yazılıp yazılmadığına
+  // bakıyor — yani çift ödeme riski olmadan tekrar deniyor.
+  const signature = await sendInstructions(
+    connection,
+    { publicKey: payer, signTransaction: wallet.signTransaction },
+    ixs,
+    onStatus,
+  )
 
   recordContribution(network, { signature, tickets, amountSol, mode })
 

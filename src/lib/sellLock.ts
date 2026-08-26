@@ -2,12 +2,12 @@ import {
   Connection,
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionInstruction,
 } from '@solana/web3.js'
 import { getExtraAccountMetaAddress, getMint, getTransferHook, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
 import BN from 'bn.js'
+import { sendInstructions } from './sendTx'
 
 // Devnet'e deploy edilmiş "satış kilidi" (anti-snipe) programı. Kaynak kodu
 // ve deploy geçmişi: program/sell-lock/ klasöründe. Bu, sitenin kendi
@@ -111,23 +111,17 @@ export async function registerLaunch(
     throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
   }
 
-  const tx = new Transaction().add(
-    buildRegisterLaunchIx(wallet.publicKey, mint, poolVaultA, poolVaultB, durationSeconds),
+  // Ortak, sertleştirilmiş gönderim yolu (bkz. sendTx.ts) — sitedeki diğer
+  // tüm zincir işlemleriyle aynı. Bu akış tek başına presale kadar riskli
+  // değil (kayıt tekrarlanabilir), ama düz gönderimin mobilde ürettiği
+  // sahte "başarısız" mesajları burada da kullanıcıyı gereksiz yere ikinci
+  // kez imza atmaya itiyordu.
+  const signature = await sendInstructions(
+    connection,
+    { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction },
+    [buildRegisterLaunchIx(wallet.publicKey, mint, poolVaultA, poolVaultB, durationSeconds)],
+    onStatus,
   )
-
-  onStatus?.('Satış kilidi işlemi hazırlanıyor...')
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-  tx.recentBlockhash = blockhash
-  tx.feePayer = wallet.publicKey
-
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
-  const signedTx = await wallet.signTransaction(tx)
-
-  onStatus?.('İşlem ağa gönderiliyor...')
-  const signature = await connection.sendRawTransaction(signedTx.serialize())
-
-  onStatus?.('Onay bekleniyor...')
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
 
   return signature
 }

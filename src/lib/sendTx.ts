@@ -1,6 +1,7 @@
 import {
   ComputeBudgetProgram,
   Connection,
+  Keypair,
   PublicKey,
   Transaction,
   TransactionInstruction,
@@ -38,6 +39,18 @@ const COMPUTE_UNIT_LIMIT = 300_000
 const PRIORITY_FEE_MICRO_LAMPORTS = 5_000
 
 export interface SendOptions {
+  /**
+   * Cüzdanın yanında imza atması gereken ek anahtarlar — ör. yeni bir mint
+   * hesabı oluşturulurken mint keypair'i.
+   *
+   * Bunlar cüzdana gitmeden ÖNCE `partialSign` ile ekleniyor. Yeniden
+   * deneme turlarında AYNI anahtarlar kullanılıyor: mint adresi
+   * değişmiyor. Eskiden bu akış kendi gönderim kodunu yazdığı için bir
+   * "aslında zincire yazılmıştı" durumunda kullanıcı tekrar deniyor ve
+   * İKİNCİ BİR MINT oluşuyordu.
+   */
+  extraSigners?: Keypair[]
+
   /**
    * Cüzdan onayı beklenirken gösterilecek durum mesajı. `null` verilirse bu
    * adım hiç gösterilmez — yerel bir anahtarla (delegate/test cüzdanı)
@@ -101,7 +114,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-type ConfirmOutcome =
+export type ConfirmOutcome =
   | { kind: 'ok' }
   | { kind: 'failed'; err: unknown }
   | { kind: 'expired' }
@@ -136,6 +149,11 @@ async function fetchFailureLogs(connection: Connection, signature: string): Prom
  * İşlemin zincire yazılmasını HTTP yoklamasıyla bekler — `confirmTransaction`
  * ile DEĞİL.
  *
+ * `sendInstructions` bunu kendi içinde kullanıyor. Ayrıca dışa açık, çünkü
+ * bazı akışlar (ör. gizli transfer planı) birden çok işlemi TEK cüzdan
+ * onayında imzalatıp sırayla göndermek zorunda — o akışlar sendInstructions'ın
+ * tek-işlem modeline sığmıyor ama aynı onay sorununu yaşıyor.
+ *
  * Sebep: `confirmTransaction` bir websocket aboneliği açıyor. Mobilde cüzdan
  * onayı için uygulama değiştirildiğinde tarayıcı sayfayı arka plana alıyor ve
  * bu abonelik sessizce kopuyor. Bildirim hiç gelmediği için işlem ZİNCİRE
@@ -147,7 +165,7 @@ async function fetchFailureLogs(connection: Connection, signature: string): Prom
  * devnet/mainnet RPC'leri yoğunlukta işlem düşürebiliyor ve tek gönderim
  * çoğu zaman yetmiyor.
  */
-async function confirmBySignature(
+export async function confirmBySignature(
   connection: Connection,
   signature: string,
   rawTx: Uint8Array,
@@ -363,6 +381,12 @@ export async function sendInstructions(
       onStatus?.('İşlem kontrol ediliyor...')
       await assertFeePayerFunded(connection, signer.publicKey)
       await assertSimulationPasses(connection, tx)
+    }
+
+    // Ek imzacılar cüzdandan ÖNCE imzalamalı: cüzdan adaptörleri mevcut
+    // imzaları koruyup kendi imzasını ekliyor, tersi çalışmıyor.
+    if (options?.extraSigners?.length) {
+      tx.partialSign(...options.extraSigners)
     }
 
     if (confirmMessage) onStatus?.(confirmMessage)

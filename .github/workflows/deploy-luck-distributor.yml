@@ -102,37 +102,66 @@ jobs:
           echo "Deploy cüzdanı: $(solana address)"
           solana balance
 
-      # anchor-cli 0.30.1, `anchor build` sırasında kendi eski Solana araç
-      # zincirini (v1.18.17) indirip kullanıyor; onun bundle ettiği eski Rust
-      # derleyicisi, host'un güncel stable Rust'ının ürettiği Cargo.lock v4
-      # formatını okuyamıyor ("lock file version 4 requires
-      # -Znext-lockfile-bump" hatası). Program kendi dependency ağacı için
-      # küçük olduğundan, lockfile'ı burada elle üretip v3'e düşürüyoruz —
-      # host cargo hâlâ güncel kalıyor (anchor-cli derlemesi için gerekli),
-      # sadece dosyanın format işareti eski araç zincirine uyumlu hale
-      # getiriliyor.
-      - name: Cargo.lock oluştur (eski lockfile formatına düşür)
-        working-directory: program/luck-distributor
+      # ÖNCEKİ BAŞARISIZ DEPLOY'LARDAN KALAN BUFFER'LARI ÖNCE TEMİZLE.
+      #
+      # `solana program deploy` yarıda düşerse yazdığı buffer hesabı, içindeki
+      # kira SOL'üyle birlikte zincirde kalıyor. Bu, bir sonraki koşuyu da
+      # düşürüyor: cüzdan boşalmış oluyor ve `solana program extend` kira
+      # ödeyemediği için "custom program error: 0x1" veriyor — hata mesajı
+      # sebebi hiç anlatmıyor.
+      #
+      # Nitekim tam olarak bu oldu: bir önceki koşu 2,3 SOL'ü buffer'da
+      # bıraktı, sonraki koşu extend için 0,46 SOL bulamadı. Temizliği
+      # yalnızca `if: failure()` adımında yapmak GEÇ kalıyor — parayı bir
+      # sonraki koşunun BAŞINDA geri almak gerekiyor.
+      - name: Kalan buffer'ları temizle (deploy öncesi)
         run: |
-          cargo generate-lockfile
-          sed -i 's/^version = 4$/version = 3/' Cargo.lock
-          head -n 5 Cargo.lock
+          solana program close --buffers --bypass-warning || \
+            echo "Kapatılacak buffer yok."
+          echo "Temizlik sonrası bakiye:"
+          solana balance
 
-      # rust-version MSRV fallback'i çoğu paketi eski rustc'ye uygun sürüme
-      # düşürebiliyor ama bazı paketlerde (ör. constant_time_eq, block-buffer)
-      # geriye uyumlu bir sürüm yok — bunları hangi üst bağımlılığın
-      # zorladığını görmek için loglara yazdırıyoruz (build başarısız olursa
-      # bir sonraki düzeltme bu bilgiye göre yapılacak).
-      - name: Bağımlılık zincirini incele (debug)
+      # ---------------------------------------------------------------
+      # Cargo.lock ARTIK REPODAN GELİYOR — burada üretilmiyor.
+      # ---------------------------------------------------------------
+      # Eskiden bu adım her deploy'da `cargo generate-lockfile` çalıştırıp
+      # bağımlılıkları SIFIRDAN çözüyordu. İki ayrı sorun doğuruyordu:
+      #
+      # 1) Derleme, crates.io'nun o günkü haline bağlıydı. luck-distributor'ın
+      #    ilk deploy'u tam olarak böyle düştü: zeroize_derive 1.5.0 çıktı,
+      #    edition2024 istiyor, anchor'ın bundle ettiği rustc 1.75 onu
+      #    okuyamıyor. Kimse bir şey değiştirmemişti — sadece yukarıda bir
+      #    paket yeni sürüm yayınlamıştı. Aynı şey yükseltme sırasında,
+      #    TGE günü de olabilirdi.
+      #
+      # 2) Bytecode yeniden üretilemiyordu. Para tutan bir programda
+      #    "zincirdeki bytecode gerçekten bu kaynaktan mı çıktı" sorusunun
+      #    cevabı, aynı girdilerle aynı çıktının üretilebilmesine bağlı.
+      #    Kilit dosyası olmadan bu mümkün değil.
+      #
+      # Kilit dosyası artık repoda, v3 formatında (eski araç zinciri v4'ü
+      # okuyamıyor) ve MSRV-farkında çözümle üretilmiş durumda:
+      #
+      #   cargo generate-lockfile \
+      #     --config 'resolver.incompatible-rust-versions="fallback"'
+      #
+      # Bu, rust-version = "1.75.0" bildirimini dikkate alıp her transitive
+      # bağımlılığı o derleyicinin derleyebileceği son sürüme düşürüyor.
+      # Bağımlılık güncellemesi artık bilinçli bir işlem: yerelde bu komut
+      # çalıştırılır, testler koşar, kilit commit'lenir.
+      #
+      # --locked, kilidin CI'da sessizce değişmesini engelliyor: kilit ile
+      # Cargo.toml uyuşmuyorsa derleme, tahmin yürütmek yerine duruyor.
+      - name: Cargo.lock doğrula (repodaki kilit kullanılacak)
         working-directory: program/luck-distributor
-        if: always()
         run: |
-          echo "--- constant_time_eq ---"
-          cargo tree -i constant_time_eq 2>&1 || true
-          echo "--- block-buffer ---"
-          cargo tree -i block-buffer 2>&1 || true
-          echo "--- blake3 ---"
-          cargo tree -i blake3 2>&1 || true
+          if [ ! -f Cargo.lock ]; then
+            echo "Cargo.lock repoda yok — commit edilmesi gerekiyor." >&2
+            exit 1
+          fi
+          head -n 3 Cargo.lock
+          cargo metadata --locked --format-version 1 > /dev/null
+          echo "Kilit dosyası Cargo.toml ile tutarlı."
 
       # ---------------------------------------------------------------
       # Program ID artık KAYNAK KODDAN geliyor, keypair dosyasından değil.
@@ -186,6 +215,21 @@ jobs:
         working-directory: program/luck-distributor
         run: anchor build --no-idl
 
+      # `anchor build`, --locked'ı alt araca (cargo-build-sbf) geçirmiyor,
+      # dolayısıyla kilidin derleme sırasında sessizce güncellenmesini
+      # bayrakla engelleyemiyoruz. Onun yerine SONUCUNU kontrol ediyoruz:
+      # kilit dosyası değiştiyse, deploy edilecek bytecode repodaki
+      # bağımlılıklardan üretilmemiş demektir ve burada duruyoruz.
+      - name: Kilit dosyası değişmedi mi
+        working-directory: program/luck-distributor
+        run: |
+          if ! git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock derleme sırasında değişti — deploy durduruluyor." >&2
+            git diff -- Cargo.lock | head -n 40
+            exit 1
+          fi
+          echo "Kilit dosyası derleme boyunca değişmedi."
+
       # İlk deploy: programı keypair'in adresine doğuruyor.
       - name: İlk deploy (yalnızca first_deploy=true ise)
         if: inputs.first_deploy == true
@@ -206,10 +250,70 @@ jobs:
           fi
           echo "Mevcut program:"
           solana program show "$PROGRAM_ID"
+
+          # ZİNCİRDEKİ ALANI GEREKİRSE BÜYÜT.
+          #
+          # Solana, programın verisini sabit boyutlu bir ProgramData
+          # hesabında tutuyor ve bu hesap ilk deploy'da ayrılıyor. Program
+          # büyüdükçe yükseltme bir noktada
+          # "account data too small for instruction" ile düşüyor —
+          # nitekim düştü: zincirde 329.728 bayt yer vardı, yeni derleme
+          # daha büyüktü. Hata mesajı sebebi hiç anlatmıyor ve bu, koda
+          # birkaç satır eklendiği herhangi bir gün gelebilecek bir duvar.
+          #
+          # Payı bilerek geniş tutuyoruz (64 KiB): her yükseltmede yeniden
+          # büyütmek hem ekstra işlem hem ekstra kira demek, ve bu adımın
+          # TGE günü sürpriz yapmasını istemiyoruz.
+          NEW_LEN=$(stat -c%s target/deploy/luck_distributor.so)
+          CUR_LEN=$(solana program show "$PROGRAM_ID" | awk '/Data Length/ {print $3}')
+          echo "Yeni derleme: $NEW_LEN bayt · zincirdeki alan: $CUR_LEN bayt"
+          if [ -n "$CUR_LEN" ] && [ "$NEW_LEN" -gt "$CUR_LEN" ]; then
+            EXTRA=$(( NEW_LEN - CUR_LEN + 65536 ))
+            # Genişletme, eklenen baytların kirasını PEŞİN istiyor
+            # (~0,00000696 SOL/bayt). Yetersiz bakiyede zincir
+            # "custom program error: 0x1" diyor ve sebebi hiç anlatmıyor —
+            # bu koşuda saatler kaybettirebilecek bir hata. Onun yerine
+            # burada ölçüp gerekirse airdrop istiyoruz.
+            NEED_SOL=$(awk "BEGIN{printf \"%.4f\", $EXTRA * 0.00000696 + 0.05}")
+            HAVE_SOL=$(solana balance | awk '{print $1}')
+            echo "Genişletme için gereken ~$NEED_SOL SOL · mevcut $HAVE_SOL SOL"
+            if awk "BEGIN{exit !($HAVE_SOL < $NEED_SOL)}"; then
+              echo "Bakiye yetersiz — ek airdrop deneniyor."
+              for i in 1 2 3 4 5; do
+                if solana airdrop 2; then break; fi
+                echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar."
+                sleep 20
+              done
+              solana balance
+            fi
+            echo "Alan yetersiz — $EXTRA bayt genişletiliyor."
+            solana program extend "$PROGRAM_ID" "$EXTRA"
+            solana program show "$PROGRAM_ID" | grep 'Data Length'
+          fi
+
           solana program deploy \
             --program-id "$PROGRAM_ID" \
             --upgrade-authority ~/.config/solana/id.json \
             target/deploy/luck_distributor.so
+
+      # BAŞARISIZ DEPLOY İKİ ŞEY BIRAKIYOR — ikisi de temizlenmeli.
+      #
+      # `solana program deploy` önce bir "buffer" hesabına yazıyor, sonra
+      # onu programa taşıyor. Ortada düşerse buffer hesabı zincirde,
+      # içindeki kira SOL'üyle birlikte kalıyor. Dahası CLI, o buffer'ın
+      # geçici anahtarını kurtarmak için 12 KELİMELİK SEED PHRASE'İ LOGA
+      # BASIYOR — ve bu repo'nun Actions logları herkese açık. Devnet'te
+      # bedeli birkaç test SOL'ü; MAINNET'TE gerçek para.
+      #
+      # Bu adım, deploy düştüğünde bizim yetkimizdeki tüm buffer'ları
+      # kapatıp lamport'ları geri alıyor. Sızan seed phrase de böylece
+      # işe yaramaz hale geliyor: kurtaracak bir bakiye kalmıyor.
+      - name: Başarısız deploy'dan kalan buffer'ları kapat
+        if: failure()
+        run: |
+          solana program close --buffers --bypass-warning || \
+            echo "Kapatılacak buffer bulunamadı (ya da kapatma başarısız oldu)."
+          solana balance
 
       - name: Sonucu doğrula
         working-directory: program/luck-distributor

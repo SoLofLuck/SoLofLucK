@@ -12,6 +12,7 @@ import { getMintInfo } from '../lib/raydium'
 import { getTokenMetadata, type TokenMeta } from '../lib/tokenMetadata'
 import { CoinPicker } from './CoinPicker'
 import { TokenIcon } from './TokenIcon'
+import { confirmBySignature, sendInstructions } from '../lib/sendTx'
 import {
   buildApplyPendingBalanceIx,
   buildConfigureAccountIx,
@@ -48,14 +49,15 @@ async function sendTx(
   extraSigners: Keypair[] = [],
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) throw new Error('Cüzdan bağlı değil.')
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-  tx.recentBlockhash = blockhash
-  tx.feePayer = wallet.publicKey
-  if (extraSigners.length > 0) tx.partialSign(...extraSigners)
-  const signed = await wallet.signTransaction(tx)
-  const signature = await connection.sendRawTransaction(signed.serialize())
-  await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
-  return signature
+  // Ortak, sertleştirilmiş yol (bkz. lib/sendTx.ts): öncelik ücreti,
+  // periyodik yeniden yayın, HTTP yoklamasıyla onay ve zaman aşımları.
+  return sendInstructions(
+    connection,
+    { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction },
+    tx.instructions,
+    undefined,
+    { extraSigners },
+  )
 }
 
 /**
@@ -102,8 +104,45 @@ async function sendConfidentialTransferPlan(
   let lastSig = ''
   for (let i = 0; i < signedTxs.length; i++) {
     onStatus(`Adım ${i + 1}/${signedTxs.length}: ${plan.steps[i].label}...`)
-    const signature = await connection.sendRawTransaction(signedTxs[i].serialize())
-    await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight }, 'confirmed')
+    const raw = signedTxs[i].serialize()
+    // tx-path-muaf: adımların tamamı TEK cüzdan onayında (signAllTransactions)
+    // imzalanıp ortak blockhash paylaşıyor; sendInstructions tek işlem modeli
+    // olduğu için her adım ayrı onay isterdi. Onay yine ortak HTTP
+    // yoklamasından (confirmBySignature) geçiyor — asıl mobil riski olan
+    // websocket aboneliği burada da kullanılmıyor.
+    const signature = await connection.sendRawTransaction(raw, {
+      skipPreflight: true,
+      maxRetries: 5,
+    })
+    // Onay için `confirmTransaction` DEĞİL, ortak HTTP yoklaması
+    // kullanılıyor (bkz. lib/sendTx.ts). confirmTransaction bir websocket
+    // aboneliği açıyor ve mobilde cüzdan onayı için uygulama
+    // değiştirildiğinde bu abonelik sessizce kopuyor — işlem zincire
+    // yazılmış olsa bile hata görünüyordu. Yoklama ayrıca işlemi periyodik
+    // olarak yeniden yayınlıyor.
+    //
+    // Bu akış sendInstructions'a tümüyle taşınamıyor: adımların tamamı
+    // TEK cüzdan onayında (signAllTransactions) imzalanıyor ve ortak bir
+    // blockhash paylaşıyor. sendInstructions tek işlem modeli olduğu için
+    // her adım ayrı bir onay isterdi.
+    const outcome = await confirmBySignature(
+      connection,
+      signature,
+      raw,
+      lastValidBlockHeight,
+      (s) => onStatus(`Adım ${i + 1}/${signedTxs.length}: ${s}`),
+    )
+    if (outcome.kind === 'failed') {
+      throw new Error(
+        `Adım ${i + 1} zincirde başarısız oldu: ${JSON.stringify(outcome.err)}`,
+      )
+    }
+    if (outcome.kind === 'expired') {
+      throw new Error(
+        `Adım ${i + 1} zamanında zincire yazılmadı. Önceki adımlar tamamlandıysa ` +
+          'işlemi baştan başlatmadan önce bakiyenizi kontrol edin.',
+      )
+    }
     lastSig = signature
   }
   return lastSig
