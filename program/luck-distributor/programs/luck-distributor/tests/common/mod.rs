@@ -75,7 +75,7 @@ impl MerkleTree {
         let mut levels = vec![leaves];
         while levels.last().unwrap().len() > 1 {
             let prev = levels.last().unwrap();
-            let mut next = Vec::with_capacity((prev.len() + 1) / 2);
+            let mut next = Vec::with_capacity(prev.len().div_ceil(2));
             let mut i = 0;
             while i < prev.len() {
                 if i + 1 < prev.len() {

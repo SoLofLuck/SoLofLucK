@@ -50,7 +50,7 @@ async fn ikinci_satin_almada_kira_iadesi_yok() {
     let delegate = Keypair::new();
 
     let ix = g.buy_spins_ix(&player.pubkey(), &delegate.pubkey(), 0);
-    g.send(&[ix.clone()], &[&player]).await.unwrap();
+    g.send(std::slice::from_ref(&ix), &[&player]).await.unwrap();
 
     let before = g.lamports(&player.pubkey()).await;
     g.send(&[ix], &[&player]).await.unwrap();

@@ -273,7 +273,7 @@ impl Game {
             .map(|(s, h)| (*s, solana_sdk::hash::Hash::new_from_array(*h)))
             .collect();
         // Sysvar en yeniden eskiye sıralı tutulur.
-        list.sort_by(|a, b| b.0.cmp(&a.0));
+        list.sort_by_key(|a| std::cmp::Reverse(a.0));
         let slot_hashes = SlotHashes::new(&list);
         self.ctx.set_sysvar(&slot_hashes);
     }

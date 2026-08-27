@@ -1,0 +1,43 @@
+# ---------------------------------------------------------------------------
+# cargo-deny — tedarik zinciri kapısı
+# ---------------------------------------------------------------------------
+# Bu program para tutuyor. Zincire yüklenen bytecode'un içine giren HER
+# bağımlılık, kodumuz kadar güvenilir olmak zorunda — ve bağımlılıklar kimse
+# bir şey değiştirmeden değişebiliyor.
+#
+# Nitekim luck-distributor'ın ilk deploy'u tam olarak böyle düştü:
+# zeroize_derive 1.5.0 yayınlandı, edition2024 istedi, derleme kırıldı.
+# O bir uyumluluk sorunuydu; aynı kanaldan bir GÜVENLİK açığı da gelebilir
+# ve o zaman kimse hiçbir şey fark etmez.
+
+# NOT: `advisories` kontrolü CI'da BİLGİ AMAÇLI koşuyor, sert kapı değil.
+# Sebebi: cargo-deny (cargo-audit gibi) tüm Cargo.lock'a bakıyor ve
+# Cargo.lock testler için gelen Solana validator/TLS yığınını içeriyor.
+# Oradaki bir bulgu zincire yüklenen programı ilgilendirmiyor.
+#
+# Açık kararını `npm run check:onchain-deps` veriyor: SBF derlemesine
+# GERÇEKTEN giren paket kümesini hesaplayıp açıkları ona karşı kontrol
+# ediyor. Sert kapı orası.
+#
+# `sources` ise sert kapı olarak kalıyor — aşağıdaki açıklamaya bakınız.
+[advisories]
+version = 2
+# Geri çekilmiş (yanked) bir sürüm, yayıncısının "bunu kullanmayın" dediği
+# sürümdür. Kilit dosyamızda böyle bir sürüm varsa bilmemiz gerekir.
+yanked = "deny"
+# Bilerek görmezden gelinen bildirim yok. Buraya bir şey eklenirse, YANINDA
+# NEDEN'İ de yazılmalı — "geçici olarak" eklenmiş sessiz bir istisna,
+# denetimin tamamını işe yaramaz hale getirir.
+ignore = []
+
+[sources]
+# Tüm bağımlılıklar crates.io'dan gelmeli.
+#
+# Bugün durum zaten bu (kilit dosyalarındaki git kaynaklı paket sayısı: 0).
+# Kuralı yazmamızın sebebi geleceği bağlamak: bir git bağımlılığı, işaret
+# ettiği dal ya da commit değiştiğinde derlemeye giren kodu da sessizce
+# değiştirebilir. Kilit dosyası bunu bir dereceye kadar tutar ama kaynağın
+# kendisi (bir kişinin deposu) crates.io'nun yayın disiplininden yoksundur.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

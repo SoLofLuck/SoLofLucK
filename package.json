@@ -16,7 +16,8 @@
     "check:error-codes": "node scripts/check-error-codes.mjs",
     "check:launch": "node scripts/check-launch-readiness.mjs",
     "launch-gate": "node scripts/check-launch-readiness.mjs --strict",
-    "check:runbook": "node scripts/check-runbook.mjs"
+    "check:runbook": "node scripts/check-runbook.mjs",
+    "check:onchain-deps": "node scripts/check-onchain-deps.mjs"
   },
   "dependencies": {
     "@irys/web-upload": "^0.0.15",
