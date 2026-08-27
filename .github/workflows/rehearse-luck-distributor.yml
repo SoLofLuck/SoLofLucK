@@ -70,6 +70,12 @@ jobs:
         run: node program/luck-distributor/scripts/rehearsal.mjs
 
   tam-akis:
+    # SIRAYLA, paralel DEĞİL. İki iş de aynı devnet cüzdanını kullanıyor:
+    # paralel koştuklarında ikisi de airdrop isteyip ikisi de harcıyor ve
+    # biri diğerinin parasını bitiriyor. Nitekim bitirdi — tam akış
+    # provası, dağıtım provası aynı anda koşarken "insufficient lamports"
+    # ile düştü.
+    needs: rehearse
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
