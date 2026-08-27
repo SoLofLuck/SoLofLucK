@@ -112,8 +112,24 @@ sonsuza kadar kilitli kalır.
 
 ## 6. Haftalık çekilişler
 
-Her tur için, çekilişten **önce** bir slot numarası ilan et. O slot henüz
-oluşmadığı için hash'ini kimse (biz dahil) bilemez ya da etkileyemez.
+Her tur için, çekilişten **önce** bir slot numarası ilan et — ve ilanı şu
+cümleyle yap:
+
+> *"18. tur, **412.900.000. slottan itibaren ilk bloğun** hash'iyle
+> çekilecek."*
+
+"…**itibaren ilk blok**" kısmı zorunlu. Solana'da bir slot **atlanabilir**:
+o slotun lideri blok üretmezse o numarada hiç blok olmaz ve hash'i de
+yoktur (mainnet'te %1-5, devnet'te %5-15). İlanı tek bir slota
+bağlarsan, o slot atlandığında çekilişi yapamazsın ve **yeni bir slot
+seçmek** zorunda kalırsın — yani sonucu etkileyebileceğin bir seçim
+kazanırsın ve "biz karışmadık" iddian tam da orada çöker.
+
+Script bunu zaten kural olarak uyguluyor: ilan edilen slot atlanmışsa
+ondan sonraki ilk gerçek bloğu kullanıyor, hangisini kullandığını
+ekrana yazıyor ve çıktıya `announcedSlot` (ilan edilen) ile `slot`
+(gerçekten kullanılan) olarak ayrı ayrı koyuyor. **Slot seçimini elle
+değiştirme** — kuralı değiştirmek doğrulanabilirliği bozar.
 
 Slot geçtikten sonra:
 
@@ -128,8 +144,11 @@ node scripts/build-merkle.mjs --amount 1110000000000000 winners-1.json > public/
 Sonra 5. adımdaki gibi turu aç — ama çekiliş takvimi tek kalem:
 `CLIFF_BPS=10000 PERIOD_BPS=0 PERIODS=0`.
 
-**Doğrulama:** Aynı `buyers.json` ve slot ile herkes aynı kazananları
-üretebilmeli. `winners-1.json` içindeki `howToVerify` satırını yayınla.
+**Doğrulama:** Aynı `buyers.json` ve aynı **ilan edilen** slot ile herkes
+aynı kazananları üretebilmeli — ilan edilen slot atlanmış olsa bile, çünkü
+"sonraki ilk blok" kuralı deterministik. `winners-1.json` içindeki
+`howToVerify` satırını, `announcedSlot` ve `slot` alanlarıyla birlikte
+yayınla.
 
 ---
 

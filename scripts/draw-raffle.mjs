@@ -6,11 +6,24 @@
 // Ekibin sonucu kendi lehine seçmediğini kimse bilemez.
 //
 // ÇÖZÜM: rastgeleliği ZİNCİRDEN, hem de GELECEKTEN alıyoruz. Çekilişten önce
-// bir slot numarası ilan ediliyor ("18. tur, 412.900.000. slot'un hash'iyle
-// çekilecek"). O slot henüz oluşmadığı için hash'ini kimse — biz dahil —
-// bilemez ya da etkileyemez. Slot geçtikten sonra ise hash herkese açık:
-// aynı bilet listesi + aynı slot ile bu script'i çalıştıran herkes AYNI
-// kazananları bulur.
+// bir slot numarası ilan ediliyor ("18. tur, 412.900.000. slot'tan İTİBAREN
+// ilk bloğun hash'iyle çekilecek"). O slot henüz oluşmadığı için hash'ini
+// kimse — biz dahil — bilemez ya da etkileyemez. Slot geçtikten sonra ise
+// hash herkese açık: aynı bilet listesi + aynı ilan edilen slot ile bu
+// script'i çalıştıran herkes AYNI kazananları bulur.
+//
+// "SLOT'TAN İTİBAREN İLK BLOK" — tek bir slot değil. Solana'da bir slot
+// ATLANABİLİR: o slotun lideri blok üretmezse o numarada hiç blok olmaz ve
+// hash'i de yoktur. İlan edilen tek bir slota bağlansaydık, o slot
+// atlandığında çekiliş yapılamaz ve operatör YENİ BİR SLOT SEÇMEK zorunda
+// kalırdı — yani sonucu etkileyebileceği bir seçim kazanırdı ve "biz
+// karışmadık" iddiası tam da orada çökerdi. Mainnet'te atlanma oranı
+// %1-5, devnet'te %5-15; yani bu er ya da geç olur.
+//
+// Kural bunun yerine deterministik: ilan edilen slottan başlayarak İLERİ
+// doğru ilk GERÇEKTEN VAR OLAN blok kullanılıyor. Kimsenin seçimi yok,
+// herkes aynı sonucu bulur. (Oyundaki find_slot_hash_at_or_after ile aynı
+// düzeltme.)
 //
 // Oyundaki commit-reveal ile aynı fikir (bkz. program/luck-game resolve()).
 //
@@ -76,6 +89,24 @@ export function drawWinners(entries, seed, winnerCount) {
   return winners
 }
 
+/**
+ * İlan edilen slottan İTİBAREN ilk gerçekten var olan bloğun slot numarası.
+ * Atlanan slotları geçer; hiçbiri yoksa null döner.
+ *
+ * `getBlocks(baslangic, bitis)` yerine bir geri çağırım alıyor ki ağ
+ * olmadan da sınanabilsin.
+ */
+export async function cekilisSlotunuBul(getBlocks, ilanEdilen, pencere = 500) {
+  const bloklar = await getBlocks(ilanEdilen, ilanEdilen + pencere)
+  if (!Array.isArray(bloklar)) return null
+  let enKucuk = null
+  for (const s of bloklar) {
+    if (s < ilanEdilen) continue
+    if (enKucuk === null || s < enKucuk) enKucuk = s
+  }
+  return enKucuk
+}
+
 // --- CLI ---------------------------------------------------------------------
 
 function arg(name, fallback = null) {
@@ -127,6 +158,27 @@ if (isMain && process.argv.includes('--selftest')) {
     )
   }
   console.log('Orantılılık:', ok ? 'GEÇTİ' : 'DÜŞTÜ (sapma %2den büyük)')
+
+  // --- Atlanan slot kuralı ---
+  // İlan edilen slot atlanmışsa çekiliş DURMAMALI ve operatöre slot seçme
+  // fırsatı VERMEMELİ; kural gereği sonraki ilk blok kullanılmalı.
+  let slotOk = true
+  const slotKontrol = async (ad, bloklar, ilan, beklenen) => {
+    const g = await cekilisSlotunuBul(async () => bloklar, ilan, 500)
+    const gecti = g === beklenen
+    if (!gecti) slotOk = false
+    console.log(`  ${gecti ? 'GEÇTİ' : 'DÜŞTÜ'}  ${ad}` + (gecti ? '' : ` (beklenen ${beklenen}, gelen ${g})`))
+  }
+  console.log('Atlanan slot kuralı:')
+  await slotKontrol('ilan edilen slot var → aynısı', [1000, 1001, 1002], 1000, 1000)
+  await slotKontrol('ilan edilen atlanmış → sonraki ilk blok', [1003, 1004], 1000, 1003)
+  await slotKontrol('arada boşluklar → EN KÜÇÜK olan', [1009, 1005, 1007], 1000, 1005)
+  await slotKontrol('sıra karışık gelse de en küçük', [1200, 1002, 1100], 1000, 1002)
+  await slotKontrol('ilan edilenden ÖNCEKİ bloklar sayılmaz', [998, 999, 1004], 1000, 1004)
+  await slotKontrol('hiç blok yok → null', [], 1000, null)
+  console.log('Atlanan slot kuralı:', slotOk ? 'GEÇTİ' : 'DÜŞTÜ')
+  if (!slotOk) process.exit(1)
+
   process.exit(0)
 }
 
@@ -150,14 +202,34 @@ if (isMain) {
   }
 
   const connection = new Connection(rpcUrl, 'confirmed')
-  const block = await connection.getBlock(slot, {
+  const PENCERE = Number(process.env.CEKILIS_PENCERESI ?? '500')
+  const cekilisSlotu = await cekilisSlotunuBul(
+    (a, b) => connection.getBlocks(a, b),
+    slot,
+    PENCERE,
+  )
+  if (cekilisSlotu === null) {
+    console.error(
+      `${slot}. slottan itibaren ${PENCERE} slot içinde hiç blok bulunamadı.\n` +
+        'Slot henüz oluşmamış olabilir, ya da bu RPC o kadar geriye bakmıyordur\n' +
+        '(arşiv düğümü gerekebilir). Slot seçimini DEĞİŞTİRMEYİN — kuralı\n' +
+        'değiştirmek çekilişin doğrulanabilirliğini bozar.',
+    )
+    process.exit(1)
+  }
+  if (cekilisSlotu !== slot) {
+    process.stderr.write(
+      `İlan edilen ${slot}. slot atlanmış (o slotta blok üretilmemiş).\n` +
+        `Kural gereği ondan sonraki ilk blok kullanılıyor: ${cekilisSlotu}\n\n`,
+    )
+  }
+  const block = await connection.getBlock(cekilisSlotu, {
     maxSupportedTransactionVersion: 0,
     transactionDetails: 'none',
     rewards: false,
   })
   if (!block) {
-    console.error(`${slot}. slot bulunamadı. Slot henüz oluşmamış olabilir ya da RPC o kadar` +
-      ' geriye bakmıyordur (arşiv düğümü gerekebilir).')
+    console.error(`${cekilisSlotu}. slot getBlocks'ta göründü ama okunamadı — RPC tutarsız.`)
     process.exit(1)
   }
 
@@ -168,7 +240,8 @@ if (isMain) {
   const winners = drawWinners(entries, seed, winnerCount)
 
   process.stderr.write(
-    `Slot: ${slot}\nBlockhash: ${block.blockhash}\n` +
+    `İlan edilen slot: ${slot}\nÇekiliş slotu: ${cekilisSlotu}\n` +
+      `Blockhash: ${block.blockhash}\n` +
       `Katılımcı: ${entries.length} · toplam bilet: ${totalTickets}\n` +
       `Kazanan: ${winners.length}\n\n`,
   )
@@ -176,7 +249,11 @@ if (isMain) {
   console.log(
     JSON.stringify(
       {
-        slot,
+        // İlan edilen slot: çekilişten ÖNCE duyurulan sayı.
+        announcedSlot: slot,
+        // Gerçekten kullanılan blok: ilan edilenden itibaren ilk var olan.
+        // Eşitse ilan edilen slot atlanmamış demektir.
+        slot: cekilisSlotu,
         blockhash: block.blockhash,
         totalTickets,
         participants: entries.length,
