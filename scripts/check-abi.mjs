@@ -67,6 +67,7 @@ try {
       'tsc',
       'src/lib/luckClaim.ts',
       'src/lib/luckGame.ts',
+      'src/lib/sendTx.ts',
       '--outDir', out,
       '--module', 'esnext',
       '--target', 'es2022',
@@ -470,6 +471,31 @@ for (const v of oyunVektorleri) {
   }
 }
 
+
+// --- Compute limit kararı ---------------------------------------------------
+//
+// Öncelik ücreti İSTENEN compute limitiyle çarpıldığı için limiti körlemesine
+// tavana çekmek her küçük işlemi pahalılaştırır; ama ölçüm yapılamadığında
+// küçük bir limite düşmek de yanlış — "bakiyemi spin'e dönüştür" akışı tek
+// işleme 20 adede kadar buy_spins koyabiliyor ve 300.000'i aşabiliyor. O
+// durumda işlem zincirde "exceeded CUs" ile düşer ve kullanıcının gördüğü
+// hata sebebi hiç anlatmaz.
+//
+// Bu kararı bir kez YANLIŞ vermiştim (ölçüm başarısızsa 300.000'e
+// düşüyordu), yani RPC'nin salladığı anda düzeltmek için var olduğu hata
+// geri geliyordu. Karar artık saf bir fonksiyonda ve burada gerçek kod
+// çağrılarak sınanıyor.
+{
+  const gonder = await import(pathToFileURL(join(out, 'lib/sendTx.js')).href)
+  const TAVAN = 1_400_000
+  const TABAN = 300_000
+  kontrol('compute: ölçüm yok → TAVAN', gonder.hesaplaComputeLimit(null), TAVAN)
+  kontrol('compute: ölçüm 0 → TAVAN', gonder.hesaplaComputeLimit(0), TAVAN)
+  kontrol('compute: küçük işlem tabanın altında kalmıyor', gonder.hesaplaComputeLimit(10_000), TABAN)
+  // 400.000 × 1,3 = 520.000 — pay ekleniyor.
+  kontrol('compute: ölçüme %30 pay ekleniyor', gonder.hesaplaComputeLimit(400_000), 520_000)
+  kontrol('compute: tavan aşılmıyor', gonder.hesaplaComputeLimit(1_300_000), TAVAN)
+}
 
 // --- Hesapların bayt düzeni: Claim sekmesinin GERÇEK okuyucuları ------------
 //

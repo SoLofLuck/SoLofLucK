@@ -53,12 +53,42 @@ const PRIORITY_FEE_MICRO_LAMPORTS = 5_000
 // Çözüm: önce yüksek bir limitle SİMÜLE edip gerçekte kaç birim
 // harcandığını okuyoruz, sonra onun üstüne pay ekleyip limiti öyle
 // koyuyoruz. Böylece küçük işlemler ucuz kalıyor, büyük partiler de
-// geçiyor. Simülasyon sonuç vermezse güvenli tarafa düşüyoruz.
+// geçiyor.
+//
+// SİMÜLASYON SONUÇ VERMEZSE NE OLACAK — burada bir kez yanlış karar
+// vermiştim. Ölçüm başarısızsa 300.000'e düşüyordu; yani RPC'nin
+// sallandığı anda (simülasyon "BlockhashNotFound" dönebiliyor, nitekim
+// dönüyor) tam da bu değişikliğin düzeltmek için var olduğu 20 talimatlık
+// parti yeniden "exceeded CUs" ile düşerdi. "Güvenli taraf" küçük limit
+// değil, BÜYÜK limit: ölçemediğimizde tavanı istiyoruz.
+//
+// Maliyeti önemsiz: öncelik ücreti istenen limitle çarpılıyor, tavan
+// 1.400.000 × 5.000 µlamport / 10^6 = 7.000 lamport (0,000007 SOL).
+// Düşen bir işlemin maliyeti ise hem taban ücret hem de kullanıcının
+// yeniden denemesi.
 const COMPUTE_UNIT_LIMIT_FALLBACK = 300_000
 const COMPUTE_UNIT_LIMIT_MAX = 1_400_000
 /** Ölçülen tüketimin üstüne bırakılan pay — zincirdeki durum simülasyon
  *  anındakinden biraz farklı olabilir (ör. hesap yeni oluşmuş olabilir). */
 const COMPUTE_UNIT_HEADROOM = 1.3
+
+/**
+ * Simülasyonun okuduğu tüketimden istenecek compute limitini hesaplar.
+ *
+ * `consumed === null` (ölçüm yapılamadı) ya da 0 ise TAVAN isteniyor —
+ * yukarıdaki açıklamaya bakınız. Ölçüm varsa pay eklenip taban ile tavan
+ * arasına sıkıştırılıyor.
+ *
+ * Ayrı bir fonksiyon olmasının sebebi sınanabilirlik: scripts/check-abi.mjs
+ * bu kararı gerçek kodu çağırarak doğruluyor.
+ */
+export function hesaplaComputeLimit(consumed: number | null): number {
+  if (consumed === null || consumed <= 0) return COMPUTE_UNIT_LIMIT_MAX
+  return Math.min(
+    COMPUTE_UNIT_LIMIT_MAX,
+    Math.max(COMPUTE_UNIT_LIMIT_FALLBACK, Math.ceil(consumed * COMPUTE_UNIT_HEADROOM)),
+  )
+}
 
 export interface SendOptions {
   /**
@@ -381,7 +411,8 @@ export async function sendInstructions(
   const attempted: string[] = []
   const maxCycles = 3
   // İlk turda ölçülüp sonraki turlarda yeniden kullanılıyor.
-  let computeUnitLimit = COMPUTE_UNIT_LIMIT_FALLBACK
+  // Ölçüm yapılana kadar tavan; bkz. hesaplaComputeLimit açıklaması.
+  let computeUnitLimit = COMPUTE_UNIT_LIMIT_MAX
 
   for (let cycle = 0; cycle < maxCycles; cycle++) {
     const alreadyLanded = await findLandedSignature(connection, attempted)
@@ -416,12 +447,7 @@ export async function sendInstructions(
       onStatus?.('İşlem kontrol ediliyor...')
       await assertFeePayerFunded(connection, signer.publicKey)
       const consumed = await assertSimulationPasses(connection, tx)
-      if (consumed !== null && consumed > 0) {
-        computeUnitLimit = Math.min(
-          COMPUTE_UNIT_LIMIT_MAX,
-          Math.max(COMPUTE_UNIT_LIMIT_FALLBACK, Math.ceil(consumed * COMPUTE_UNIT_HEADROOM)),
-        )
-      }
+      computeUnitLimit = hesaplaComputeLimit(consumed)
       // Ölçülen limitle yeniden kuruyoruz: tavan limitle göndermek işlemi
       // düşürmezdi ama öncelik ücreti İSTENEN limitle çarpıldığı için
       // her işlemi gereksizce pahalılaştırırdı.
