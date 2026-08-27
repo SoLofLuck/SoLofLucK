@@ -33,10 +33,32 @@ export interface TxSigner {
 // İşlemlere eklenen küçük öncelik ücreti. Ağ yoğunken önceliksiz işlemler
 // lider tarafından sessizce düşürülüyor ve blockhash süresi doluyor —
 // kullanıcının gördüğü "işlem zincire yazılmadı" hatasının sebeplerinden
-// biri buydu. Sınır tanımlı olduğu için maliyet üst sınırı belli:
-// 300.000 CU x 5.000 microLamport = 1.500 lamport (~0,0000015 SOL).
-const COMPUTE_UNIT_LIMIT = 300_000
+// biri buydu.
 const PRIORITY_FEE_MICRO_LAMPORTS = 5_000
+
+// İşlem birimi (compute unit) limiti ÖLÇÜLEREK belirleniyor, sabit
+// değil.
+//
+// Sabit 300.000 kullanılıyordu ve bu, tek paketlik alımlar için fazlasıyla
+// yeterli ama "bakiyemi spin'e dönüştür" akışı için DEĞİL: o akış tek
+// işleme 20 adede kadar buy_spins koyabiliyor ve her biri birkaç CPI
+// transferi yapıyor. Toplam sessizce 300.000'i aşarsa işlem zincirde
+// "exceeded CUs" ile düşer — üstelik kullanıcının gördüğü hata sebebi
+// hiç anlatmaz.
+//
+// Limiti körlemesine yükseltmek de doğru değil: öncelik ücreti İSTENEN
+// limitle çarpılıyor, yani 1,4 milyon istemek her küçük işlemin ücretini
+// gereksizce büyütürdü.
+//
+// Çözüm: önce yüksek bir limitle SİMÜLE edip gerçekte kaç birim
+// harcandığını okuyoruz, sonra onun üstüne pay ekleyip limiti öyle
+// koyuyoruz. Böylece küçük işlemler ucuz kalıyor, büyük partiler de
+// geçiyor. Simülasyon sonuç vermezse güvenli tarafa düşüyoruz.
+const COMPUTE_UNIT_LIMIT_FALLBACK = 300_000
+const COMPUTE_UNIT_LIMIT_MAX = 1_400_000
+/** Ölçülen tüketimin üstüne bırakılan pay — zincirdeki durum simülasyon
+ *  anındakinden biraz farklı olabilir (ör. hesap yeni oluşmuş olabilir). */
+const COMPUTE_UNIT_HEADROOM = 1.3
 
 export interface SendOptions {
   /**
@@ -233,7 +255,10 @@ export async function confirmBySignature(
  * Simülasyon imza gerektirmiyor, ücretsiz ve hızlı — bu yüzden cüzdanı
  * hiç rahatsız etmeden önce çalıştırıyoruz.
  */
-async function assertSimulationPasses(connection: Connection, tx: Transaction): Promise<void> {
+async function assertSimulationPasses(
+  connection: Connection,
+  tx: Transaction,
+): Promise<number | null> {
   let result
   try {
     result = await withRetry(
@@ -245,11 +270,12 @@ async function assertSimulationPasses(connection: Connection, tx: Transaction): 
     // Simülasyonun KENDİSİ başarısız olduysa (RPC hatası, zaman aşımı) yolu
     // tıkamıyoruz — geçici olabilir ve kullanıcıyı gerçek bir sorun olmadan
     // durdurmak istemeyiz.
-    return
+    return null
   }
 
   const err = result.value.err
-  if (!err) return
+  const consumed = result.value.unitsConsumed ?? null
+  if (!err) return consumed
 
   const raw = JSON.stringify(err)
   const logs = (result.value.logs ?? []).join('\n')
@@ -280,6 +306,7 @@ async function assertSimulationPasses(connection: Connection, tx: Transaction): 
   // düzeltebileceği net sorunları erken yakalamak; şüpheli her durumda
   // işlemi durdurmak değil.
   console.warn('Simülasyon sonuçsuz, işleme devam ediliyor:', raw, logs)
+  return consumed
 }
 
 /**
@@ -302,7 +329,7 @@ async function assertFeePayerFunded(connection: Connection, feePayer: PublicKey)
   }
 
   // Taban işlem ücreti (5.000) + öncelik ücreti üst sınırı + küçük bir pay.
-  const needed = 5_000 + (COMPUTE_UNIT_LIMIT * PRIORITY_FEE_MICRO_LAMPORTS) / 1_000_000 + 5_000
+  const needed = 5_000 + (COMPUTE_UNIT_LIMIT_MAX * PRIORITY_FEE_MICRO_LAMPORTS) / 1_000_000 + 5_000
   if (lamports >= needed) return
 
   const sol = (lamports / 1_000_000_000).toFixed(9).replace(/0+$/, '').replace(/\.$/, '')
@@ -353,6 +380,8 @@ export async function sendInstructions(
 
   const attempted: string[] = []
   const maxCycles = 3
+  // İlk turda ölçülüp sonraki turlarda yeniden kullanılıyor.
+  let computeUnitLimit = COMPUTE_UNIT_LIMIT_FALLBACK
 
   for (let cycle = 0; cycle < maxCycles; cycle++) {
     const alreadyLanded = await findLandedSignature(connection, attempted)
@@ -360,10 +389,16 @@ export async function sendInstructions(
 
     // Öncelik ücreti talimatları en başa: ağ yoğunken önceliksiz işlemler
     // lider tarafından sessizce düşürülüyor ve blockhash süresi doluyor.
-    const tx = new Transaction()
-      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNIT_LIMIT }))
-      .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPORTS }))
-      .add(...ixs)
+    // İlk turda limiti ölçmek için TAVANDAN başlıyoruz: düşük bir limitle
+    // simüle etmek, gerçekte sığacak bir işlemi "exceeded CUs" ile
+    // düşürüp yanlış teşhis verirdi.
+    const buildTx = (units: number) =>
+      new Transaction()
+        .add(ComputeBudgetProgram.setComputeUnitLimit({ units }))
+        .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_FEE_MICRO_LAMPORTS }))
+        .add(...ixs)
+
+    let tx = buildTx(cycle === 0 ? COMPUTE_UNIT_LIMIT_MAX : computeUnitLimit)
 
     onStatus?.(cycle === 0 ? 'İşlem hazırlanıyor...' : `İşlem yeniden hazırlanıyor (${cycle + 1}. deneme)...`)
     // 'confirmed' ile mümkün olan en TAZE blockhash'i alıyoruz; daha eski
@@ -380,7 +415,19 @@ export async function sendInstructions(
     if (cycle === 0) {
       onStatus?.('İşlem kontrol ediliyor...')
       await assertFeePayerFunded(connection, signer.publicKey)
-      await assertSimulationPasses(connection, tx)
+      const consumed = await assertSimulationPasses(connection, tx)
+      if (consumed !== null && consumed > 0) {
+        computeUnitLimit = Math.min(
+          COMPUTE_UNIT_LIMIT_MAX,
+          Math.max(COMPUTE_UNIT_LIMIT_FALLBACK, Math.ceil(consumed * COMPUTE_UNIT_HEADROOM)),
+        )
+      }
+      // Ölçülen limitle yeniden kuruyoruz: tavan limitle göndermek işlemi
+      // düşürmezdi ama öncelik ücreti İSTENEN limitle çarpıldığı için
+      // her işlemi gereksizce pahalılaştırırdı.
+      tx = buildTx(computeUnitLimit)
+      tx.recentBlockhash = blockhash
+      tx.feePayer = signer.publicKey
     }
 
     // Ek imzacılar cüzdandan ÖNCE imzalamalı: cüzdan adaptörleri mevcut

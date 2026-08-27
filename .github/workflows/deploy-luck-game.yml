@@ -239,6 +239,25 @@ jobs:
         if: inputs.first_deploy != true
         working-directory: program/luck-game
         run: |
+          # Bakiyeyi verilen tutarin ustunde tutar; yetersizse airdrop dener.
+          # Devnet faucet'i IP basina sinirli oldugu icin tek denemeye
+          # guvenmiyoruz.
+          bakiyeyi_sagla() {
+            local gereken="$1" ad="$2" mevcut
+            mevcut=$(solana balance | awk '{print $1}')
+            echo "$ad icin gereken ~$gereken SOL - mevcut $mevcut SOL"
+            awk "BEGIN{exit !($mevcut < $gereken)}" || return 0
+            echo "Bakiye yetersiz - airdrop deneniyor."
+            for i in 1 2 3 4 5 6; do
+              solana airdrop 2 || true
+              mevcut=$(solana balance | awk '{print $1}')
+              awk "BEGIN{exit !($mevcut >= $gereken)}" && break
+              echo "Deneme $i sonrasi $mevcut SOL, 20sn sonra tekrar."
+              sleep 20
+            done
+            solana balance
+          }
+
           if ! solana program show "$PROGRAM_ID" >/dev/null 2>&1; then
             echo "::error::$PROGRAM_ID adresinde kurulu bir program yok." \
                  "Yeni bir program açmak istiyorsanız bu workflow'u first_deploy=true ile çalıştırın."
@@ -270,22 +289,20 @@ jobs:
             # "custom program error: 0x1" diyor ve sebebi hiç anlatmıyor —
             # bu koşuda saatler kaybettirebilecek bir hata. Onun yerine
             # burada ölçüp gerekirse airdrop istiyoruz.
-            NEED_SOL=$(awk "BEGIN{printf \"%.4f\", $EXTRA * 0.00000696 + 0.05}")
-            HAVE_SOL=$(solana balance | awk '{print $1}')
-            echo "Genişletme için gereken ~$NEED_SOL SOL · mevcut $HAVE_SOL SOL"
-            if awk "BEGIN{exit !($HAVE_SOL < $NEED_SOL)}"; then
-              echo "Bakiye yetersiz — ek airdrop deneniyor."
-              for i in 1 2 3 4 5; do
-                if solana airdrop 2; then break; fi
-                echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar."
-                sleep 20
-              done
-              solana balance
-            fi
+            bakiyeyi_sagla "$(awk "BEGIN{printf \"%.4f\", $EXTRA * 0.00000696 + 0.05}")" "genisletme"
             echo "Alan yetersiz — $EXTRA bayt genişletiliyor."
             solana program extend "$PROGRAM_ID" "$EXTRA"
             solana program show "$PROGRAM_ID" | grep 'Data Length'
           fi
+
+          # Deploy'un KENDISI de para istiyor ve genisletmeden AYRI bir
+          # kalem: `solana program deploy` once programin tamamini gecici bir
+          # "buffer" hesabina yaziyor, o hesabin kirasi da program boyutu
+          # kadar (~2,3 SOL). Genisletme bakiyeyi tam bu tutarin altina
+          # dusurdugu icin deploy "insufficient funds for spend" ile
+          # dusmustu - genisletme BASARILI olduktan SONRA, yani en can sikici
+          # noktada.
+          bakiyeyi_sagla "$(awk "BEGIN{printf \"%.4f\", $NEW_LEN * 0.00000696 + 0.2}")" "deploy"
 
           solana program deploy \
             --program-id "$PROGRAM_ID" \

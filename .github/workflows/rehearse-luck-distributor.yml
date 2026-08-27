@@ -68,3 +68,52 @@ jobs:
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
           RPC_URL: https://api.devnet.solana.com
         run: node program/luck-distributor/scripts/rehearsal.mjs
+
+  tam-akis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Bağımlılıkları kur
+        run: npm ci
+
+      - name: Solana CLI kurulumu
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Deploy anahtarını yaz
+        run: |
+          mkdir -p ~/.config/solana
+          cat > ~/.config/solana/id.json <<'KEYFILE'
+          ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
+          KEYFILE
+          solana config set --url devnet --keypair ~/.config/solana/id.json
+
+      - name: Devnet SOL
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if solana airdrop 2; then break; fi
+            echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar."
+            sleep 20
+          done
+          solana balance
+
+      # TAM AKIŞ: katkı → alıcı listesi → merkle → dağıtıcı → claim
+      #
+      # Yukarıdaki prova yalnızca dağıtım tarafını kanıtlıyor. Ortadaki iki
+      # halka (presale-buyers.mjs'in zincir okuması ve build-merkle.mjs'in
+      # o çıktıyı okuması) gerçek zincirde hiç koşmamıştı — ve bu provayı
+      # yazarken tam orada iki hata çıktı: presale yolu argüman ayrıştırma
+      # hatası yüzünden hiç çalışmıyordu, ve birimler 10^9 kat yanlıştı.
+      - name: Tam akış provası
+        env:
+          PROGRAM_ID: ${{ inputs.program_id }}
+          ROUND_ID: '901'
+          KEYPAIR_PATH: /home/runner/.config/solana/id.json
+          RPC_URL: https://api.devnet.solana.com
+        run: node program/luck-distributor/scripts/full-flow-rehearsal.mjs

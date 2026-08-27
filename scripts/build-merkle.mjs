@@ -23,6 +23,8 @@
 //   node scripts/build-merkle.mjs buyers.json > presale-merkle.json
 //
 //   # çekiliş turu (kazanan adresleri, herkese eşit ödül)
+//   # DİKKAT: --amount EN KÜÇÜK BİRİM, tam token değil.
+//   # 1.110.000 $LUCK, 9 ondalıkta = 1110000 × 10^9 = 1110000000000000
 //   node scripts/build-merkle.mjs --amount 1110000000000000 winners.txt > round-1.json
 //
 //   # iki uygulamanın uyuştuğunu doğrula
@@ -121,7 +123,13 @@ export function verify(proof, root, leaf) {
 function parseEntries(argv) {
   const amountFlagIdx = argv.indexOf('--amount')
   const fixedAmount = amountFlagIdx >= 0 ? argv[amountFlagIdx + 1] : null
-  const file = argv.filter((a, i) => !a.startsWith('--') && i !== amountFlagIdx + 1).at(-1)
+  // `--amount` YOKKEN indeks -1 oluyordu ve `amountFlagIdx + 1` de 0 —
+  // yani filtre, dosya adı tek argümansa TAM ONU eliyordu. Sonuç:
+  // "Girdi dosyası verilmedi". Presale yolu (JSON, --amount'suz) bu
+  // yüzden hiç çalışmamış; yalnızca --amount verilen çekiliş yolu
+  // çalışıyordu.
+  const amountValueIdx = amountFlagIdx >= 0 ? amountFlagIdx + 1 : -1
+  const file = argv.filter((a, i) => !a.startsWith('--') && i !== amountValueIdx).at(-1)
   if (!file) throw new Error('Girdi dosyası verilmedi.')
 
   const raw = readFileSync(file, 'utf8')
@@ -130,7 +138,27 @@ function parseEntries(argv) {
   if (raw.trimStart().startsWith('{')) {
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed.buyers)) throw new Error('JSON içinde "buyers" dizisi yok.')
-    return parsed.buyers.map((b) => ({ address: b.address, amount: BigInt(b.tokens) }))
+    // `baseUnits` KULLANILIYOR, `tokens` DEĞİL — ve bu ayrım kritik.
+    //
+    // `tokens` insan için: tam token sayısı (ör. 350000). `baseUnits`
+    // zincir için: en küçük birim, yani tokens × 10^decimals. Merkle
+    // yaprağına giren sayı doğrudan claim talimatına gidiyor ve SPL token
+    // programı EN KÜÇÜK BİRİM bekliyor.
+    //
+    // Burada bir zamanlar `b.tokens` okunuyordu. 9 ondalıkta aradaki fark
+    // 1.000.000.000 kat: her alıcı hak ettiğinin MİLYARDA BİRİNİ alırdı.
+    // İşlemler başarıyla geçer, hiçbir hata görünmez, ve bunu ancak
+    // alıcılar cüzdanlarına bakınca fark ederdi.
+    return parsed.buyers.map((b) => {
+      if (b.baseUnits === undefined) {
+        throw new Error(
+          `Alıcı kaydında "baseUnits" yok (${b.address}). Alıcı listesi eski ` +
+            'sürüm presale-buyers.mjs ile üretilmiş olabilir — yeniden üretin. ' +
+            '"tokens" alanı TAM TOKEN sayısıdır ve merkle yaprağına konamaz.',
+        )
+      }
+      return { address: b.address, amount: BigInt(b.baseUnits) }
+    })
   }
 
   if (!fixedAmount) {
@@ -194,6 +222,70 @@ const SELFTEST = [
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (isMain && process.argv.includes('--selftest')) {
+  // --- Girdi ayrıştırma ve birim testleri --------------------------------
+  // İkisi de GERÇEK hatalardan geliyor; ikisi de sessizdi.
+  const { mkdtempSync, writeFileSync: yaz } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const gecici = mkdtempSync(join(tmpdir(), 'merkle-selftest-'))
+
+  // 1) `--amount` YOKKEN dosya adı okunabiliyor mu?
+  //    Ayrıştırıcı, bayrak yokken indeks -1 olduğu için `-1 + 1 = 0`
+  //    hesabıyla İLK argümanı eliyordu — tek argüman dosya adı olduğunda
+  //    tam onu. Presale yolu bu yüzden hiç çalışmamıştı.
+  const presaleDosyasi = join(gecici, 'buyers.json')
+  yaz(
+    presaleDosyasi,
+    JSON.stringify({
+      buyers: [
+        { address: SELFTEST[0].address, tokens: 350_000, baseUnits: '350000000000000' },
+        { address: SELFTEST[1].address, tokens: 175_000, baseUnits: '175000000000000' },
+      ],
+    }),
+  )
+  let presaleGirdileri
+  try {
+    presaleGirdileri = parseEntries([presaleDosyasi])
+  } catch (err) {
+    console.error(
+      `SELFTEST DÜŞTÜ: --amount olmadan girdi dosyası okunamadı — ${err.message}`,
+    )
+    process.exit(1)
+  }
+  if (presaleGirdileri.length !== 2) {
+    console.error(
+      `SELFTEST DÜŞTÜ: ${presaleGirdileri.length} alıcı okundu, 2 olmalıydı.`,
+    )
+    process.exit(1)
+  }
+
+  // 2) Merkle yaprağına EN KÜÇÜK BİRİM giriyor mu, tam token değil?
+  //    9 ondalıkta aradaki fark 1.000.000.000 kat: yanlış olan her
+  //    alıcıya hak ettiğinin milyarda birini öderdi ve hiçbir hata
+  //    görünmezdi.
+  if (presaleGirdileri[0].amount !== 350_000_000_000_000n) {
+    console.error(
+      `SELFTEST DÜŞTÜ: yaprak miktarı ${presaleGirdileri[0].amount}, ` +
+        'olması gereken 350000000000000 (en küçük birim).',
+    )
+    process.exit(1)
+  }
+
+  // 3) `baseUnits` içermeyen ESKİ biçimli liste reddediliyor mu?
+  const eskiDosya = join(gecici, 'eski.json')
+  yaz(eskiDosya, JSON.stringify({ buyers: [{ address: SELFTEST[0].address, tokens: 350_000 }] }))
+  let reddedildi = false
+  try {
+    parseEntries([eskiDosya])
+  } catch {
+    reddedildi = true
+  }
+  if (!reddedildi) {
+    console.error('SELFTEST DÜŞTÜ: baseUnits içermeyen liste sessizce kabul edildi.')
+    process.exit(1)
+  }
+  console.log('Girdi ayrıştırma ve birim kontrolleri: GEÇTİ\n')
+
   const out = build(SELFTEST)
   console.log('Sabit vektör kökü (Rust testi bu değeri beklemeli):')
   console.log(out.root)

@@ -66,6 +66,8 @@ const OPS_WALLET = process.env.OPS_WALLET ?? readConfigValue('PRESALE_OPS_WALLET
 const TOKENS_PER_SOL = Number(process.env.TOKENS_PER_SOL || readConfigValue('PRESALE_TOKENS_PER_SOL', 350000))
 const TICKET_UNIT_SOL = Number(process.env.TICKET_UNIT_SOL || readConfigValue('PRESALE_TICKET_UNIT_SOL', 0.5))
 const FORMAT = (process.env.FORMAT || 'json').toLowerCase()
+// $LUCK ondalık basamağı — zincirdeki en küçük birime çevirmek için.
+const DECIMALS = Number(process.env.DECIMALS || readConfigValue('DEFAULT_DECIMALS', 9))
 
 const startMs = process.env.START_ISO ? Date.parse(process.env.START_ISO) : null
 const endMs = process.env.END_ISO ? Date.parse(process.env.END_ISO) : null
@@ -279,7 +281,24 @@ const rows = [...buyers.entries()]
       address,
       lamports: e.lamports,
       sol: Number(sol.toFixed(9)),
+      // `tokens` İNSAN İÇİN: tam token sayısı (ör. 350000).
       tokens: Math.floor(sol * TOKENS_PER_SOL),
+      // `baseUnits` ZİNCİR İÇİN: SPL token'ın en küçük birimi, yani
+      // tokens × 10^decimals. Merkle yaprağına ve claim talimatına GİREN
+      // sayı budur.
+      //
+      // Bu ayrım bir kez sessizce kaybolmuştu: build-merkle.mjs `tokens`
+      // alanını en küçük birim sanıyordu ve 9 ondalıkta aradaki fark
+      // 1.000.000.000 kat. Yani her alıcı hak ettiğinin MİLYARDA BİRİNİ
+      // alırdı — işlemler başarıyla geçer, kimse hata görmez.
+      //
+      // Alan adına birimi yazmak, aynı hatanın tekrar yapılmasını
+      // zorlaştırıyor. Hesap BigInt ile: 271.950.000 × 10^9 sayısı
+      // Number'ın güvenli aralığını (2^53) aşıyor.
+      baseUnits: (
+        (BigInt(e.lamports) * BigInt(TOKENS_PER_SOL) * BigInt(10) ** BigInt(DECIMALS)) /
+        BigInt(LAMPORTS_PER_SOL)
+      ).toString(),
       tickets: Math.floor((sol + 1e-9) / TICKET_UNIT_SOL),
       txCount: e.txCount,
       firstAt: e.firstAt,
@@ -293,9 +312,10 @@ const totals = rows.reduce(
   (acc, r) => ({
     lamports: acc.lamports + r.lamports,
     tokens: acc.tokens + r.tokens,
+    baseUnits: acc.baseUnits + BigInt(r.baseUnits),
     tickets: acc.tickets + r.tickets,
   }),
-  { lamports: 0, tokens: 0, tickets: 0 },
+  { lamports: 0, tokens: 0, baseUnits: 0n, tickets: 0 },
 )
 
 process.stderr.write(
@@ -307,9 +327,9 @@ process.stderr.write(
 
 // --- 4) Çıktı ---------------------------------------------------------------
 if (FORMAT === 'csv') {
-  console.log('address,sol,tokens,tickets,txCount,firstAt,lastAt')
+  console.log('address,sol,tokens,baseUnits,tickets,txCount,firstAt,lastAt')
   for (const r of rows) {
-    console.log([r.address, r.sol, r.tokens, r.tickets, r.txCount, r.firstAt ?? '', r.lastAt ?? ''].join(','))
+    console.log([r.address, r.sol, r.tokens, r.baseUnits, r.tickets, r.txCount, r.firstAt ?? '', r.lastAt ?? ''].join(','))
   }
 } else {
   console.log(
@@ -326,6 +346,7 @@ if (FORMAT === 'csv') {
           buyers: rows.length,
           sol: Number((totals.lamports / LAMPORTS_PER_SOL).toFixed(9)),
           tokens: totals.tokens,
+          baseUnits: totals.baseUnits.toString(),
           tickets: totals.tickets,
         },
         buyers: rows,

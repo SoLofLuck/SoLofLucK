@@ -6,6 +6,7 @@ import { NETWORKS } from '../../config'
 import {
   bytesToHex,
   claim,
+  fetchChainTime,
   fetchClaimed,
   fetchDistributor,
   fetchMerkleFile,
@@ -60,12 +61,34 @@ export function ClaimTab({ network }: Props) {
   const [status, setStatus] = useState('')
   const [busyRound, setBusyRound] = useState<number | null>(null)
   const [lastSignature, setLastSignature] = useState('')
+  // Saat ZİNCİRDEN geliyor, tarayıcıdan değil. Açılma takvimi zincirin
+  // saatine göre işlediği için, saati ileri olan bir kullanıcı açılmamış
+  // bir dilimi "çekilebilir" görür ve işlemi reddedilir — hem de tam
+  // herkesin çekmeye çalıştığı dakikada.
+  //
+  // Zincire saniyede bir sormuyoruz: bir kez fark (offset) ölçülüyor,
+  // sonra sayaç tarayıcı saatiyle akıp o farkı ekliyor. Böylece geri
+  // sayım akıcı kalırken sayı zincire bağlı oluyor.
+  const [clockOffset, setClockOffset] = useState(0)
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+
+  useEffect(() => {
+    let iptal = false
+    fetchChainTime(connection).then((zincir) => {
+      if (iptal || zincir === null) return
+      setClockOffset(zincir - Math.floor(Date.now() / 1000))
+    })
+    return () => {
+      iptal = true
+    }
+  }, [connection])
 
   useEffect(() => {
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 30_000)
     return () => clearInterval(id)
   }, [])
+
+  const chainNow = now + clockOffset
 
   const refresh = useCallback(async () => {
     if (!configured || !wallet.publicKey) {
@@ -95,7 +118,7 @@ export function ClaimTab({ network }: Props) {
 
         const total = BigInt(entry.amount)
         const claimedSoFar = await fetchClaimed(connection, id, wallet.publicKey)
-        const unlocked = unlockedAmount(state, total, now)
+        const unlocked = unlockedAmount(state, total, chainNow)
         found.push({
           id,
           label: roundLabel(id),
@@ -104,7 +127,7 @@ export function ClaimTab({ network }: Props) {
           claimed: claimedSoFar,
           unlocked,
           claimable: unlocked > claimedSoFar ? unlocked - claimedSoFar : BigInt(0),
-          nextUnlock: nextUnlockTs(state, now),
+          nextUnlock: nextUnlockTs(state, chainNow),
           rootMatches: bytesToHex(state.merkleRoot) === file.root,
         })
       }
@@ -115,14 +138,14 @@ export function ClaimTab({ network }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [configured, wallet.publicKey, connection, now])
+  }, [configured, wallet.publicKey, connection, chainNow])
 
   useEffect(() => {
     void refresh()
-    // `now` her 30 saniyede değişiyor ama her değişimde zinciri yeniden
-    // sorgulamak gereksiz yük olurdu; bilerek yalnızca cüzdan/bağlantı
-    // değişince yeniliyoruz. Geri sayım metni zaten `now` ile render'da
-    // güncelleniyor.
+    // `chainNow` her 30 saniyede değişiyor ama her değişimde zinciri
+    // yeniden sorgulamak gereksiz yük olurdu; bilerek yalnızca
+    // cüzdan/bağlantı değişince yeniliyoruz. Geri sayım metni zaten
+    // `chainNow` ile render'da güncelleniyor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configured, wallet.publicKey, connection])
 
@@ -237,7 +260,7 @@ export function ClaimTab({ network }: Props) {
           {r.nextUnlock !== null && (
             <div className="result-card__row">
               <span>Sonraki açılış</span>
-              <strong>{formatCountdown(r.nextUnlock - now)}</strong>
+              <strong>{formatCountdown(r.nextUnlock - chainNow)}</strong>
             </div>
           )}
 

@@ -77,6 +77,19 @@ function friendlyErrorMessage(err: unknown): string {
   if (/NoSpinsRemaining|0x1776/i.test(message)) {
     return 'Spin hakkın kalmadı — önce bir paket satın al.'
   }
+  // Sonuç açma zamanlamasıyla ilgili üç hata. İlk ikisi geçici: zincir
+  // birkaç saniye içinde ilerleyince kendiliğinden düzeliyor ve otomatik
+  // açma zaten tekrar deniyor. Kullanıcıya "bir şeyler bozuldu" gibi
+  // görünmemeleri gerekiyor.
+  if (/TooEarlyToResolve|0x1777/i.test(message)) {
+    return 'Sonuç için zincirin birkaç saniye daha ilerlemesi gerekiyor — birazdan kendiliğinden açılacak.'
+  }
+  if (/SlotHashNotFound|0x177b/i.test(message)) {
+    return 'Sonucun dayandığı blok henüz zincire yazılmadı — birazdan kendiliğinden açılacak.'
+  }
+  if (/ResolveWindowExpired|0x1778/i.test(message)) {
+    return 'Bu denemenin sonuç açma süresi doldu. "Denemeyi Temizle" ile devam edebilirsin (spin hakkı kullanılmış sayılır).'
+  }
   // Zincir düzeyinde kira (rent) reddi: bir hesap, 0 baytlık hesaplar için
   // ~0,00089 SOL olan kira muafiyeti tabanının ALTINDA bakiyeyle
   // bırakılamaz. Bu hatada program genelde hatasız çalışmış olur
@@ -532,23 +545,40 @@ export function GameTab() {
   // Hook'un koşullu olmaması için (aşağıdaki "yapılandırılmadı" erken
   // return'ünden ÖNCE duruyor) türetilmiş değerler burada yeniden
   // hesaplanıyor.
-  const autoResolvedKeyRef = useRef<string | null>(null)
+  // Otomatik açmanın DENEME SAYACI — tek seferlik bayrak değil.
+  //
+  // Eskiden her oyun için yalnızca BİR kez tetikleniyordu ve hedef slot'a
+  // ULAŞILDIĞI anda (slotsLeft <= 0). Ama o anda hedef slot'un hash'i
+  // SlotHashes sysvar'ına henüz girmiş olmuyor: sysvar yalnızca ÖNCEKİ
+  // slot'ları içeriyor. Sonuç SlotHashNotFound ile düşüyor ve bayrak zaten
+  // set edildiği için bir daha DENENMİYORDU — kullanıcı hata görüp yedek
+  // butona basmak zorunda kalıyordu.
+  //
+  // İki değişiklik: (1) hedef slot GEÇENE kadar bekliyoruz, (2) düşerse
+  // sonraki slot yoklamasında tekrar deniyor. Deneme sayısı sınırlı:
+  // gerçekten çözülemeyen bir oyunda sonsuz döngüye girmemek için.
+  const autoResolveTriesRef = useRef<{ key: string; tries: number }>({ key: '', tries: 0 })
+  const AUTO_RESOLVE_MAX_TRIES = 5
   useEffect(() => {
     if (busy !== null) return
     if (!spinAuthoritySigner || !activeOwnerPublicKey || !gameConfig || !playerState) return
     if (!playerState.pending || currentSlot === null) return
 
     const slotsLeft = Number(playerState.commitSlot + gameConfig.revealDelaySlots) - currentSlot
-    if (slotsLeft > 0) return
+    // `> -1`: hedef slot'un GEÇMİŞ olması gerekiyor, ulaşılmış olması değil.
+    // Hash sysvar'a ancak slot üretildikten SONRA giriyor.
+    if (slotsLeft > -1) return
     // Resolve penceresi kaçtıysa artık açılamaz — "Denemeyi Temizle"
     // akışına bırakıyoruz.
     if (-slotsLeft > GAME_CONFIG.maxResolveWindowSlots) return
 
-    // Aynı deneme için ikinci kez tetiklenmesin: commit slot'u denemeyi
-    // benzersiz tanımlıyor.
     const key = `${activeOwnerPublicKey.toBase58()}:${playerState.commitSlot}`
-    if (autoResolvedKeyRef.current === key) return
-    autoResolvedKeyRef.current = key
+    const durum = autoResolveTriesRef.current
+    if (durum.key !== key) {
+      autoResolveTriesRef.current = { key, tries: 0 }
+    }
+    if (autoResolveTriesRef.current.tries >= AUTO_RESOLVE_MAX_TRIES) return
+    autoResolveTriesRef.current.tries += 1
     void handleResolve()
   }, [busy, spinAuthoritySigner, activeOwnerPublicKey, gameConfig, playerState, currentSlot])
 

@@ -153,6 +153,35 @@ export function unlockedAmount(d: DistributorState, total: bigint, nowSeconds: n
   return (total * BigInt(bps)) / BigInt(10_000)
 }
 
+/**
+ * Zincirin kendi saatini okur (Clock sysvar'ı).
+ *
+ * Açılma takvimi ZİNCİRİN saatine göre işliyor, tarayıcının saatine göre
+ * değil. Arayüz `Date.now()` kullanırsa, saati birkaç dakika ileri olan bir
+ * kullanıcı — telefon saatleri kayabiliyor, bazen elle de ayarlanıyor —
+ * açılmamış bir dilimi "çekilebilir" görür, imza atar ve işlem
+ * `NothingToClaim` ile reddedilir. Üstelik bu tam olarak açılma anında,
+ * yani herkesin aynı anda çekmeye çalıştığı dakikada olur.
+ *
+ * Sysvar hesabının verisi: slot (u64), epoch_start_timestamp (i64),
+ * epoch (u64), leader_schedule_epoch (u64), sonra 32. bayttan itibaren
+ * unix_timestamp (i64).
+ *
+ * Okuma başarısız olursa null döner; çağıran taraf tarayıcı saatine
+ * düşer — saat farkı olasılığı, sekmenin hiç açılmamasından iyidir.
+ */
+export async function fetchChainTime(connection: Connection): Promise<number | null> {
+  try {
+    const info = await withRetry(() =>
+      connection.getAccountInfo(new PublicKey('SysvarC1ock11111111111111111111111111111111')),
+    )
+    if (!info || info.data.length < 40) return null
+    return Number(Buffer.from(info.data).readBigInt64LE(32))
+  } catch {
+    return null
+  }
+}
+
 /** Takvimdeki bir sonraki açılışın zamanı (saniye) — yoksa null. */
 export function nextUnlockTs(d: DistributorState, nowSeconds: number): number | null {
   if (nowSeconds < d.startTs) return d.startTs
