@@ -137,7 +137,27 @@ function parseEntries(argv) {
   // presale-buyers.mjs çıktısı (JSON) mı, düz adres listesi mi?
   if (raw.trimStart().startsWith('{')) {
     const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed.buyers)) throw new Error('JSON içinde "buyers" dizisi yok.')
+
+    // draw-raffle.mjs çıktısı: kazanan adresleri + ödül --amount ile
+    // veriliyor (herkese eşit).
+    //
+    // Bu yol olmadan TGE'de ELLE adres ayıklamak gerekiyordu: çekiliş
+    // JSON üretiyor, build-merkle ise düz adres listesi bekliyordu.
+    // Aradaki dönüşümü insana bırakmak, tam da acele edilen bir günde
+    // kopyala-yapıştır hatasına açık kapı demek.
+    if (Array.isArray(parsed.winners)) {
+      if (!fixedAmount) {
+        throw new Error(
+          'Çekiliş sonucu için --amount <en küçük birim> vermelisiniz ' +
+            '(ör. 1.110.000 $LUCK, 9 ondalıkta = 1110000000000000).',
+        )
+      }
+      return parsed.winners.map((w) => ({ address: w.address, amount: BigInt(fixedAmount) }))
+    }
+
+    if (!Array.isArray(parsed.buyers)) {
+      throw new Error('JSON içinde "buyers" (presale) ya da "winners" (çekiliş) dizisi yok.')
+    }
     // `baseUnits` KULLANILIYOR, `tokens` DEĞİL — ve bu ayrım kritik.
     //
     // `tokens` insan için: tam token sayısı (ör. 350000). `baseUnits`

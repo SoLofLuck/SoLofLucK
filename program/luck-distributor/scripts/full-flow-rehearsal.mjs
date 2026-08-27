@@ -175,7 +175,11 @@ for (const a of alicilar) {
     [a.kp],
     { commitment: 'confirmed' },
   )
-  a.beklenenToken = BigInt(Math.round(a.sol * TOKENS_PER_SOL)) * BigInt(10) ** BigInt(DECIMALS)
+  // İKİ ALAN, İKİ AYRI BİRİM — ikisi de ayrı ayrı doğrulanıyor.
+  // `tokens` insan için (tam token), `baseUnits` zincir için (en küçük
+  // birim). Merkle yaprağına ve claim'e giren `baseUnits`.
+  a.beklenenTamToken = Math.round(a.sol * TOKENS_PER_SOL)
+  a.beklenenToken = BigInt(a.beklenenTamToken) * BigInt(10) ** BigInt(DECIMALS)
   a.beklenenBilet = bilet
   console.log(`    ${a.sol} SOL gönderildi (${havuz} kasa + ${ops} operasyon)`)
 }
@@ -216,15 +220,27 @@ for (const a of alicilar) {
     hata++
     continue
   }
-  const token = BigInt(kayit.tokens ?? kayit.amount ?? 0)
+  // `baseUnits` alanı ZORUNLU: merkle yaprağına giren sayı bu. Yoksa
+  // liste eski sürümle üretilmiş demektir ve sessizce 10^9 kat yanlış
+  // bir ağaç kurulurdu.
+  if (kayit.baseUnits === undefined) {
+    console.error(`    HATA: ${adres} kaydında "baseUnits" yok`)
+    hata++
+    continue
+  }
+  const tamToken = Number(kayit.tokens ?? -1)
+  const enKucukBirim = BigInt(kayit.baseUnits)
   const bilet = Number(kayit.tickets ?? -1)
-  const tokenOk = token === a.beklenenToken
+  const tamOk = tamToken === a.beklenenTamToken
+  const birimOk = enKucukBirim === a.beklenenToken
   const biletOk = bilet === a.beklenenBilet
   console.log(
-    `    ${adres.slice(0, 8)}… token ${token} (bekl. ${a.beklenenToken}) ${tokenOk ? 'OK' : 'HATA'}` +
-      ` · bilet ${bilet} (bekl. ${a.beklenenBilet}) ${biletOk ? 'OK' : 'HATA'}`,
+    `    ${adres.slice(0, 8)}…` +
+      ` tam token ${tamToken}/${a.beklenenTamToken} ${tamOk ? 'OK' : 'HATA'}` +
+      ` · en küçük birim ${enKucukBirim}/${a.beklenenToken} ${birimOk ? 'OK' : 'HATA'}` +
+      ` · bilet ${bilet}/${a.beklenenBilet} ${biletOk ? 'OK' : 'HATA'}`,
   )
-  if (!tokenOk || !biletOk) hata++
+  if (!tamOk || !birimOk || !biletOk) hata++
 }
 if (hata > 0) {
   console.error(`\nDOĞRULAMA DÜŞTÜ: ${hata} alıcının payı yanlış hesaplandı.`)

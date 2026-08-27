@@ -150,6 +150,24 @@ for (const [label, addr] of Object.entries(PINNED)) {
   check(`sabit cüzdan yerinde: ${label}`, foundAddrs.has(addr), true)
 }
 
+// --- Çekiliş ödülünün EN KÜÇÜK BİRİM karşılığı ------------------------------
+// Çekiliş turlarında merkle ağacı `--amount <en küçük birim>` ile
+// kuruluyor ve o sayı belgelerde/örneklerde ELLE yazılı. config.ts'teki
+// perWinnerTokens değişip bu sabit unutulursa, kazananlara yanlış miktar
+// dağıtılır — hem de tam olarak hangi yönde olduğu belli olmadan.
+//
+// Aynı sınıftan bir hata zaten yaşandı: presale yolunda tam token ile en
+// küçük birim karışmıştı ve fark 10^9 kattı.
+const decimals = int(/export const DEFAULT_DECIMALS\s*=\s*(\d+)/, 'DEFAULT_DECIMALS')
+const perWinnerBase = BigInt(perWinner) * BigInt(10) ** BigInt(decimals)
+const merkleSrc = readFileSync(new URL('./build-merkle.mjs', import.meta.url), 'utf8')
+const belgelenenler = [...merkleSrc.matchAll(/\b(1110000000000000)\b/g)].map((m) => m[1])
+check(
+  'build-merkle örnekleri kazanan başına ödülle tutuyor',
+  belgelenenler.every((v) => BigInt(v) === perWinnerBase) && belgelenenler.length > 0,
+  true,
+)
+
 // --- Sonuç -------------------------------------------------------------------
 for (const c of checks) {
   const mark = c.ok ? '✓' : '✗'
