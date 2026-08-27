@@ -91,7 +91,7 @@ jobs:
         # public key) manuel olarak devnet SOL göndermek gerekir.
         run: |
           for i in 1 2 3 4 5 6 7 8; do
-            if solana airdrop 3; then break; fi
+            if solana airdrop 2 || solana airdrop 1; then break; fi
             echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar denenecek..."
             sleep 20
           done
@@ -248,14 +248,39 @@ jobs:
             echo "$ad icin gereken ~$gereken SOL - mevcut $mevcut SOL"
             awk "BEGIN{exit !($mevcut < $gereken)}" || return 0
             echo "Bakiye yetersiz - airdrop deneniyor."
-            for i in 1 2 3 4 5 6; do
-              solana airdrop 2 || true
+            # Devnet faucet'i istek basina 2 SOL'u gecmiyor ve IP basina
+            # sinirli; 2 tutmazsa 1 ile deniyoruz (kismi dolum da ise yarar,
+            # birden fazla tur birikiyor).
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              solana airdrop 2 || solana airdrop 1 || true
               mevcut=$(solana balance | awk '{print $1}')
               awk "BEGIN{exit !($mevcut >= $gereken)}" && break
-              echo "Deneme $i sonrasi $mevcut SOL, 20sn sonra tekrar."
-              sleep 20
+              echo "Deneme $i sonrasi $mevcut SOL, 30sn sonra tekrar."
+              sleep 30
             done
             solana balance
+
+            # BURADA DURMAK ZORUNDAYIZ.
+            #
+            # Eskiden bu fonksiyon hedefe ulasamasa bile sessizce donuyordu ve
+            # is akisi doomed bir `solana program deploy`a giriyordu. Bunun iki
+            # kotu sonucu var: (a) hata mesaji "insufficient funds for spend"
+            # olup sebebi (faucet rate limit) hic anlatmiyor, (b) deploy buffer
+            # hesabini YARATTIKTAN sonra duserse 2,3 SOL zincirde mahsur
+            # kaliyor ve BIR SONRAKI kosuyu da dusuruyor - nitekim tam olarak
+            # bu zincirleme yasandi.
+            #
+            # Simdi net bir hatayla duruyoruz: harcama hic denenmiyor, para
+            # mahsur kalmiyor ve loga ne yapilacagi (su adrese devnet SOL
+            # gonder) yaziliyor.
+            mevcut=$(solana balance | awk '{print $1}')
+            if awk "BEGIN{exit !($mevcut < $gereken)}"; then
+              echo "::error::$ad icin ~$gereken SOL gerekiyor, cuzdanda $mevcut SOL var" \
+                   "ve devnet faucet'i vermedi (IP basina rate limit)." \
+                   "Harcama denenmiyor - denenirse buffer hesabinda SOL mahsur kalir." \
+                   "Cozum: $(solana address) adresine devnet SOL gonderip bu is akisini tekrar calistirin."
+              exit 1
+            fi
           }
 
           if ! solana program show "$PROGRAM_ID" >/dev/null 2>&1; then
@@ -346,6 +371,37 @@ jobs:
           # (ve authority'nin beklediğimiz cüzdan olduğunu) loglardan
           # doğrulayabilmek için.
           solana program show "$PROGRAM_ID"
+
+          # ZINCIRDEKI BAYTLAR, AZ ONCE DERLEDIGIMIZ BAYTLAR MI?
+          #
+          # `solana program deploy`in cikis kodu 0 olmasi, yukseltmenin
+          # gercekten indigini KANITLAMIYOR: yanlis authority, yarim kalan
+          # bir buffer tasima ya da hedefi sasirmis bir --program-id
+          # durumunda zincirde ESKI bytecode kalabilir ve is akisi yesil
+          # gorunur. O zaman da duzeltme (ornegin atlanan slot yamasi)
+          # aslinda hic yayina girmemis olur - fark edilmesi en zor hata
+          # turu.
+          #
+          # Bu yuzden zincirdeki programi indirip derlediklerimizle
+          # bayt bayt karsilastiriyoruz. `solana program dump` ayrilan
+          # alanin tamamini yaziyor (sonu sifir dolgusu), o yuzden ilk
+          # NEW_LEN bayti kesip hash'liyoruz.
+          solana program dump "$PROGRAM_ID" /tmp/zincirdeki.so
+          YEREL_LEN=$(stat -c%s target/deploy/luck_game.so)
+          head -c "$YEREL_LEN" /tmp/zincirdeki.so > /tmp/zincirdeki-kirpik.so
+          YEREL_HASH=$(sha256sum target/deploy/luck_game.so | awk '{print $1}')
+          ZINCIR_HASH=$(sha256sum /tmp/zincirdeki-kirpik.so | awk '{print $1}')
+          echo "yerel  sha256: $YEREL_HASH ($YEREL_LEN bayt)"
+          echo "zincir sha256: $ZINCIR_HASH"
+          if [ "$YEREL_HASH" != "$ZINCIR_HASH" ]; then
+            echo "::error::Zincirdeki bytecode derledigimizle AYNI DEGIL." \
+                 "Deploy komutu hata vermedi ama yukseltme inmemis." \
+                 "Bu is akisini tekrar calistirin; tekrarlarsa upgrade authority'yi" \
+                 "($(solana address)) ve $PROGRAM_ID adresini kontrol edin."
+            exit 1
+          fi
+          echo "Zincirdeki bytecode derlemeyle birebir ayni."
+
           if [ "${{ inputs.first_deploy }}" = "true" ]; then
             echo "::notice::YENİ program açıldı. Bu ID'yi declare_id!(), Anchor.toml ve src/config.ts'e işleyin."
           fi
