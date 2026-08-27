@@ -51,9 +51,21 @@ const KEYPAIR_PATH = process.env.KEYPAIR_PATH || `${process.env.HOME}/.config/so
 const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 const ROUND_ID = BigInt(process.env.ROUND_ID || '901')
 
-// Sitedeki gerçek fiyat ve bölünme oranı.
+// Bölünme oranı ve fiyat sitedeki gerçek değerler.
+//
+// KATKI TUTARLARI KÜÇÜLTÜLDÜ. Önce sitedeki gerçek ölçekle
+// (0,5 / 1,25 / 2,0 SOL, bilet birimi 0,5) koşuyordu ve tek prova 3,75
+// SOL harcıyordu — devnet cüzdanını boşalttı, faucet de rate limit
+// yüzünden doldurmadı. Prova "tekrar tekrar" koşturulamıyorsa işe
+// yaramaz.
+//
+// Bilet birimi de aynı oranda küçültüldüğü için sınanan MANTIK
+// değişmiyor: tam bölünen katkı, artan bırakan katkı ve katı bir kat.
+// Bilet hesabının doğruluğu oranlara bağlı, mutlak tutara değil.
 const TOKENS_PER_SOL = 350_000
-const TICKET_UNIT_SOL = 0.5
+const TICKET_UNIT_SOL = 0.02
+/** Alıcı başına işlem ücreti + ATA kirası payı. Fazlası sonda geri süpürülüyor. */
+const ALICI_GAZ_LAMPORT = 10_000_000
 const OPS_NUM = 10
 const OPS_DEN = 100
 const DECIMALS = 9
@@ -78,16 +90,49 @@ async function tokenBalance(a) {
 
 const tmp = mkdtempSync(join(tmpdir(), 'tam-prova-'))
 
+// --- Kalan SOL'ü geri süpür -------------------------------------------------
+// Prova, tek kullanımlık cüzdanlara SOL gönderiyor. Süpürülmezse o SOL
+// ORADA KALIYOR ve anahtarlar süreç bitince kayboluyor — yani her koşu
+// deploy cüzdanını biraz daha boşaltıyor. Nitekim boşalttı: bir sonraki
+// program yükseltmesi, buffer kirası için 0,11 SOL bulamadığı ve devnet
+// faucet'i de rate limit yüzünden vermediği için düştü.
+//
+// Hesabı tamamen boşaltıyoruz (bakiye - işlem ücreti). Rent-exempt taban
+// altına düşen hesap zaten silinip lamport'ları iade ediliyor.
+async function suepuer(kaynaklar, hedef) {
+  let toplam = 0n
+  for (const kp of kaynaklar) {
+    try {
+      const bakiye = await connection.getBalance(kp.publicKey)
+      const ucret = 5_000
+      if (bakiye <= ucret) continue
+      const gonder = bakiye - ucret
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(SystemProgram.transfer({
+          fromPubkey: kp.publicKey, toPubkey: hedef, lamports: gonder,
+        })),
+        [kp],
+        { commitment: 'confirmed' },
+      )
+      toplam += BigInt(gonder)
+    } catch (err) {
+      console.log(`    süpürülemedi ${kp.publicKey.toBase58().slice(0, 8)}…: ${err.message}`)
+    }
+  }
+  console.log(`    geri alınan: ${Number(toplam) / 1_000_000_000} SOL`)
+}
+
+
 // --- 1) Atılabilir presale ve operasyon cüzdanları --------------------------
 adim(1, 'Atılabilir presale/operasyon cüzdanları ve üç alıcı')
 const presaleWallet = Keypair.generate()
 const opsWallet = Keypair.generate()
-// Katkı tutarları bilerek FARKLI ve bilet sınırlarını zorluyor:
-// 0,5 → tam 1 bilet · 1,25 → 2 bilet (0,25 artıyor) · 2,0 → 4 bilet
+// 0,02 → tam 1 bilet · 0,05 → 2 bilet (0,01 artıyor) · 0,08 → 4 bilet
 const alicilar = [
-  { kp: Keypair.generate(), sol: 0.5 },
-  { kp: Keypair.generate(), sol: 1.25 },
-  { kp: Keypair.generate(), sol: 2.0 },
+  { kp: Keypair.generate(), sol: 0.02 },
+  { kp: Keypair.generate(), sol: 0.05 },
+  { kp: Keypair.generate(), sol: 0.08 },
 ]
 for (const a of alicilar) {
   await sendAndConfirmTransaction(
@@ -95,7 +140,7 @@ for (const a of alicilar) {
     new Transaction().add(SystemProgram.transfer({
       fromPubkey: payer.publicKey,
       toPubkey: a.kp.publicKey,
-      lamports: Math.round(a.sol * LAMPORTS) + 30_000_000,
+      lamports: Math.round(a.sol * LAMPORTS) + ALICI_GAZ_LAMPORT,
     })),
     [payer],
     { commitment: 'confirmed' },
@@ -342,6 +387,9 @@ if (kasa !== TOPLAM - toplamCekilen) {
   console.error(`DOĞRULAMA DÜŞTÜ: kasada ${kasa}, olması gereken ${TOPLAM - toplamCekilen}.`)
   process.exit(1)
 }
+
+adim(8, 'Kalan SOL geri süpürülüyor')
+await suepuer([...alicilar.map((a) => a.kp), presaleWallet, opsWallet], payer.publicKey)
 
 console.log('\n=========================================================')
 console.log(' TAM AKIŞ PROVASI BAŞARILI')

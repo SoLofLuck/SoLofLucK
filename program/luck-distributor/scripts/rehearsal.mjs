@@ -68,6 +68,40 @@ async function tokenBalance(account) {
   return info ? Buffer.from(info.data).readBigUInt64LE(64) : null
 }
 
+
+// --- Kalan SOL'ü geri süpür -------------------------------------------------
+// Prova, tek kullanımlık cüzdanlara SOL gönderiyor. Süpürülmezse o SOL
+// ORADA KALIYOR ve anahtarlar süreç bitince kayboluyor — yani her koşu
+// deploy cüzdanını biraz daha boşaltıyor. Nitekim boşalttı: bir sonraki
+// program yükseltmesi, buffer kirası için 0,11 SOL bulamadığı ve devnet
+// faucet'i de rate limit yüzünden vermediği için düştü.
+//
+// Hesabı tamamen boşaltıyoruz (bakiye - işlem ücreti). Rent-exempt taban
+// altına düşen hesap zaten silinip lamport'ları iade ediliyor.
+async function suepuer(kaynaklar, hedef) {
+  let toplam = 0n
+  for (const kp of kaynaklar) {
+    try {
+      const bakiye = await connection.getBalance(kp.publicKey)
+      const ucret = 5_000
+      if (bakiye <= ucret) continue
+      const gonder = bakiye - ucret
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(SystemProgram.transfer({
+          fromPubkey: kp.publicKey, toPubkey: hedef, lamports: gonder,
+        })),
+        [kp],
+        { commitment: 'confirmed' },
+      )
+      toplam += BigInt(gonder)
+    } catch (err) {
+      console.log(`    süpürülemedi ${kp.publicKey.toBase58().slice(0, 8)}…: ${err.message}`)
+    }
+  }
+  console.log(`    geri alınan: ${Number(toplam) / 1_000_000_000} SOL`)
+}
+
 // --- 1) Mint --------------------------------------------------------------
 adim(1, 'Atılabilir mint oluşturuluyor')
 const mintKp = Keypair.generate()
@@ -265,6 +299,9 @@ if (sonra !== cekilen) {
   console.error(`DOĞRULAMA DÜŞTÜ: ikinci claim ${sonra - cekilen} token daha ödedi.`)
   process.exit(1)
 }
+
+adim(8, 'Kalan SOL geri süpürülüyor')
+await suepuer(alicilar, payer.publicKey)
 
 console.log('\n=========================================================')
 console.log(' PROVA BAŞARILI')

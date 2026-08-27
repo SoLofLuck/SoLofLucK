@@ -276,14 +276,19 @@ jobs:
           # daha büyüktü. Hata mesajı sebebi hiç anlatmıyor ve bu, koda
           # birkaç satır eklendiği herhangi bir gün gelebilecek bir duvar.
           #
-          # Payı bilerek geniş tutuyoruz (64 KiB): her yükseltmede yeniden
-          # büyütmek hem ekstra işlem hem ekstra kira demek, ve bu adımın
-          # TGE günü sürpriz yapmasını istemiyoruz.
+          # Pay 16 KiB. Önce 64 KiB seçmiştim ve bu bir hataydı: ayrılan
+          # her bayt KALICI olarak kira kilitliyor (~0,00000696 SOL/bayt),
+          # yani 64 KiB = 0,456 SOL sonsuza kadar ProgramData hesabında
+          # duruyor. Devnet'te bu, bir sonraki deploy'un buffer kirasını
+          # bulamamasına yol açtı; mainnet'te doğrudan para.
+          #
+          # 16 KiB, birkaç yükseltmelik büyümeye yetiyor ve gerekirse bu
+          # adım zaten yeniden büyütüyor.
           NEW_LEN=$(stat -c%s target/deploy/luck_game.so)
           CUR_LEN=$(solana program show "$PROGRAM_ID" | awk '/Data Length/ {print $3}')
           echo "Yeni derleme: $NEW_LEN bayt · zincirdeki alan: $CUR_LEN bayt"
           if [ -n "$CUR_LEN" ] && [ "$NEW_LEN" -gt "$CUR_LEN" ]; then
-            EXTRA=$(( NEW_LEN - CUR_LEN + 65536 ))
+            EXTRA=$(( NEW_LEN - CUR_LEN + 16384 ))
             # Genişletme, eklenen baytların kirasını PEŞİN istiyor
             # (~0,00000696 SOL/bayt). Yetersiz bakiyede zincir
             # "custom program error: 0x1" diyor ve sebebi hiç anlatmıyor —
