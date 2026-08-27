@@ -86,14 +86,30 @@ async function suepuer(kaynaklar, hedef) {
       const ucret = 5_000
       if (bakiye <= ucret) continue
       const gonder = bakiye - ucret
-      await sendAndConfirmTransaction(
-        connection,
-        new Transaction().add(SystemProgram.transfer({
-          fromPubkey: kp.publicKey, toPubkey: hedef, lamports: gonder,
-        })),
-        [kp],
-        { commitment: 'confirmed' },
-      )
+      // TEKRAR DENEME. İlk sürüm tek deneme yapıyordu ve devnet'te
+      // "Blockhash not found" ile düşüp SIFIR SOL geri aldı — süpürmenin
+      // tek işi cüzdanı boşaltmamak olduğu için sessizce başarısız olması
+      // onu tümüyle işlevsiz kılıyor. Hata geçici (blockhash yayılma
+      // gecikmesi), yani tekrar denemek çözüyor.
+      let gonderildi = false
+      let sonHata = null
+      for (let deneme = 0; deneme < 3 && !gonderildi; deneme++) {
+        try {
+          await sendAndConfirmTransaction(
+            connection,
+            new Transaction().add(SystemProgram.transfer({
+              fromPubkey: kp.publicKey, toPubkey: hedef, lamports: gonder,
+            })),
+            [kp],
+            { commitment: 'confirmed' },
+          )
+          gonderildi = true
+        } catch (err) {
+          sonHata = err
+          await new Promise((r) => setTimeout(r, 1500 * (deneme + 1)))
+        }
+      }
+      if (!gonderildi) throw sonHata
       toplam += BigInt(gonder)
     } catch (err) {
       console.log(`    süpürülemedi ${kp.publicKey.toBase58().slice(0, 8)}…: ${err.message}`)

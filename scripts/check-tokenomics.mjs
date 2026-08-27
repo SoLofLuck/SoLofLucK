@@ -168,6 +168,49 @@ check(
   true,
 )
 
+// --- Sitedeki ANLATIM metni sayılarla tutuyor mu ----------------------------
+// Tokenomics sekmesi sayıları config'ten okuyor, ama AboutTab'daki SSS
+// cevabı onları ELLE YAZIYOR. Config değişip metin unutulursa aynı sitede
+// iki farklı sayı yayınlanmış olur — ve bunu okuyan yatırımcı, "bunlar
+// kendi sayılarını bile tutturamamış" diye düşünür.
+//
+// Metnin tamamını doğrulamıyoruz (üslup değişebilir); yalnızca İÇİNDE
+// GEÇEN sayıların config'le aynı olduğunu.
+const about = readFileSync(new URL('../src/components/solofluck/AboutTab.tsx', import.meta.url), 'utf8')
+const sssCevabi = about.match(/a: 'Tokenomics sekmesindeki dağılıma göre:([\s\S]*?)',\n/)
+if (!sssCevabi) {
+  fails.push('AboutTab SSS cevabı bulunamadı (metin yeniden yazılmış olabilir)')
+} else {
+  const metin = sssCevabi[1]
+  const metindekiYuzdeler = [...metin.matchAll(/%(\d+)\s+(presale|likidite|topluluk|kilitli|pazarlama)/g)]
+    .map((m) => [m[2], Number(m[1])])
+  const configYuzdeler = {
+    presale: buckets.presale,
+    likidite: buckets.liquidity,
+    topluluk: buckets.community,
+    kilitli: buckets.team,
+    pazarlama: buckets.marketing,
+  }
+  for (const [ad, deger] of metindekiYuzdeler) {
+    check(`SSS metni: ${ad} yüzdesi`, deger, configYuzdeler[ad])
+  }
+  check('SSS metni: beş kovanın hepsi geçiyor', metindekiYuzdeler.length, 5)
+
+  // Çekiliş toplamları (nokta ayraçlı yazılıyor)
+  const sayilar = [...metin.matchAll(/([\d.]{7,})/g)].map((m) => Number(m[1].replace(/\./g, '')))
+  check('SSS metni: biletli çekiliş toplamı', sayilar.includes(tTokens), true)
+  check('SSS metni: twitter çekilişi toplamı', sayilar.includes(xTokens), true)
+
+  // Vesting takvimi
+  // Kaynakta kesme işareti kaçırılmış geçiyor (TGE\'de), deseni buna
+  // toleranslı tutuyoruz.
+  const tge = metin.match(/TGE\\?'de %(\d+)/)
+  const hafta = metin.match(/(\d+) hafta boyunca haftalık %(\d+)/)
+  check('SSS metni: TGE açılış yüzdesi', tge ? Number(tge[1]) : null, 9)
+  check('SSS metni: haftalık kademe sayısı', hafta ? Number(hafta[1]) : null, 13)
+  check('SSS metni: haftalık açılış yüzdesi', hafta ? Number(hafta[2]) : null, 7)
+}
+
 // --- Sonuç -------------------------------------------------------------------
 for (const c of checks) {
   const mark = c.ok ? '✓' : '✗'
