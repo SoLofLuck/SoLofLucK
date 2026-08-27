@@ -536,6 +536,101 @@ fn oyun_talimat_ayiricilari_altin_vektore_uyuyor() {
     assert_eq!(forfeit, "46f69baf8c6f6989", "forfeit_stuck_play ayırıcısı değişti");
 }
 
+/// OLAYLARIN BAYT DÜZENİ de ABI'nin bir parçası — ve en sessiz kayan yeri.
+///
+/// Oyunun sonucunu site zincirden OKUMUYOR; işlemin loglarındaki
+/// `PlayResolved` olayını ayrıştırıyor (parsePlayResolvedFromTx). Olayın
+/// alan SIRASI değişirse — araya bir alan eklemek yeter — TypeScript
+/// tarafı aynı ofsetlerden okumaya devam eder ve hiçbir hata vermeden
+/// YANLIŞ değerleri gösterir: kaybeden tura "kazandın", 0,5 SOL ödüle
+/// başka bir rakam. İşlem reddedilmediği için ne zincirde ne logda bir
+/// iz kalır.
+///
+/// Bu yüzden üç olayın da tam baytlarını sabitliyoruz. Vektörler
+/// programın çıktısı KOPYALANARAK değil, Anchor'ın kurallarından bağımsız
+/// olarak türetildi:
+///   ayırıcı = sha256("event:<İsim>")[0..8]
+///   gövde   = Borsh: alanlar sırayla, sayılar little-endian, bool = 1 bayt
+///
+/// Aynı vektörler scripts/check-abi.mjs içinde SİTENİN GERÇEK
+/// ayrıştırıcılarına verilip geri okunuyor — yani iki taraf da aynı
+/// bağımsız gerçeğe bağlanmış oluyor.
+#[test]
+fn olay_baytlari_altin_vektore_uyuyor() {
+    use anchor_lang::Event;
+
+    let hex = |d: Vec<u8>| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let oyuncu = anchor_lang::prelude::Pubkey::new_from_array([7u8; 32]);
+
+    let cozuldu = hex(
+        luck_game::PlayResolved {
+            player: oyuncu,
+            won: true,
+            prize_paid: 1_234_567_890,
+            is_big_win: false,
+            easy_mode: true,
+            ops_fee_paid: 246_913_578,
+        }
+        .data(),
+    );
+    println!("PlayResolved   : {cozuldu}");
+    assert_eq!(
+        cozuldu,
+        "8cb617b4df501e9d\
+         0707070707070707070707070707070707070707070707070707070707070707\
+         01\
+         d202964900000000\
+         00\
+         01\
+         2a9ab70e00000000",
+        "PlayResolved olayının bayt düzeni değişti — site sonucu YANLIŞ okur"
+    );
+
+    let baslatildi = hex(
+        luck_game::PlayCommitted {
+            player: oyuncu,
+            plays_count: 11,
+            spins_remaining: 22,
+            bonus_granted: true,
+            commit_slot: 488_693_710,
+        }
+        .data(),
+    );
+    println!("PlayCommitted  : {baslatildi}");
+    assert_eq!(
+        baslatildi,
+        "0f6a7973baf30b2c\
+         0707070707070707070707070707070707070707070707070707070707070707\
+         0b000000\
+         16000000\
+         01\
+         cedf201d00000000",
+        "PlayCommitted olayının bayt düzeni değişti"
+    );
+
+    let satin = hex(
+        luck_game::SpinsPurchased {
+            player: oyuncu,
+            tier_index: 3,
+            spin_count: 20,
+            price_lamports: 800_000_000,
+            spins_remaining: 23,
+        }
+        .data(),
+    );
+    println!("SpinsPurchased : {satin}");
+    assert_eq!(
+        satin,
+        "c39218f3ce200ed2\
+         0707070707070707070707070707070707070707070707070707070707070707\
+         03\
+         14000000\
+         0008af2f00000000\
+         17000000",
+        "SpinsPurchased olayının bayt düzeni değişti"
+    );
+}
+
 /// Hesap ayırıcıları da sabit: istemci zincirden okuduğu hesabın gerçekten
 /// beklediği tip olduğunu bu 8 baytla doğruluyor. Kayarsa istemci
 /// "yapılandırılmamış" der ve oyun hiç açılmaz.

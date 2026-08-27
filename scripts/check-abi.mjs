@@ -471,6 +471,148 @@ for (const v of oyunVektorleri) {
 }
 
 
+// --- Hesapların bayt düzeni: Claim sekmesinin GERÇEK okuyucuları ------------
+//
+// Claim sekmesi zincirdeki Distributor hesabını IDL kullanmadan, sabit
+// ofsetlerle okuyor. Struct'a araya bir alan eklemek yeter: TypeScript aynı
+// ofsetlerden okumaya devam eder ve HİÇBİR HATA VERMEDEN yanlış değerler
+// gösterir — merkle_root kayarsa herkese "listede değilsin", start_ts
+// kayarsa yanlış takvim, total_allocated kayarsa saçma yüzdeler. Hepsi TGE
+// gününde, düzeltme şansının en dar olduğu anda.
+//
+// Vektörler Anchor'ın kurallarından bağımsız türetildi (ayırıcı =
+// sha256("account:<İsim>")[0..8], gövde = Borsh) ve Rust tarafında
+// `hesap_baytlari_altin_vektore_uyuyor` ile sabitlendi.
+{
+  const sahteHesap = (hex) => ({
+    getAccountInfo: async () => ({ data: Buffer.from(hex, 'hex') }),
+  })
+
+  const DAGITICI_HEX = '5a5ad993062087040700000000000000010101010101010101010101010101010101010101010101010101010101010102020202020202020202020202020202020202020202020202020202020202020303030303030303030303030303030303030303030303030303030303030303040404040404040404040404040404040404040404040404040404040404040400c8d99bbf2f00000052f21f4c04000000d2496b000000008403bc02803a0900000000000d00fe'
+  const DURUM_HEX = '16b7f99df75f96600052f21f4c040000fd'
+
+  // Ofset kayması hesabın sonunu aşarsa okuma ATAR (ERR_OUT_OF_RANGE).
+  // Bu da bir başarısızlık ama sebebi anlatmayan bir çökme; yakalayıp
+  // düzgün bir kontrol satırına çeviriyoruz.
+  let dag = null
+  let dagHata = null
+  try {
+    dag = await claim.fetchDistributor(sahteHesap(DAGITICI_HEX), 0)
+  } catch (e) {
+    dagHata = e instanceof Error ? e.message : String(e)
+  }
+  kontrol(
+    'hesap Distributor: okuma hata vermiyor',
+    dagHata === null ? true : `HATA: ${dagHata}`,
+    true,
+  )
+  kontrol('hesap Distributor: okunabildi', dag !== null, true)
+  kontrol(
+    'hesap Distributor: merkle_root',
+    Buffer.from(dag?.merkleRoot ?? []).toString('hex'),
+    '04'.repeat(32),
+  )
+  kontrol('hesap Distributor: total_allocated', dag?.totalAllocated, 52_500_000_000_000n)
+  kontrol('hesap Distributor: total_claimed', dag?.totalClaimed, 4_725_000_000_000n)
+  kontrol('hesap Distributor: start_ts', dag?.startTs, 1_800_000_000)
+  kontrol('hesap Distributor: cliff_bps', dag?.cliffBps, 900)
+  kontrol('hesap Distributor: period_bps', dag?.periodBps, 700)
+  kontrol('hesap Distributor: period_seconds', dag?.periodSeconds, 604_800)
+  kontrol('hesap Distributor: periods', dag?.periods, 13)
+  // Okunan takvim gerçekten %100'e kapanıyor mu — zincirden gelen sayılarla.
+  kontrol(
+    'hesap Distributor: cliff + kademe × oran = %100',
+    (dag?.cliffBps ?? 0) + (dag?.periods ?? 0) * (dag?.periodBps ?? 0),
+    10_000,
+  )
+
+  let cekilen = null
+  let cekilenHata = null
+  try {
+    cekilen = await claim.fetchClaimed(sahteHesap(DURUM_HEX), 0, claimant)
+  } catch (e) {
+    cekilenHata = e instanceof Error ? e.message : String(e)
+  }
+  kontrol(
+    'hesap ClaimStatus: okuma hata vermiyor',
+    cekilenHata === null ? true : `HATA: ${cekilenHata}`,
+    true,
+  )
+  kontrol('hesap ClaimStatus: claimed', cekilen, 4_725_000_000_000n)
+}
+
+// --- Olayların bayt düzeni: sitenin GERÇEK ayrıştırıcıları ------------------
+//
+// Oyunun sonucunu site zincirden okumuyor; işlemin loglarındaki olayı
+// ayrıştırıyor. Olayın alan SIRASI kayarsa — araya bir alan eklemek yeter —
+// TypeScript aynı ofsetlerden okumaya devam eder ve HİÇBİR HATA VERMEDEN
+// yanlış değerleri gösterir: kaybeden tura "kazandın", ödüle başka bir
+// rakam. İşlem reddedilmediği için ne zincirde ne logda bir iz kalır.
+//
+// Vektörler Anchor'ın kurallarından bağımsız türetildi (ayırıcı =
+// sha256("event:<İsim>")[0..8], gövde = Borsh) ve Rust tarafında
+// `olay_baytlari_altin_vektore_uyuyor` testiyle sabitlendi. Burada aynı
+// baytları GERÇEK ayrıştırıcılara verip geri okuyoruz — kopya bir
+// ayrıştırıcı yazmak, kopyanın kendisiyle uyuştuğunu kanıtlardı.
+{
+  // Ayrıştırıcılar bir Connection'dan işlem çekiyor; sahte bir bağlantı
+  // yeterli, çünkü sınadığımız şey ağ değil bayt okuma.
+  const sahteBaglanti = (hex) => ({
+    getTransaction: async () => ({
+      meta: {
+        logMessages: [
+          'Program H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf invoke [1]',
+          `Program data: ${Buffer.from(hex, 'hex').toString('base64')}`,
+          'Program H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf success',
+        ],
+      },
+    }),
+  })
+
+  const OYUNCU_HEX = '07'.repeat(32)
+
+  const cozuldu = await oyun.parsePlayResolvedFromTx(
+    sahteBaglanti(
+      `8cb617b4df501e9d${OYUNCU_HEX}01d20296490000000000012a9ab70e00000000`,
+    ),
+    'sahte-imza',
+  )
+  kontrol('olay PlayResolved: okunabildi', cozuldu !== null, true)
+  kontrol('olay PlayResolved: won', cozuldu?.won, true)
+  kontrol('olay PlayResolved: prize_paid', cozuldu?.prizePaidLamports, 1_234_567_890n)
+  kontrol('olay PlayResolved: is_big_win', cozuldu?.isBigWin, false)
+  kontrol('olay PlayResolved: easy_mode', cozuldu?.easyMode, true)
+  kontrol('olay PlayResolved: ops_fee_paid', cozuldu?.opsFeePaidLamports, 246_913_578n)
+
+  const baslatildi = await oyun.parsePlayCommittedFromTx(
+    sahteBaglanti(`0f6a7973baf30b2c${OYUNCU_HEX}0b0000001600000001cedf201d00000000`),
+    'sahte-imza',
+  )
+  kontrol('olay PlayCommitted: okunabildi', baslatildi !== null, true)
+  kontrol('olay PlayCommitted: plays_count', baslatildi?.playsCount, 11)
+  kontrol('olay PlayCommitted: spins_remaining', baslatildi?.spinsRemaining, 22)
+  kontrol('olay PlayCommitted: bonus_granted', baslatildi?.bonusGranted, true)
+  kontrol('olay PlayCommitted: commit_slot', baslatildi?.commitSlot, 488_693_710n)
+
+  const satin = await oyun.parseSpinsPurchasedFromTx(
+    sahteBaglanti(`c39218f3ce200ed2${OYUNCU_HEX}03140000000008af2f0000000017000000`),
+    'sahte-imza',
+  )
+  kontrol('olay SpinsPurchased: okunabildi', satin !== null, true)
+  kontrol('olay SpinsPurchased: tier_index', satin?.tierIndex, 3)
+  kontrol('olay SpinsPurchased: spin_count', satin?.spinCount, 20)
+  kontrol('olay SpinsPurchased: price_lamports', satin?.priceLamports, 800_000_000n)
+  kontrol('olay SpinsPurchased: spins_remaining', satin?.spinsRemaining, 23)
+
+  // Ayırıcı EŞLEŞMEZSE olay okunmamalı — yoksa başka bir olayın baytları
+  // PlayResolved sanılıp yanlış çözülür.
+  const yanlisAyirici = await oyun.parsePlayResolvedFromTx(
+    sahteBaglanti(`0f6a7973baf30b2c${OYUNCU_HEX}01d20296490000000000012a9ab70e00000000`),
+    'sahte-imza',
+  )
+  kontrol('olay PlayResolved: yabancı ayırıcı reddediliyor', yanlisAyirici, null)
+}
+
 rmSync(out, { recursive: true, force: true })
 
 for (const c of kontroller) {

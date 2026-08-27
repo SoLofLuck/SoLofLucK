@@ -211,6 +211,148 @@ if (!sssCevabi) {
   check('SSS metni: haftalık açılış yüzdesi', hafta ? Number(hafta[2]) : null, 7)
 }
 
+// --- Oyun ekonomisi ----------------------------------------------------------
+// GAME_CONFIG'teki sayılar doğrudan `initialize.mjs`e gidiyor ve zincirdeki
+// programın kabul ettiği kurallara uymak ZORUNDA. Uymazlarsa iki farklı
+// şekilde patlıyorlar ve ikisi de geç fark ediliyor:
+//
+//   1. initialize() `InvalidParam` (0x1771) ile düşüyor — TGE günü, oyunu
+//      açmaya çalışırken. Hata mesajı hangi parametrenin bozuk olduğunu
+//      söylemiyor.
+//   2. Daha kötüsü: initialize GEÇİYOR ama çalışma anında bir transfer
+//      Solana'nın kira tabanının (0 baytlık hesap için 890.880 lamport)
+//      altında kalıyor ve İŞLEMİN TAMAMI `InsufficientFundsForRent` ile
+//      geri alınıyor. Program hatasız, oyuncu ekranında anlamsız bir hata.
+//      Prova sırasında tam olarak bu yaşandı (0,02 SOL'ün %10'u tabanın
+//      altında kalmıştı).
+//
+// Bu yüzden programın `require!` satırlarını burada da kuruyoruz.
+{
+  const g = src.match(/export const GAME_CONFIG\s*=\s*\{([\s\S]*?)\n\}/)
+  if (!g) throw new Error('config.ts içinde GAME_CONFIG bulunamadı')
+  const blok = g[1]
+  const oku = (re, etiket) => {
+    const m = blok.match(re)
+    if (!m) throw new Error(`GAME_CONFIG içinde bulunamadı: ${etiket}`)
+    return Number(m[1].replace(/_/g, ''))
+  }
+
+  const LAMPORT = 1_000_000_000
+  // Solana'da 0 baytlık bir hesabın var olabilmesi için gereken taban.
+  // Programdaki `Rent::get()?.minimum_balance(0)` ile aynı sayı.
+  const KIRA_TABANI = 890_880
+
+  const kucukOdul = oku(/smallPrizeSol:\s*([\d.]+)/, 'smallPrizeSol')
+  const buyukOdul = oku(/bigPrizeSol:\s*([\d.]+)/, 'bigPrizeSol')
+  const buyukBps = oku(/bigPrizeBps:\s*(\d+)/, 'bigPrizeBps')
+  const esik = oku(/vaultEasyThresholdSol:\s*([\d.]+)/, 'vaultEasyThresholdSol')
+  const payBps = oku(/treasuryFeeBps:\s*(\d+)/, 'treasuryFeeBps')
+  const zorBps = oku(/normalWinBps:\s*(\d+)/, 'normalWinBps')
+  const kolayBps = oku(/easyWinBps:\s*(\d+)/, 'easyWinBps')
+  const gecikme = oku(/revealDelaySlots:\s*(\d+)/, 'revealDelaySlots')
+
+  const tiers = [...blok.matchAll(/\{\s*count:\s*(\d+),\s*priceSol:\s*([\d.]+)\s*\}/g)].map(
+    (m) => ({ count: Number(m[1]), priceSol: Number(m[2]) }),
+  )
+  check('spin paketi sayısı > 0', tiers.length > 0, true)
+
+  // --- programın initialize() require!'ları ---
+  check('küçük ödül > 0', kucukOdul > 0, true)
+  check('büyük ödül >= küçük ödül', buyukOdul >= kucukOdul, true)
+  check('reveal gecikmesi > 0', gecikme > 0, true)
+  for (const [ad, v] of [
+    ['zor mod', zorBps], ['kolay mod', kolayBps], ['ev payı', payBps], ['büyük ödül', buyukBps],
+  ]) {
+    check(`${ad} bps <= 10000`, v <= 10000, true)
+  }
+  check('kolay mod zor moddan kolay', kolayBps >= zorBps, true)
+  // Kolay mod eşiği, jackpot'u VE onun üstüne eklenen ev payını
+  // karşılamalı; aksi halde eşiği geçmiş bir kasa, jackpot çıktığında ödülü
+  // ödeyip payı ödeyemez ve tüm işlem geri alınır — oyuncu `pending`
+  // durumunda sıkışır.
+  const jackpotToplam = buyukOdul + (buyukOdul * payBps) / 10000
+  check('kolay mod eşiği >= jackpot + ev payı', esik >= jackpotToplam, true)
+  for (const t of tiers) {
+    check(`paket (${t.count} spin) sayısı > 0`, t.count > 0, true)
+    check(`paket (${t.count} spin) fiyatı > 0`, t.priceSol > 0, true)
+  }
+
+  // --- kira tabanı: hazineye giden HER tutar tabanın üstünde olmalı ---
+  // Hazine cüzdanı zincirde henüz yoksa (0 lamport), ona kira tabanının
+  // ALTINDA bir tutar göndermek işlemin TAMAMINI düşürür.
+  const enUcuz = Math.min(...tiers.map((t) => t.priceSol))
+  const enKucukPaketPayi = Math.floor((enUcuz * LAMPORT * payBps) / 10000)
+  check(
+    `en ucuz paketin (${enUcuz} SOL) hazine payı kira tabanının üstünde`,
+    enKucukPaketPayi > KIRA_TABANI,
+    true,
+  )
+  const enKucukOdulPayi = Math.floor((kucukOdul * LAMPORT * payBps) / 10000)
+  check(
+    `en küçük ödülün (${kucukOdul} SOL) hazine payı kira tabanının üstünde`,
+    enKucukOdulPayi > KIRA_TABANI,
+    true,
+  )
+  // Kasaya giren pay da aynı sebeple tabanın üstünde olmalı: kasa PDA'sı
+  // ilk satın alımda yaratılıyor.
+  const enKucukKasaPayi = Math.floor(enUcuz * LAMPORT) - enKucukPaketPayi
+  check(
+    `en ucuz paketin kasa payı kira tabanının üstünde`,
+    enKucukKasaPayi > KIRA_TABANI,
+    true,
+  )
+
+  // --- config.ts ile Rust sabitleri aynı mı ---
+  const rust = readFileSync(
+    new URL('../program/luck-game/programs/luck-game/src/lib.rs', import.meta.url),
+    'utf8',
+  )
+  const rustSabit = (re, etiket) => {
+    const m = rust.match(re)
+    if (!m) throw new Error(`lib.rs içinde bulunamadı: ${etiket}`)
+    return Number(m[1].replace(/_/g, ''))
+  }
+  check(
+    'maxResolveWindowSlots = MAX_RESOLVE_WINDOW_SLOTS',
+    oku(/maxResolveWindowSlots:\s*(\d+)/, 'maxResolveWindowSlots'),
+    rustSabit(/const MAX_RESOLVE_WINDOW_SLOTS:\s*u64\s*=\s*([0-9_]+)/, 'MAX_RESOLVE_WINDOW_SLOTS'),
+  )
+  const spinTiersRust = rustSabit(/const SPIN_TIERS:\s*usize\s*=\s*([0-9_]+)/, 'SPIN_TIERS')
+  check('spin paketi sayısı = SPIN_TIERS', tiers.length, spinTiersRust)
+  // Delegenin gaz payı, kira tabanının ÜSTÜNE ekleniyor; sıfır olursa
+  // delege hesabı yaratılır ama hiç işlem ücreti ödeyemez ve oyuncu
+  // "ücretsiz" turlarını oynayamaz.
+  check(
+    'delege gaz payı > 0',
+    rustSabit(/const DELEGATE_GAS_SPONSOR_LAMPORTS:\s*u64\s*=\s*([0-9_]+)/, 'DELEGATE_GAS') > 0,
+    true,
+  )
+
+  // --- initialize.mjs varsayılanları config.ts ile aynı mı ---
+  // Oyun zincirde bu betikle açılıyor. Varsayılanları config.ts'ten
+  // kayarsa, site bir tarifeyi gösterir, zincir başka bir tarifeyi uygular
+  // ve oyuncu ödediğinden farklı sayıda spin alır.
+  const initSrc = readFileSync(
+    new URL('../program/luck-game/scripts/initialize.mjs', import.meta.url),
+    'utf8',
+  )
+  const dizi = (re, etiket) => {
+    const m = initSrc.match(re)
+    if (!m) throw new Error(`initialize.mjs içinde bulunamadı: ${etiket}`)
+    return m[1].split(',').map((x) => Number(x.trim().replace(/_/g, ''))).filter((x) => !Number.isNaN(x))
+  }
+  check(
+    'initialize.mjs paket adetleri = config.ts',
+    dizi(/SPIN_TIER_COUNTS\s*=\s*\[([^\]]*)\]/, 'SPIN_TIER_COUNTS').join(','),
+    tiers.map((t) => t.count).join(','),
+  )
+  check(
+    'initialize.mjs paket fiyatları = config.ts',
+    dizi(/SPIN_TIER_PRICES_SOL\s*=\s*\[([^\]]*)\]/, 'SPIN_TIER_PRICES_SOL').join(','),
+    tiers.map((t) => t.priceSol).join(','),
+  )
+}
+
 // --- Sonuç -------------------------------------------------------------------
 for (const c of checks) {
   const mark = c.ok ? '✓' : '✗'

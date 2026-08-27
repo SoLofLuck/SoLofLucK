@@ -123,6 +123,30 @@ export function extractContribution(keys, preBalances, postBalances, poolWallet,
   return { sender, delta: poolDelta + opsDelta, poolDelta, opsDelta }
 }
 
+/**
+ * BÜTÜNLÜK: taradığımız geçmiş kasanın BUGÜNKÜ bakiyesini açıklıyor mu?
+ *
+ * `getSignaturesForAddress` yalnızca RPC düğümünün SAKLADIĞI geçmişi
+ * döndürüyor. Genel uç noktalar geçmişi buduyor (arşiv düğümü değiller).
+ * Presale haftalarca sürerse ilk katkı yapanların işlemleri o pencerenin
+ * dışında kalabilir — ve bu HİÇBİR HATA VERMEZ: script sorunsuz çalışır,
+ * daha kısa bir liste üretir, o alıcılar merkle ağacına hiç girmez ve
+ * TGE'de "listede değilsin" görürler. Kök zincire yazıldıktan sonra
+ * düzeltilemez.
+ *
+ * Sağlaması basit: taradığımız her işlemde kasanın İMZALI bakiye
+ * değişimini toplarsak, sonuç kasanın şu anki bakiyesine eşit olmalı
+ * (kasa boş doğduğu için). Bakiye topladığımızdan FAZLAYSA, kasaya
+ * göremediğimiz bir yerden para girmiş demektir — geçmiş eksik.
+ *
+ * Ters yön (topladığımız fazla) sorun değil: parayı biz çıkarmış
+ * olabiliriz ve çıkışları da taramış oluruz.
+ */
+export function butunlukKontrolu(taranan, mevcut, tolerans) {
+  const acik = mevcut - taranan
+  return { tamam: acik <= tolerans, acik }
+}
+
 // --- selftest ----------------------------------------------------------------
 if (process.argv.includes('--selftest')) {
   const POOL = 'POOL_WALLET'
@@ -176,6 +200,33 @@ if (process.argv.includes('--selftest')) {
   const d = extractContribution([USER, POOL, OPS], [10 * L, 0, 0], [9 * L, 0.9 * L, 0.1 * L], POOL, OPS)
   check('1 SOL → 350.000 $LUCK', Math.floor((d.delta / L) * 350_000), 350_000)
 
+  // 7-10) Bütünlük: taranan geçmiş bugünkü bakiyeyi açıklıyor mu
+  check(
+    'bütünlük: taranan = mevcut → tamam',
+    butunlukKontrolu(100 * L, 100 * L, L).tamam,
+    true,
+  )
+  check(
+    'bütünlük: bakiye taranandan FAZLA → eksik geçmiş',
+    butunlukKontrolu(90 * L, 100 * L, L).tamam,
+    false,
+  )
+  check(
+    'bütünlük: eksik miktar doğru raporlanıyor',
+    butunlukKontrolu(90 * L, 100 * L, L).acik,
+    10 * L,
+  )
+  check(
+    'bütünlük: para ÇIKMIŞ (taranan fazla) → sorun değil',
+    butunlukKontrolu(100 * L, 40 * L, L).tamam,
+    true,
+  )
+  check(
+    'bütünlük: tolerans içindeki fark geçiyor',
+    butunlukKontrolu(100 * L, 100 * L + 500, L).tamam,
+    true,
+  )
+
   console.log(failed === 0 ? '\nTüm kontroller geçti.' : `\n${failed} kontrol DÜŞTÜ.`)
   process.exit(failed === 0 ? 0 : 1)
 }
@@ -226,6 +277,8 @@ process.stderr.write(`\nToplam ${signatures.length} imza, ${candidates.length} t
 const buyers = new Map()
 const skipped = []
 let processed = 0
+// Taradığımız işlemlerde presale kasasının İMZALI toplam bakiye değişimi.
+let tarananNet = 0
 
 for (let i = 0; i < candidates.length; i += 100) {
   const batch = candidates.slice(i, i + 100)
@@ -242,6 +295,18 @@ for (let i = 0; i < candidates.length; i += 100) {
     const tx = txs[j]
     const sig = batch[j].signature
     if (!tx || tx.meta?.err) continue
+
+    // BÜTÜNLÜK SAYACI — zaman penceresi filtresinden ÖNCE, çünkü sorduğumuz
+    // soru "bu katkı sayılmalı mı" değil, "taradığımız geçmiş kasanın
+    // bugünkü bakiyesini açıklıyor mu". Pencere dışındaki işlemler de
+    // bakiyeyi değiştirdi.
+    {
+      const anahtarlar = tx.transaction.message.accountKeys.map((k) => k.pubkey.toBase58())
+      const kasaIdx = anahtarlar.indexOf(WALLET)
+      if (kasaIdx >= 0) {
+        tarananNet += (tx.meta.postBalances[kasaIdx] ?? 0) - (tx.meta.preBalances[kasaIdx] ?? 0)
+      }
+    }
 
     const blockMs = (tx.blockTime ?? 0) * 1000
     if (startMs !== null && blockMs < startMs) continue
@@ -271,6 +336,38 @@ for (let i = 0; i < candidates.length; i += 100) {
     processed += 1
   }
   process.stderr.write(`  ${Math.min(i + 100, candidates.length)}/${candidates.length}\n`)
+}
+
+// --- 2b) BÜTÜNLÜK KAPISI ----------------------------------------------------
+// Bu kapı olmadan script, RPC geçmişi budanmış olsa bile sorunsuz çalışır ve
+// DAHA KISA bir liste üretir. O alıcılar merkle ağacına hiç girmez, TGE'de
+// "listede değilsin" görürler ve kök zincire yazıldıktan sonra düzeltilemez.
+// Bu yüzden sessizce devam etmek yerine burada duruyoruz.
+{
+  const TOLERANS = Math.round(Number(process.env.BUTUNLUK_TOLERANS_SOL ?? '0.01') * LAMPORTS_PER_SOL)
+  const mevcut = await withRetry(() => connection.getBalance(wallet), 'getBalance')
+  const { tamam, acik } = butunlukKontrolu(tarananNet, mevcut, TOLERANS)
+  process.stderr.write(
+    `\nBütünlük: taranan net ${(tarananNet / LAMPORTS_PER_SOL).toFixed(4)} SOL · ` +
+      `kasadaki ${(mevcut / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`,
+  )
+  if (!tamam) {
+    process.stderr.write(
+      `\nEKSİK GEÇMİŞ — liste kullanılamaz.\n\n` +
+        `Kasada, taradığımız işlemlerle açıklayamadığımız ` +
+        `${(acik / LAMPORTS_PER_SOL).toFixed(4)} SOL var.\n` +
+        `En olası sebep: bu RPC uç noktası geçmişi buduyor (arşiv düğümü değil),\n` +
+        `yani ilk katkı yapanların işlemleri hiç görünmüyor. Bu listeyle merkle\n` +
+        `ağacı kurulursa o alıcılar TGE'de "listede değilsin" görür ve kök\n` +
+        `zincire yazıldıktan sonra DÜZELTİLEMEZ.\n\n` +
+        `Yapılacak: RPC_URL'i tam geçmiş tutan bir arşiv düğümüne çevirip\n` +
+        `tekrar çalıştırın.\n\n` +
+        `(Farkın gerçekten zararsız olduğunu BİLİYORSANIZ — ör. kasaya presale\n` +
+        `dışı bir transfer yapıldıysa — BUTUNLUK_TOLERANS_SOL ile eşiği\n` +
+        `yükseltebilirsiniz. Varsayılan 0.01 SOL.)\n`,
+    )
+    process.exit(1)
+  }
 }
 
 // --- 3) Pay ve bilet hesabı -------------------------------------------------

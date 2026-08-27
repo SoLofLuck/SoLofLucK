@@ -599,3 +599,81 @@ fn acilma_takvimi_altin_vektore_uyuyor() {
         TOPLAM
     );
 }
+
+// ---------------------------------------------------------------------------
+// HESAPLARIN BAYT DÜZENİ — Claim sekmesinin okuduğu her sayı buradan geliyor
+// ---------------------------------------------------------------------------
+// Claim sekmesi zincirdeki Distributor hesabını IDL kullanmadan, sabit
+// ofsetlerle okuyor (fetchDistributor). Struct'a araya bir alan eklemek
+// yeter: TypeScript aynı ofsetlerden okumaya devam eder ve HİÇBİR HATA
+// VERMEDEN yanlış değerleri gösterir —
+//   * merkle_root kayarsa herkese "listede değilsin" der,
+//   * total_allocated kayarsa yüzdeler saçmalar,
+//   * start_ts kayarsa takvim yanlış çıkar ve "henüz başlamadı" ya da
+//     "hepsi açıldı" der.
+// Hepsi TGE gününde, düzeltme şansının en dar olduğu anda.
+//
+// Vektörler programın çıktısı kopyalanarak değil, Anchor'ın kurallarından
+// bağımsız türetildi:
+//   ayırıcı = sha256("account:<İsim>")[0..8]
+//   gövde   = Borsh: alanlar sırayla, sayılar little-endian
+// Aynı baytlar scripts/check-abi.mjs içinde SİTENİN GERÇEK okuyucularına
+// verilip geri okunuyor.
+#[test]
+fn hesap_baytlari_altin_vektore_uyuyor() {
+    use anchor_lang::{AnchorSerialize, Discriminator};
+
+    let hex = |d: &[u8]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+
+    let dagitici = luck_distributor::Distributor {
+        id: 7,
+        authority: anchor_lang::prelude::Pubkey::new_from_array([1u8; 32]),
+        mint: anchor_lang::prelude::Pubkey::new_from_array([2u8; 32]),
+        vault: anchor_lang::prelude::Pubkey::new_from_array([3u8; 32]),
+        merkle_root: [4u8; 32],
+        total_allocated: 52_500_000_000_000,
+        total_claimed: 4_725_000_000_000,
+        start_ts: 1_800_000_000,
+        cliff_bps: 900,
+        period_bps: 700,
+        period_seconds: 604_800,
+        periods: 13,
+        bump: 254,
+    };
+    let mut baytlar = luck_distributor::Distributor::DISCRIMINATOR.to_vec();
+    dagitici.serialize(&mut baytlar).unwrap();
+    println!("Distributor : {}", hex(&baytlar));
+    assert_eq!(
+        hex(&baytlar),
+        "5a5ad99306208704\
+         0700000000000000\
+         0101010101010101010101010101010101010101010101010101010101010101\
+         0202020202020202020202020202020202020202020202020202020202020202\
+         0303030303030303030303030303030303030303030303030303030303030303\
+         0404040404040404040404040404040404040404040404040404040404040404\
+         00c8d99bbf2f0000\
+         0052f21f4c040000\
+         00d2496b00000000\
+         8403\
+         bc02\
+         803a090000000000\
+         0d00\
+         fe",
+        "Distributor hesabının bayt düzeni değişti — Claim sekmesi YANLIŞ okur"
+    );
+
+    let durum = luck_distributor::ClaimStatus {
+        claimed: 4_725_000_000_000,
+        bump: 253,
+    };
+    let mut baytlar = luck_distributor::ClaimStatus::DISCRIMINATOR.to_vec();
+    durum.serialize(&mut baytlar).unwrap();
+    println!("ClaimStatus : {}", hex(&baytlar));
+    assert_eq!(
+        hex(&baytlar),
+        "16b7f99df75f9660\
+         0052f21f4c040000\
+         fd",
+        "ClaimStatus hesabının bayt düzeni değişti — çekilen tutar YANLIŞ okunur"
+    );
+}
