@@ -66,6 +66,8 @@ const TOKENS_PER_SOL = 350_000
 const TICKET_UNIT_SOL = 0.02
 /** Alıcı başına işlem ücreti + ATA kirası payı. Fazlası sonda geri süpürülüyor. */
 const ALICI_GAZ_LAMPORT = 10_000_000
+/** Katkı tutarları (SOL). Bakiye ön kontrolü de bunlardan hesaplıyor. */
+const ALICI_TUTARLARI = [0.02, 0.05, 0.08]
 const OPS_NUM = 10
 const OPS_DEN = 100
 const DECIMALS = 9
@@ -89,6 +91,37 @@ async function tokenBalance(a) {
 }
 
 const tmp = mkdtempSync(join(tmpdir(), 'tam-prova-'))
+
+// --- Ön kontrol: bakiye yeterli mi ------------------------------------------
+// Yetersizse prova ortasında ham bir Solana hatasıyla ("Transfer:
+// insufficient lamports ...") düşüyor ve sebebi ancak logları okuyup
+// hesaplayarak anlaşılıyor. Baştan, tutarı ve cüzdanı adıyla söyleyerek
+// durmak daha dürüst.
+//
+// KATKI TUTARLARI DAHA DA KÜÇÜLTÜLEMİYOR ve sebebi öğretici: katkı
+// %90/%10 bölünüyor, yani 0,02 SOL'lük katkıda operasyon cüzdanına
+// 2.000.000 lamport gidiyor. Bunun altına inersek operasyon payı
+// Solana'nın kira muafiyeti tabanının (~890.880 lamport) ALTINA düşer ve
+// işlem "InsufficientFundsForRent" ile reddedilir — tam da bu projenin
+// başında yaşanan hatanın aynısı. Yani prova ucuzlarken sınadığı akışı
+// bozmuş olurduk.
+{
+  const gerekenLamport =
+    ALICI_TUTARLARI.reduce((t, sol) => t + Math.round(sol * LAMPORTS) + ALICI_GAZ_LAMPORT, 0) +
+    60_000_000 // mint, dağıtıcı, kasa ve ATA kiraları + işlem ücretleri payı
+  const mevcut = await connection.getBalance(payer.publicKey)
+  if (mevcut < gerekenLamport) {
+    console.error(
+      'Bakiye yetersiz.\n' +
+        `  cüzdan  : ${payer.publicKey.toBase58()}\n` +
+        `  mevcut  : ${(mevcut / LAMPORTS).toFixed(4)} SOL\n` +
+        `  gereken : ~${(gerekenLamport / LAMPORTS).toFixed(4)} SOL\n\n` +
+        "Devnet faucet'i GitHub runner IP'lerini sınırlıyor. Bu cüzdana elle " +
+        'devnet SOL gönderilmesi gerekiyor (faucet.solana.com).',
+    )
+    process.exit(1)
+  }
+}
 
 // --- Kalan SOL'ü geri süpür -------------------------------------------------
 // Prova, tek kullanımlık cüzdanlara SOL gönderiyor. Süpürülmezse o SOL
@@ -129,11 +162,7 @@ adim(1, 'Atılabilir presale/operasyon cüzdanları ve üç alıcı')
 const presaleWallet = Keypair.generate()
 const opsWallet = Keypair.generate()
 // 0,02 → tam 1 bilet · 0,05 → 2 bilet (0,01 artıyor) · 0,08 → 4 bilet
-const alicilar = [
-  { kp: Keypair.generate(), sol: 0.02 },
-  { kp: Keypair.generate(), sol: 0.05 },
-  { kp: Keypair.generate(), sol: 0.08 },
-]
+const alicilar = ALICI_TUTARLARI.map((sol) => ({ kp: Keypair.generate(), sol }))
 for (const a of alicilar) {
   await sendAndConfirmTransaction(
     connection,

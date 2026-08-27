@@ -493,3 +493,65 @@ async fn dolu_sysvarda_hedefe_en_yakin_slot_seciliyor() {
 /// `forfeit_spin_iade_etmiyor` testleri ikisinin uyuştuğunu dolaylı olarak
 /// doğruluyor.
 const MAX_RESOLVE_WINDOW_SLOTS_TEST: u64 = 300;
+
+// ---------------------------------------------------------------------------
+// 5. ABI altın vektörü — istemci ile programın aynı baytları konuşması
+// ---------------------------------------------------------------------------
+// Oyunun beş talimatını da SİTE (TypeScript) kuruyor, program (Rust)
+// doğruluyor. Ayırıcı (discriminator) ya da hesap sırası kayarsa işlem
+// reddedilir — ve bu, oyunun tamamen durması demek.
+//
+// Ayırıcılar sha256("global:<isim>")[0..8]'den geliyor, yani bir talimatın
+// ADI değişirse sessizce değişirler. Hesap sırası da struct alan sırasına
+// bağlı; araya alan eklemek yeter.
+//
+// Aynı vektörler scripts/check-abi.mjs içinde, istemcinin GERÇEK
+// kurucuları çağrılarak yeniden üretiliyor.
+#[test]
+fn oyun_talimat_ayiricilari_altin_vektore_uyuyor() {
+    use anchor_lang::InstructionData;
+
+    let hex = |d: Vec<u8>| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+
+    // buy_spins(tier_index: u8)
+    let buy = hex(luck_game::instruction::BuySpins { tier_index: 3 }.data());
+    println!("buy_spins    : {buy}");
+    assert_eq!(&buy[0..16], "1e71e289a75d2984", "buy_spins ayırıcısı değişti");
+    assert_eq!(buy, "1e71e289a75d298403", "buy_spins verisi değişti (u8 tier)");
+
+    let kayit = hex(luck_game::instruction::RegisterDelegate {}.data());
+    println!("register     : {kayit}");
+    assert_eq!(kayit, "da2d0c21c35959d0", "register_delegate ayırıcısı değişti");
+
+    let oyna = hex(luck_game::instruction::Play {}.data());
+    println!("play         : {oyna}");
+    assert_eq!(oyna, "d59dc18ee438f896", "play ayırıcısı değişti");
+
+    let cozumle = hex(luck_game::instruction::Resolve {}.data());
+    println!("resolve      : {cozumle}");
+    assert_eq!(cozumle, "f696ecce6c3f3a0a", "resolve ayırıcısı değişti");
+
+    let forfeit = hex(luck_game::instruction::ForfeitStuckPlay {}.data());
+    println!("forfeit      : {forfeit}");
+    assert_eq!(forfeit, "46f69baf8c6f6989", "forfeit_stuck_play ayırıcısı değişti");
+}
+
+/// Hesap ayırıcıları da sabit: istemci zincirden okuduğu hesabın gerçekten
+/// beklediği tip olduğunu bu 8 baytla doğruluyor. Kayarsa istemci
+/// "yapılandırılmamış" der ve oyun hiç açılmaz.
+#[test]
+fn hesap_ayiricilari_altin_vektore_uyuyor() {
+    use anchor_lang::Discriminator;
+
+    let hex = |d: &[u8]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(
+        hex(&luck_game::GameConfig::discriminator()),
+        "2d929221aa456085",
+        "GameConfig hesap ayırıcısı değişti"
+    );
+    assert_eq!(
+        hex(&luck_game::PlayerState::discriminator()),
+        "38033c56ae10f4c3",
+        "PlayerState hesap ayırıcısı değişti"
+    );
+}

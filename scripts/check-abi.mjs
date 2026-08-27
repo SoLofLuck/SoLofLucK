@@ -66,6 +66,7 @@ try {
     [
       'tsc',
       'src/lib/luckClaim.ts',
+      'src/lib/luckGame.ts',
       '--outDir', out,
       '--module', 'esnext',
       '--target', 'es2022',
@@ -100,7 +101,7 @@ try {
 // 2. config.ts, Vite'ın `import.meta.env`'ini okuyor; Node'da tanımsız
 //    olduğu için modül yüklenirken patlıyor. RPC uç noktası bu kontrolün
 //    konusu değil.
-for (const dosya of ['config.js', 'lib/luckClaim.js', 'lib/sendTx.js']) {
+for (const dosya of ['config.js', 'lib/luckClaim.js', 'lib/luckGame.js', 'lib/sendTx.js']) {
   const yol = join(out, dosya)
   if (!existsSync(yol)) continue
   writeFileSync(
@@ -359,6 +360,116 @@ kontrol(
   claim.unlockedAmount(cekilis, 1_110_000_000_000_000n, TGE - 1).toString(),
   '0',
 )
+
+// ---------------------------------------------------------------------------
+// Oyun talimatları — ayırıcılar ve hesap sıraları
+// ---------------------------------------------------------------------------
+// Oyunun beş talimatını da site kuruyor, program doğruluyor. Ayırıcı ya da
+// hesap sırası kayarsa işlem reddedilir — yani oyun tamamen durur.
+//
+// Ayırıcılar sha256("global:<isim>")[0..8]'den geliyor: bir talimatın ADI
+// değişirse sessizce değişirler. Hesap sırası da struct alan sırasına
+// bağlı; araya bir alan eklemek yeter.
+//
+// Vektörler luck-game testlerinde sabitlenmiş
+// (oyun_talimat_ayiricilari_altin_vektore_uyuyor).
+const oyun = await import(pathToFileURL(join(out, 'lib/luckGame.js')).href)
+
+const OYUN_SISTEM = '11111111111111111111111111111111'
+const OYUN_SLOTHASHES = 'SysvarS1otHashes111111111111111111111111111'
+const oyuncu = new PublicKey('BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36')
+const hazine = new PublicKey('5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m')
+const delege = new PublicKey('AHGDn3qqRyShYURf9qriMpVPHT8W6LwVTKUBXYMzuMxA')
+const oyunConfig = oyun.getConfigPda()
+const oyunVault = oyun.getVaultPda(oyunConfig)
+const oyuncuState = oyun.getPlayerStatePda(oyuncu)
+
+const oyunVektorleri = [
+  {
+    ad: 'buy_spins',
+    ix: oyun.buildBuySpinsIx(oyuncu, 3, hazine, delege),
+    veri: '1e71e289a75d298403',
+    hesaplar: [
+      ['player', oyuncu.toBase58(), true, true],
+      ['config', oyunConfig.toBase58(), false, false],
+      ['player_state', oyuncuState.toBase58(), false, true],
+      ['vault', oyunVault.toBase58(), false, true],
+      ['treasury', hazine.toBase58(), false, true],
+      ['delegate', delege.toBase58(), false, true],
+      ['system_program', OYUN_SISTEM, false, false],
+    ],
+  },
+  {
+    ad: 'register_delegate',
+    ix: oyun.buildRegisterDelegateIx(oyuncu, delege),
+    veri: 'da2d0c21c35959d0',
+    hesaplar: [
+      ['player', oyuncu.toBase58(), true, true],
+      ['config', oyunConfig.toBase58(), false, false],
+      ['player_state', oyuncuState.toBase58(), false, true],
+      ['vault', oyunVault.toBase58(), false, true],
+      ['delegate', delege.toBase58(), false, true],
+      ['system_program', OYUN_SISTEM, false, false],
+    ],
+  },
+  {
+    ad: 'play',
+    ix: oyun.buildPlayIx(oyuncu, delege),
+    veri: 'd59dc18ee438f896',
+    hesaplar: [
+      ['owner', oyuncu.toBase58(), false, false],
+      ['authority', delege.toBase58(), true, true],
+      ['config', oyunConfig.toBase58(), false, false],
+      ['player_state', oyuncuState.toBase58(), false, true],
+      ['system_program', OYUN_SISTEM, false, false],
+    ],
+  },
+  {
+    ad: 'resolve',
+    ix: oyun.buildResolveIx(oyuncu, hazine),
+    veri: 'f696ecce6c3f3a0a',
+    hesaplar: [
+      ['player', oyuncu.toBase58(), false, true],
+      ['config', oyunConfig.toBase58(), false, false],
+      ['player_state', oyuncuState.toBase58(), false, true],
+      ['vault', oyunVault.toBase58(), false, true],
+      ['treasury', hazine.toBase58(), false, true],
+      ['slot_hashes', OYUN_SLOTHASHES, false, false],
+      ['system_program', OYUN_SISTEM, false, false],
+    ],
+  },
+  {
+    ad: 'forfeit_stuck_play',
+    ix: oyun.buildForfeitStuckPlayIx(oyuncu),
+    veri: '46f69baf8c6f6989',
+    hesaplar: [
+      // `player` YAZILABİLİR DEĞİL — program tarafında `Signer<'info>`
+      // üzerinde `#[account(mut)]` yok, çünkü forfeit hiçbir lamport
+      // hareketi yapmıyor (yalnızca pending bayrağını temizliyor).
+      // İşlem ücretini ödeyen hesap zaten işlem düzeyinde yazılabilir
+      // sayılıyor, talimat meta'sında ayrıca işaretlenmesi gerekmiyor.
+      //
+      // Bu satırı önce `true` yazmıştım; denetim yakaladı ve kaynağa
+      // bakınca hatalı olanın BEKLENTİM olduğu ortaya çıktı.
+      ['player', oyuncu.toBase58(), true, false],
+      ['config', oyunConfig.toBase58(), false, false],
+      ['player_state', oyuncuState.toBase58(), false, true],
+    ],
+  },
+]
+
+for (const v of oyunVektorleri) {
+  kontrol(`oyun ${v.ad}: talimat baytları`, Buffer.from(v.ix.data).toString('hex'), v.veri)
+  kontrol(`oyun ${v.ad}: hesap sayısı`, v.ix.keys.length, v.hesaplar.length)
+  for (let i = 0; i < v.hesaplar.length; i++) {
+    const [ad, adres, imzaci, yazilabilir] = v.hesaplar[i]
+    const k = v.ix.keys[i]
+    kontrol(`oyun ${v.ad}: hesap ${i} ${ad}`, k?.pubkey?.toBase58(), adres)
+    kontrol(`oyun ${v.ad}: hesap ${i} ${ad} imzacı`, k?.isSigner, imzaci)
+    kontrol(`oyun ${v.ad}: hesap ${i} ${ad} yazılabilir`, k?.isWritable, yazilabilir)
+  }
+}
+
 
 rmSync(out, { recursive: true, force: true })
 

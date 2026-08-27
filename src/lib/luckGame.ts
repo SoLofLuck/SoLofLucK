@@ -305,7 +305,13 @@ export function maskWalletForLeaderboard(player: PublicKey): string {
 // atlıyor (bkz. lib.rs buy_spins). Bu sayede oyuncu her satın alımda,
 // zaten imzaladığı ödeme işleminin İÇİNDE, kasadan gelen küçük bir gaz
 // tazelemesi de almış oluyor — ayrı bir "doldur" onayına gerek kalmadan.
-function buildBuySpinsIx(
+/**
+ * Aşağıdaki beş talimat kurucusu `export` — tek amacı doğrulanabilirlik:
+ * scripts/check-abi.mjs bunları çağırıp ürettikleri baytları ve hesap
+ * sıralarını programın kendi altın vektörleriyle karşılaştırıyor.
+ * Kopyalarını sınamak, kopyanın kendisiyle uyuştuğunu kanıtlardı.
+ */
+export function buildBuySpinsIx(
   player: PublicKey,
   tierIndex: number,
   treasury: PublicKey,
@@ -335,7 +341,7 @@ function buildBuySpinsIx(
 // burada oyuncudan hiçbir SOL transferi istenmiyor, tek imza gerçekten
 // ücretsiz bir işlem. `delegate` artık instruction verisinde değil, bir
 // hesap olarak veriliyor (program `ctx.accounts.delegate.key()`'i okuyor).
-function buildRegisterDelegateIx(player: PublicKey, delegate: PublicKey): TransactionInstruction {
+export function buildRegisterDelegateIx(player: PublicKey, delegate: PublicKey): TransactionInstruction {
   const config = getConfigPda()
   const vault = getVaultPda(config)
   const playerState = getPlayerStatePda(player)
@@ -353,7 +359,7 @@ function buildRegisterDelegateIx(player: PublicKey, delegate: PublicKey): Transa
   })
 }
 
-function buildPlayIx(owner: PublicKey, authority: PublicKey): TransactionInstruction {
+export function buildPlayIx(owner: PublicKey, authority: PublicKey): TransactionInstruction {
   const config = getConfigPda()
   const playerState = getPlayerStatePda(owner)
   return new TransactionInstruction({
@@ -377,7 +383,7 @@ function buildPlayIx(owner: PublicKey, authority: PublicKey): TransactionInstruc
 // adres geçirilemez (işlem başarısız olur). İşlemin ücretini ödeyen imzacı
 // (feePayer), aşağıdaki `sendIxs` içinde ayarlanıyor — delegate anahtarıyla
 // da imzalanabilir, kazanç her zaman `owner`'a (gerçek cüzdana) gider.
-function buildResolveIx(owner: PublicKey, treasury: PublicKey): TransactionInstruction {
+export function buildResolveIx(owner: PublicKey, treasury: PublicKey): TransactionInstruction {
   const config = getConfigPda()
   const vault = getVaultPda(config)
   const playerState = getPlayerStatePda(owner)
@@ -400,7 +406,7 @@ function buildResolveIx(owner: PublicKey, treasury: PublicKey): TransactionInstr
 // imzasını zorunlu kılıyor (delegate ile çağrılamaz) — bu, çok nadir
 // görülen bir "resolve penceresi kaçtı" kurtarma işlemi olduğundan kabul
 // edilebilir bir istisna.
-function buildForfeitStuckPlayIx(player: PublicKey): TransactionInstruction {
+export function buildForfeitStuckPlayIx(player: PublicKey): TransactionInstruction {
   const config = getConfigPda()
   const playerState = getPlayerStatePda(player)
   return new TransactionInstruction({
