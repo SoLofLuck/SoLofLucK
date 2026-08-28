@@ -17,11 +17,11 @@ Yapılanlar:
 
 | Katman | Kapsam |
 |---|---|
-| Birim + senaryo testleri | luck-game 28, luck-distributor 20 test |
+| Birim + senaryo testleri | luck-game 33, luck-distributor 20 test |
 | Kaos testi (oyun) | 8 tohum × 400 rastgele adım, her adımda 7 değişmez kontrolü |
 | Kaos testi (dağıtım) | 4 tohum, her adımda 8 değişmez + sahte çekim denemeleri |
 | Sabotaj testi | Her kontrolün, kaldırıldığında GERÇEKTEN düştüğü kanıtlandı |
-| ABI denetimi | 177 kontrol — istemci ile programın aynı baytları konuştuğu |
+| ABI denetimi | 213 kontrol — istemci ile programın aynı baytları konuştuğu |
 | Tokenomics denetimi | 73 kontrol — ilan edilen sayılarla zincirdeki kuralların uyumu |
 | Uçtan uca prova | Devnet'te katkı → liste → merkle → dağıtıcı → claim |
 | `clippy` (sıkı) | Her PR'da, uyarılar hata sayılıyor |
@@ -166,8 +166,37 @@ değiştiremez.
 Slot makinesinin sonucu şöyle belirleniyor:
 
 ```
-zar = keccak( slot_hash ‖ entropy_slot ‖ oyuncu ‖ oyun_sayaci )
+digest = sha256( slot_hash ‖ entropy_slot ‖ oyuncu ‖ oyun_sayaci )
+zar    = u64_le(digest[0..8])  % 10000     -> kazandı mı
+katman = u64_le(digest[8..16]) % 10000     -> küçük ödül mü, jackpot mu
 ```
+
+| alan | boyut | biçim |
+|---|---|---|
+| `slot_hash` | 32 | kullanılan bloğun hash'i, ham bayt |
+| `entropy_slot` | 8 | o bloğun slot numarası, little-endian |
+| `oyuncu` | 32 | oyuncunun cüzdan adresi, ham bayt |
+| `oyun_sayaci` | 4 | `plays_count`, little-endian |
+
+**`sha256`, keccak değil.** Oyun `solana_program::hash::hash` kullanıyor
+(SHA-256); dağıtıcı ise merkle ağacında keccak kullanıyor. İkisi farklı ve
+karıştırılırsa doğrulama tutmaz.
+
+**Kendiniz doğrulayın** — bu vektörü herkes tekrar üretebilir:
+
+```python
+import hashlib
+pre = bytes(range(32)) + (488_699_073).to_bytes(8,'little') \
+    + bytes([7])*32   + (5).to_bytes(4,'little')
+d = hashlib.sha256(pre).digest()
+assert d.hex() == '3d54d1715c5d05dcfc12bb5dd95b197b078f3135b04aab6ead91103c1233cc6d'
+assert int.from_bytes(d[0:8],'little')  % 10000 == 7597   # zar
+assert int.from_bytes(d[8:16],'little') % 10000 == 4556   # katman
+```
+
+Aynı vektör hem Rust testinde (`altin_zar_vektoru`) hem ABI denetiminde
+(`check-abi`) koşuyor. Yani buradaki tarif, programın gerçekte yaptığı işten
+sapamaz — saparsa CI düşer.
 
 `play()` anında `commit_slot` yazılıyor; sonuç ise
 `commit_slot + reveal_delay_slots` slotunun hash'inden üretiliyor. O slot
@@ -212,6 +241,23 @@ Dürüst olmak gerekirse üç tane var.
 Yetkili; ödül tutarlarını, kazanma oranlarını, ev payını ve paket
 fiyatlarını değiştirebiliyor. Bu, tarife ayarlaması için gerekli ama aynı
 zamanda oranları kötüleştirme yetkisi de demek.
+
+**Bekleyen bahisleri etkilemez.** `play()` anında ödemeyi belirleyen tüm
+parametreler `PlayerState`'e kopyalanıyor ve `resolve()` config'i değil
+onları okuyor. Yani bahsinizi koyduğunuz andaki oranlarla sonuçlanırsınız;
+yetkilinin bekleyen bir bahsi görüp oranını değiştirmesi mümkün değil.
+
+> Bu böyle **değildi**. `resolve()` güncel config'i okuyordu ve koddaki
+> yorum "bekleyen oyunları etkilemez" deyip hemen ardından "resolve GÜNCEL
+> config'ten okur" diye kendini yalanlıyordu. Doğrulanabilir adalet
+> iddiasında bulunan bir oyunda "bahsi koyduktan sonra oranı
+> değiştirmeyeceğimize güvenin" kabul edilemez bir boşluktu. Kodu
+> dışarıdan inceleyen biri işaret etti; yayın öncesinde, düzeltmenin
+> bedava olduğu son anda kapatıldı.
+
+Kasa **bakiyesi** dondurulmuyor ve dondurulmamalı: "kolay mod" kasanın o
+anki doluluğuna bağlı ve bu kasıtlı — kasa doldukça oranlar herkes için
+iyileşiyor. Dondurulan şey **eşik**, bakiye değil.
 
 Sınırları: tüm oranlar ≤ %100, kolay mod zor moddan kolay olmak zorunda,
 eşik jackpot + payını karşılamak zorunda, hazine sıfır adres olamaz.

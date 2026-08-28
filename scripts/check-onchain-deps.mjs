@@ -23,7 +23,6 @@
 //      hiçbiri bu kümede DEĞİL mi. Kümedeki bir paketin açığı çıkarsa
 //      denetim düşüyor — asıl sert kapı burası.
 
-import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { cfgDogruMu, kenarGecerli, sbfBagimliliklari } from './lib/sbf-deps.mjs'

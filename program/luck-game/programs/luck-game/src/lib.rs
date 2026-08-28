@@ -137,13 +137,22 @@ pub mod luck_game {
         Ok(())
     }
 
-    /// Parametreleri sonradan ayarlamak için (ör. paket tarifesini/oranları
-    /// güncelleme). Yalnızca `config.authority` çağırabilir. Devam eden
-    /// (pending) oyunları etkilemez — onlar zaten commit anındaki kurallara
-    /// göre resolve olur çünkü resolve() ihtimalleri GÜNCEL config'ten
-    /// okur; bu kasıtlı basit bir tasarım, kritik değilse (ör. sadece
-    /// tarife güncellemesi) sorun değil, ama oran değişikliklerinin
-    /// bekleyen oyunları etkileyebileceğini unutmayın.
+    /// Parametreleri sonradan ayarlamak için (ör. paket tarifesini
+    /// güncelleme). Yalnızca `config.authority` çağırabilir.
+    ///
+    /// BEKLEYEN OYUNLARI ETKİLEMEZ. `play()` anında ödemeyi belirleyen tüm
+    /// parametreler `PlayerState`'e KOPYALANIYOR ve `resolve()` onları
+    /// okuyor. Yani oyuncu bahsini koyduğu andaki kurallarla sonuçlanır;
+    /// yetkilinin bekleyen bir bahsin oranını sonradan değiştirmesi
+    /// mümkün değil.
+    ///
+    /// Bu böyle DEĞİLDİ. Önceden `resolve()` güncel config'i okuyordu ve
+    /// buradaki yorum "bekleyen oyunları etkilemez" diyip hemen ardından
+    /// "resolve GÜNCEL config'ten okur" diye kendini yalanlıyordu.
+    /// Doğrulanabilir adalet iddiasında bulunan bir oyunda "bahsi
+    /// koyduktan sonra oranı değiştirmeyeceğimize güvenin" kabul edilemez
+    /// bir boşluktu. Yayın öncesinde, düzeltmenin bedava olduğu son anda
+    /// kapatıldı.
     pub fn update_config(
         ctx: Context<UpdateConfig>,
         new_treasury: Pubkey,
@@ -519,10 +528,22 @@ pub mod luck_game {
         // Ücretsiz haklar tam bitince (ve daha önce bonus verilmediyse) tek
         // seferlik +1 bonus deneme veriyoruz — frontend bunu bildirimle
         // gösterir (bkz. PlayCommitted.bonus_granted).
+        //
+        // Koşul EŞİTLİK değil, ">=" olmak zorunda. Eşitlikken
+        // (`plays_count == free_plays`) ücretsiz haklarını kullanmadan ÖNCE
+        // paket alan oyuncu bonusu HİÇ ALAMIYORDU: satın alınan spinler de
+        // aynı bakiyeye eklendiği için bakiye 3'te değil 4'te sıfırlanıyor
+        // ve eşitlik hiç tutmuyordu. Testle doğrulandı (bkz.
+        // `paket_once_alinsa_da_bonus_veriliyor`).
+        //
+        // `free_plays > 0` şartı da gerekli: ücretsiz hak yokken hiç kimse
+        // bonus almamalı, yoksa ">=" herkese ilk oyundan sonra bedava spin
+        // verirdi.
         let mut bonus_granted = false;
         if player_state.spins_remaining == 0
             && !player_state.bonus_granted
-            && player_state.plays_count == config.free_plays as u32
+            && config.free_plays > 0
+            && player_state.plays_count >= config.free_plays as u32
         {
             player_state.spins_remaining = 1;
             player_state.bonus_granted = true;
@@ -532,6 +553,17 @@ pub mod luck_game {
         player_state.pending = true;
         player_state.commit_slot = Clock::get()?.slot;
         player_state.bump = ctx.bumps.player_state;
+
+        // BAHSİN KOYULDUĞU ANDAKİ KURALLARI DONDUR.
+        // resolve() bunları okuyacak; update_config bu bahsi artık
+        // etkileyemez.
+        player_state.bet_small_prize_lamports = config.small_prize_lamports;
+        player_state.bet_big_prize_lamports = config.big_prize_lamports;
+        player_state.bet_vault_easy_threshold_lamports = config.vault_easy_threshold_lamports;
+        player_state.bet_big_prize_bps = config.big_prize_bps;
+        player_state.bet_normal_win_bps = config.normal_win_bps;
+        player_state.bet_easy_win_bps = config.easy_win_bps;
+        player_state.bet_treasury_fee_bps = config.treasury_fee_bps;
 
         emit!(PlayCommitted {
             player: owner,
@@ -649,17 +681,27 @@ pub mod luck_game {
             digest[8..16].try_into().map_err(|_| GameError::MathOverflow)?,
         ) % BPS_DENOMINATOR as u64) as u32;
 
+        // BAHSİN KOYULDUĞU ANDAKİ KURALLAR — config'ten DEĞİL, player_state'ten.
+        //
+        // Eskiden burada güncel config okunuyordu; yani yetkili, bekleyen bir
+        // bahsi gördükten sonra oranı düşürüp o bahsi etkileyebilirdi.
+        // Doğrulanabilir adalet iddiasında bulunan bir oyunda bu kabul
+        // edilemezdi. play() artık bu değerleri donduruyor.
+        //
+        // Kasa BAKİYESİ dondurulmuyor ve dondurulmamalı: "kolay mod" kasanın
+        // o anki doluluğuna bağlı ve bu kasıtlı — kasa doldukça oranlar
+        // herkes için iyileşiyor. Dondurulan şey EŞİK, bakiye değil.
         let rent_exempt = Rent::get()?.minimum_balance(0);
         let vault_balance = ctx
             .accounts
             .vault
             .lamports()
             .saturating_sub(rent_exempt);
-        let easy_mode = vault_balance >= config.vault_easy_threshold_lamports;
+        let easy_mode = vault_balance >= player_state.bet_vault_easy_threshold_lamports;
         let win_bps = if easy_mode {
-            config.easy_win_bps
+            player_state.bet_easy_win_bps
         } else {
-            config.normal_win_bps
+            player_state.bet_normal_win_bps
         };
         // `normal_win_bps` sıfırdan büyük ayarlanırsa (yani "zor modda" da
         // küçük bir kazanma ihtimali varsa), kasa henüz `big_prize_lamports`
@@ -677,9 +719,12 @@ pub mod luck_game {
         // (`vault_easy_threshold_lamports >= jackpot + pay`) zaten
         // initialize/update_config'te zorunlu kılındığı için "kolay modda"
         // bu dala hiç girilmemesi beklenir; bu tamamen savunma amaçlı.
-        let max_payout = config
-            .big_prize_lamports
-            .checked_add(ops_fee_lamports(config.big_prize_lamports, config.treasury_fee_bps)?)
+        let max_payout = player_state
+            .bet_big_prize_lamports
+            .checked_add(ops_fee_lamports(
+                player_state.bet_big_prize_lamports,
+                player_state.bet_treasury_fee_bps,
+            )?)
             .ok_or(GameError::MathOverflow)?;
         let won = roll < win_bps as u32 && vault_balance >= max_payout;
 
@@ -687,11 +732,11 @@ pub mod luck_game {
         let mut ops_fee_paid: u64 = 0;
         let mut is_big_win = false;
         if won {
-            is_big_win = tier_roll < config.big_prize_bps as u32;
+            is_big_win = tier_roll < player_state.bet_big_prize_bps as u32;
             let prize_amount = if is_big_win {
-                config.big_prize_lamports
+                player_state.bet_big_prize_lamports
             } else {
-                config.small_prize_lamports
+                player_state.bet_small_prize_lamports
             };
 
             let config_key = ctx.accounts.config.key();
@@ -714,7 +759,7 @@ pub mod luck_game {
             // KESİLMEDEN, kasadan ayrıca hazineye. Oyuncu ilan edilen ödülün
             // tamamını alır (0,5 SOL ödülde tam 0,5 SOL); kasadan çıkan
             // toplam 0,6 SOL olur.
-            ops_fee_paid = ops_fee_lamports(prize_amount, config.treasury_fee_bps)?;
+            ops_fee_paid = ops_fee_lamports(prize_amount, player_state.bet_treasury_fee_bps)?;
             if ops_fee_paid > 0 {
                 system_program::transfer(
                     CpiContext::new_with_signer(
@@ -943,11 +988,29 @@ pub struct PlayerState {
     pub total_won_lamports: u64,
     // Ücretsiz haklar bitince verilen tek seferlik +1 bonus spin kullanıldı mı.
     pub bonus_granted: bool,
+
+    // --- BAHSİN KOYULDUĞU ANDAKİ KURALLAR ---------------------------------
+    // `play()` bunları config'ten kopyalıyor, `resolve()` config yerine
+    // bunları okuyor. Böylece oyuncu bahsini koyduğu andaki oranlarla
+    // sonuçlanıyor ve yetkilinin bekleyen bir bahsin kurallarını sonradan
+    // değiştirmesi mümkün olmuyor.
+    //
+    // Sıfır olmaları "henüz oynanmadı" demek; resolve zaten `pending`
+    // olmadan çalışmıyor, yani bu alanlar okunduğunda hep doludur.
+    pub bet_small_prize_lamports: u64,
+    pub bet_big_prize_lamports: u64,
+    pub bet_vault_easy_threshold_lamports: u64,
+    pub bet_big_prize_bps: u16,
+    pub bet_normal_win_bps: u16,
+    pub bet_easy_win_bps: u16,
+    pub bet_treasury_fee_bps: u16,
 }
 
 impl PlayerState {
     // 8 (disc) + 32 + 4 + 4 + 1 + 8 + 1 + 1 + 1 + 4 + 32 + 8 + 1
-    pub const LEN: usize = 8 + 32 + 4 + 4 + 1 + 8 + 1 + 1 + 1 + 4 + 32 + 8 + 1;
+    //   + bahis anındaki kurallar: 8 + 8 + 8 + 2 + 2 + 2 + 2 = 32 bayt
+    pub const LEN: usize =
+        8 + 32 + 4 + 4 + 1 + 8 + 1 + 1 + 1 + 4 + 32 + 8 + 1 + 8 + 8 + 8 + 2 + 2 + 2 + 2;
 }
 
 #[derive(Accounts)]

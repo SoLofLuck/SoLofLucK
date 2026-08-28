@@ -25,6 +25,7 @@ import {
   presalePhaseAt,
   sendPresaleContribution,
   tokensForSol,
+  presaleClosedReason,
 } from '../../lib/presale'
 import { useSolUsdPrice } from '../../lib/solPrice'
 
@@ -121,17 +122,16 @@ export function PresaleTab({ network }: Props) {
   const progress = computePresaleProgress(poolSol ?? 0)
   const phase = presalePhaseAt(now)
   const endsAt = presaleEndsAt()
-  // Katkı yalnızca presale gerçekten açıkken kabul edilir: hedef dolduysa
-  // (hard cap) ya da takvim bittiyse butonlar kapanır. Takvim henüz ilan
-  // edilmediyse ('unscheduled') test aşamasında olduğumuz için açık bırakılır.
-  const closedReason = progress.targetReached
-    ? 'reached'
-    : phase === 'ended'
-      ? 'ended'
-      : phase === 'upcoming'
-        ? 'upcoming'
-        : null
-  const canContribute = configured && wallet.connected && closedReason === null
+  // Katkı yalnızca presale gerçekten açıkken kabul edilir. Karar saf bir
+  // fonksiyonda (presaleClosedReason) ve testi var — bu, sitedeki tek para
+  // kapısı olduğu için mantığın bileşenin içinde, sınanamaz halde durmaması
+  // gerekiyor.
+  const closedReason = presaleClosedReason({
+    configured,
+    targetReached: progress.targetReached,
+    phase,
+  })
+  const canContribute = wallet.connected && closedReason === null
 
   // KALAN KONTENJAN. Site "777 SOL'den fazla katkı kabul edilmez (hard cap)"
   // diyor ama bunu hiçbir şey uygulamıyordu: 770 SOL'deyken 100 SOL gönderen
@@ -263,6 +263,12 @@ export function PresaleTab({ network }: Props) {
       )}
       {closedReason === 'upcoming' && (
         <div className="alert alert--info">Presale henüz başlamadı — katkı kabul edilmiyor.</div>
+      )}
+      {closedReason === 'unscheduled' && (
+        <div className="alert alert--info">
+          Presale tarihi henüz ilan edilmedi — katkı kabul edilmiyor. Tarih duyurulduğunda burada
+          geri sayım görünecek.
+        </div>
       )}
 
       {!wallet.connected && (

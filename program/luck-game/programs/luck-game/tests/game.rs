@@ -650,3 +650,258 @@ fn hesap_ayiricilari_altin_vektore_uyuyor() {
         "PlayerState hesap ayırıcısı değişti"
     );
 }
+
+/// ZARIN ALTIN VEKTÖRÜ — belge ile kod aynı şeyi mi söylüyor.
+///
+/// GUVENLIK.md, oyuncuların sonucu kendi başlarına doğrulayabilmesi için
+/// zarın nasıl üretildiğini anlatıyor. O tarif yanlışsa belge işe yaramaz
+/// olmaktan da kötüsü ZARARLI olur: doğrulamaya çalışan kişi farklı bir sayı
+/// bulur ve "oyun hileli" sonucuna varır.
+///
+/// Nitekim tarif YANLIŞTI — belgede keccak yazıyordu, oysa program
+/// `solana_program::hash::hash` yani SHA-256 kullanıyor. (Dağıtıcı merkle
+/// ağacında gerçekten keccak kullanıyor; ikisi karıştırılmış.) Dışarıdan
+/// bakan biri farkı gördü.
+///
+/// Bu test o tarifi koda bağlıyor. Aynı vektör scripts/check-abi.mjs
+/// içinde JS tarafında da üretiliyor.
+#[test]
+fn altin_zar_vektoru() {
+    let mut preimage = Vec::with_capacity(76);
+    preimage.extend_from_slice(&(0u8..32).collect::<Vec<u8>>()); // slot_hash
+    preimage.extend_from_slice(&488_699_073u64.to_le_bytes()); // entropy_slot
+    preimage.extend_from_slice(&[7u8; 32]); // oyuncu
+    preimage.extend_from_slice(&5u32.to_le_bytes()); // plays_count
+    assert_eq!(preimage.len(), 76, "preimage düzeni değişti");
+
+    // Programın resolve()'da kullandığı hash fonksiyonunun AYNISI.
+    let digest = anchor_lang::solana_program::hash::hash(&preimage).to_bytes();
+    let hex = digest.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    println!("digest: {hex}");
+    assert_eq!(
+        hex, "3d54d1715c5d05dcfc12bb5dd95b197b078f3135b04aab6ead91103c1233cc6d",
+        "zar hash'i değişti — GUVENLIK.md'deki tarif artık yanlış"
+    );
+
+    let zar = u64::from_le_bytes(digest[0..8].try_into().unwrap()) % 10_000;
+    let katman = u64::from_le_bytes(digest[8..16].try_into().unwrap()) % 10_000;
+    assert_eq!(zar, 7_597, "zar türetimi değişti");
+    assert_eq!(katman, 4_556, "katman zarı türetimi değişti");
+}
+
+/// Ücretsiz haklarını kullanmadan ÖNCE paket alan oyuncu da bonus spin'i
+/// alabilmeli.
+///
+/// Eskiden alamıyordu ve bu bir eşitlik hatasıydı: koşul
+/// `plays_count == free_plays` idi, ama satın alınan spinler de aynı
+/// bakiyeye eklendiği için bakiye 3'te değil 4'te sıfırlanıyor ve eşitlik
+/// hiç tutmuyordu. Yani "önce paket al" davranışı bonusu sessizce yakıyordu.
+#[tokio::test]
+async fn paket_once_alinsa_da_bonus_veriliyor() {
+    let mut g = Game::start_with(50 * SOL, NORMAL_WIN_BPS, EASY_WIN_BPS, 3).await;
+    let o = Keypair::new();
+    let d = Keypair::new();
+    fund(&mut g.ctx, &o.pubkey(), 20 * SOL).await;
+    let k = o.pubkey();
+
+    // ÖNCE 1 spinlik paketi al, SONRA oyna: toplam 1 + 3 = 4 spin.
+    let ix = g.buy_spins_ix(&k, &d.pubkey(), 0);
+    g.send(&[ix], &[&o]).await.unwrap();
+
+    let mut slot = g.slot().await.max(1_000) + 100;
+    for _ in 0..4 {
+        g.warp(slot);
+        slot += 20;
+        let ix = g.play_ix(&k, &k);
+        g.send(&[ix], &[&o]).await.unwrap();
+        // Sonuçlandırmadan tekrar oynanamaz; pencereyi geçip iptal ediyoruz.
+        slot += MAX_RESOLVE_WINDOW_SLOTS_TEST + REVEAL_DELAY + 10;
+        g.warp(slot);
+        slot += 20;
+        let ix = g.forfeit_ix(&k);
+        g.send(&[ix], &[&o]).await.unwrap();
+    }
+
+    let s = g.player_state(&k).await.unwrap();
+    assert_eq!(s.plays_count, 4, "4 spin oynanmalıydı");
+    assert!(
+        s.bonus_granted,
+        "önce paket alan oyuncu bonus spin'i alamadı — eşitlik hatası geri gelmiş"
+    );
+    assert_eq!(s.spins_remaining, 1, "bonus spin bakiyeye eklenmedi");
+}
+
+/// Ücretsiz hak YOKKEN kimse bonus almamalı.
+///
+/// Bonus koşulu eşitlikten ">="e çevrildi; `free_plays > 0` şartı olmasaydı
+/// bu değişiklik HERKESE ilk oyunundan sonra bedava bir spin verirdi.
+#[tokio::test]
+async fn ucretsiz_hak_yokken_bonus_verilmiyor() {
+    let mut g = Game::start_with(50 * SOL, NORMAL_WIN_BPS, EASY_WIN_BPS, 0).await;
+    let o = Keypair::new();
+    let d = Keypair::new();
+    fund(&mut g.ctx, &o.pubkey(), 20 * SOL).await;
+    let k = o.pubkey();
+
+    let ix = g.buy_spins_ix(&k, &d.pubkey(), 0); // 1 spin
+    g.send(&[ix], &[&o]).await.unwrap();
+
+    let slot = g.slot().await.max(1_000) + 100;
+    g.warp(slot);
+    let ix = g.play_ix(&k, &k);
+    g.send(&[ix], &[&o]).await.unwrap();
+
+    let s = g.player_state(&k).await.unwrap();
+    assert!(!s.bonus_granted, "ücretsiz hak yokken bonus verilmiş");
+    assert_eq!(s.spins_remaining, 0, "bedava spin eklenmiş");
+}
+
+/// YETKİLİ, BEKLEYEN BİR BAHSİN KURALLARINI DEĞİŞTİREMEZ.
+///
+/// Bu, doğrulanabilir adalet iddiasının temel taşı. Oyuncu bahsini
+/// koyduğunda oranlar donuyor; `update_config` sonradan ne yaparsa yapsın o
+/// bahis ilk kurallarla sonuçlanıyor.
+///
+/// Eskiden böyle DEĞİLDİ: `resolve()` güncel config'i okuyordu, yani
+/// yetkili bekleyen bir bahsi gördükten sonra kazanma oranını sıfıra
+/// çekebilirdi. Kodu dışarıdan inceleyen biri bu tasarım riskini işaret
+/// etti; yayın öncesinde kapatıldı.
+///
+/// Test şöyle kuruyor: oranlar %100 (her tur kazanır) iken oyuncu oynuyor,
+/// SONRA yetkili oranı %0'a çekiyor. Bahis yine de KAZANMALI.
+#[tokio::test]
+async fn yetkili_bekleyen_bahsin_oranini_degistiremiyor() {
+    // Her tur kazansın: normal ve kolay mod %100.
+    let mut g = Game::start_with(50 * SOL, 10_000, 10_000, 0).await;
+    let o = Keypair::new();
+    let d = Keypair::new();
+    fund(&mut g.ctx, &o.pubkey(), 20 * SOL).await;
+    let k = o.pubkey();
+
+    let ix = g.buy_spins_ix(&k, &d.pubkey(), 0);
+    g.send(&[ix], &[&o]).await.unwrap();
+
+    let mut slot = g.slot().await.max(1_000) + 100;
+    g.warp(slot);
+    let ix = g.play_ix(&k, &k);
+    g.send(&[ix], &[&o]).await.unwrap();
+
+    // --- BAHİS KOYULDU. Şimdi yetkili oranı SIFIRA çekiyor. ---
+    let ix = solana_sdk::instruction::Instruction {
+        program_id: luck_game::ID,
+        accounts: anchor_lang::ToAccountMetas::to_account_metas(
+            &luck_game::accounts::UpdateConfig {
+                authority: g.authority.pubkey(),
+                config: g.config,
+            },
+            None,
+        ),
+        data: anchor_lang::InstructionData::data(&luck_game::instruction::UpdateConfig {
+            new_treasury: g.treasury,
+            free_plays: 0,
+            small_prize_lamports: SMALL_PRIZE,
+            big_prize_lamports: BIG_PRIZE,
+            big_prize_bps: BIG_PRIZE_BPS,
+            vault_easy_threshold_lamports: EASY_THRESHOLD,
+            normal_win_bps: 0, // <-- kimse kazanamasın
+            easy_win_bps: 0,   // <--
+            treasury_fee_bps: TREASURY_FEE_BPS,
+            spin_tier_counts: TIER_COUNTS,
+            spin_tier_prices: TIER_PRICES,
+        }),
+    };
+    let auth = g.authority.insecure_clone();
+    g.send(&[ix], &[&auth]).await.unwrap();
+
+    // --- Bekleyen bahis sonuçlansın. ---
+    let commit = g.player_state(&k).await.unwrap().commit_slot;
+    let hedef = commit + REVEAL_DELAY;
+    slot = hedef + 3;
+    g.warp(slot);
+    let mut h = [0u8; 32];
+    h[0] = 42;
+    g.set_slot_hashes(&[(hedef, h)]);
+
+    let ix = g.resolve_ix(&k);
+    g.send(&[ix], &[]).await.unwrap();
+
+    let s = g.player_state(&k).await.unwrap();
+    assert_eq!(
+        s.wins_count, 1,
+        "bahis koyulduğunda oran %100'dü ama yetkili sonradan %0 yapınca tur \
+         kaybedildi — bekleyen bahis korunmuyor"
+    );
+    assert!(s.total_won_lamports > 0, "kazanç ödenmemiş");
+    assert!(!s.pending, "resolve sonrası hâlâ bekliyor");
+}
+
+/// PlayerState'in TAM BAYT DÜZENİ.
+///
+/// Bu hesabı site sabit ofsetlerle okuyor (decodePlayerState). Araya bir
+/// alan eklemek yeter: TypeScript aynı ofsetlerden okumaya devam eder ve
+/// hiçbir hata vermeden yanlış spin sayısı, yanlış kazanç gösterir.
+///
+/// Düzen az önce genişledi (bahis anındaki kurallar eklendi). Yeni alanlar
+/// bilerek SONA eklendi ki mevcut ofsetler kaymasın; bu vektör de bunu
+/// kanıtlıyor. Aynı baytlar scripts/check-abi.mjs içinde SİTENİN GERÇEK
+/// okuyucusuna verilip geri okunuyor.
+#[test]
+fn player_state_bayt_duzeni_altin_vektore_uyuyor() {
+    use anchor_lang::{AnchorSerialize, Discriminator};
+
+    let durum = luck_game::PlayerState {
+        player: anchor_lang::prelude::Pubkey::new_from_array([9u8; 32]),
+        plays_count: 11,
+        wins_count: 3,
+        pending: true,
+        commit_slot: 488_699_073,
+        bump: 254,
+        initialized: true,
+        spins_seeded: true,
+        spins_remaining: 17,
+        delegate: anchor_lang::prelude::Pubkey::new_from_array([4u8; 32]),
+        total_won_lamports: 1_500_000_000,
+        bonus_granted: true,
+        bet_small_prize_lamports: 500_000_000,
+        bet_big_prize_lamports: 1_000_000_000,
+        bet_vault_easy_threshold_lamports: 1_200_000_000,
+        bet_big_prize_bps: 3_000,
+        bet_normal_win_bps: 50,
+        bet_easy_win_bps: 1_000,
+        bet_treasury_fee_bps: 2_000,
+    };
+    let mut baytlar = luck_game::PlayerState::DISCRIMINATOR.to_vec();
+    durum.serialize(&mut baytlar).unwrap();
+
+    let hex = baytlar.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    println!("PlayerState: {hex}");
+    assert_eq!(
+        baytlar.len(),
+        luck_game::PlayerState::LEN,
+        "PlayerState::LEN gerçek boyutla uyuşmuyor — hesap ya taşar ya yer israf eder"
+    );
+    assert_eq!(
+        hex,
+        "38033c56ae10f4c3\
+         0909090909090909090909090909090909090909090909090909090909090909\
+         0b000000\
+         03000000\
+         01\
+         c1f4201d00000000\
+         fe\
+         01\
+         01\
+         11000000\
+         0404040404040404040404040404040404040404040404040404040404040404\
+         002f685900000000\
+         01\
+         0065cd1d00000000\
+         00ca9a3b00000000\
+         008c864700000000\
+         b80b\
+         3200\
+         e803\
+         d007",
+        "PlayerState bayt düzeni değişti — site YANLIŞ okur"
+    );
+}

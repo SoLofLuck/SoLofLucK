@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { SOCIAL_LINKS, type NetworkId } from '../../config'
+import { hashFromRoute, routeFromHash } from '../../lib/deepLink'
 import { MatrixBackground } from './MatrixBackground'
 import { AboutTab } from './AboutTab'
 import { TokenomicsTab } from './TokenomicsTab'
@@ -8,6 +9,16 @@ import { GameTab } from './GameTab'
 import { ClaimTab } from './ClaimTab'
 
 type SubTab = 'about' | 'tokenomics' | 'presale' | 'claim' | 'game'
+
+// App.tsx'tekiyle aynı yönlendirme tanımı. İkisinin ayrışmaması gerekiyor;
+// check-abi bunu doğruluyor.
+const ROTA = {
+  pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
+  defaultPage: 'create' as const,
+  subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'] as const,
+  defaultSubTab: 'about' as const,
+  subTabPage: 'solofluck' as const,
+}
 
 const SUBTABS: { id: SubTab; label: string }[] = [
   { id: 'about', label: 'Hakkında' },
@@ -28,7 +39,25 @@ const SOCIAL_ITEMS = [
 ].filter((s) => s.url)
 
 export function SoLofLuckPage({ network }: Props) {
-  const [tab, setTab] = useState<SubTab>('about')
+  // Alt sekme de adres çubuğunda: #solofluck/presale paylaşılabilir olsun.
+  // Bir presale için bu tek başına önemli — duyuruda verilen adres
+  // kullanıcıyı doğrudan presale'e götürmeli.
+  const [tab, setTab] = useState<SubTab>(
+    () => routeFromHash(window.location.hash, ROTA).subTab,
+  )
+
+  useEffect(() => {
+    const uygula = () => setTab(routeFromHash(window.location.hash, ROTA).subTab)
+    window.addEventListener('hashchange', uygula)
+    return () => window.removeEventListener('hashchange', uygula)
+  }, [])
+
+  useEffect(() => {
+    const yeni = hashFromRoute('solofluck', tab, ROTA)
+    if (window.location.hash !== yeni) {
+      window.history.replaceState(null, '', yeni)
+    }
+  }, [tab])
 
   return (
     <div className="luck-page">

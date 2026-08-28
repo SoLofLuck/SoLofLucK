@@ -125,6 +125,39 @@ export function presalePhaseAt(now: Date = new Date()): PresalePhase {
   return 'live'
 }
 
+/**
+ * Presale katkı kabul ediyor mu — ve etmiyorsa NEDEN.
+ *
+ * Bu, sitedeki tek para kapısı. Presale düz bir cüzdan transferi olduğu
+ * için zincirde bunu engelleyecek bir program YOK; engel yalnızca burada.
+ *
+ * `unscheduled` DAHİL EDİLDİ ve bu kasıtlı bir değişiklik. Önceden takvim
+ * ilan edilmemişken (`PRESALE_START_ISO = ''`) presale AÇIK bırakılıyordu,
+ * gerekçe "test aşamasındayız" idi. Bunun sonucu şuydu: yayın günü
+ * "Yakında" kapısını kaldırıp tarihi doldurmayı unutmak, tarihi olmayan
+ * ve karşılığında henüz basılmış token bulunmayan bir presale'i herkese
+ * açmak demekti. İki ayrı kontrol listesi maddesinin birbirine bu şekilde
+ * bağlı olması kabul edilemez — birinin unutulması para kabul etmeye yol
+ * açmamalı.
+ *
+ * Test aşamasında açık olması gerekiyorsa yapılacak şey bellidir ve
+ * bilinçlidir: PRESALE_START_ISO'ya geçmiş bir tarih yazmak.
+ */
+export type PresaleClosedReason = 'unconfigured' | 'unscheduled' | 'upcoming' | 'ended' | 'reached'
+
+export function presaleClosedReason(args: {
+  configured: boolean
+  targetReached: boolean
+  phase: PresalePhase
+}): PresaleClosedReason | null {
+  if (!args.configured) return 'unconfigured'
+  if (args.targetReached) return 'reached'
+  if (args.phase === 'unscheduled') return 'unscheduled'
+  if (args.phase === 'upcoming') return 'upcoming'
+  if (args.phase === 'ended') return 'ended'
+  return null
+}
+
 /** Kalan süreyi "12g 4s 30d" gibi kısa bir metne çevirir. */
 export function formatRemaining(ms: number): string {
   if (ms <= 0) return '0d'

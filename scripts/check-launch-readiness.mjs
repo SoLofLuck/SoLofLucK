@@ -100,6 +100,34 @@ maddeler.push({
   aciklama: 'Yayında mainnet olmalı. Devnet\'te kalırsa kimse gerçek katkı yapamaz.',
 })
 
+// --- "Stay Tuned" kapısı kaldırıldı mı --------------------------------------
+//
+// Site test aşamasındayken kök adrese gelen HERKESE düz siyah bir "yakında"
+// sayfası gösteriliyor; gerçek uygulama yalnızca PREVIEW_ACCESS_PATH
+// üzerinden açılıyor (bkz. src/main.tsx).
+//
+// Bu, yayın günü unutulmaya en müsait maddelerden biri ve unutulursa sonucu
+// tam bir felaket: presale açılır, duyuru yapılır, gelen herkes BOŞ SİYAH
+// EKRAN görür. Hiçbir hata çıkmaz, hiçbir log yazılmaz — site "çalışıyor"
+// görünür.
+//
+// Kapının kaldırılması PREVIEW_ACCESS_PATH'i boş string yapmak demek;
+// main.tsx boş yolda uygulamayı doğrudan açıyor.
+{
+  const m = src.match(/export const PREVIEW_ACCESS_PATH\s*=\s*'([^']*)'/)
+  const yol = m ? m[1] : null
+  maddeler.push({
+    ad: '"Yakında" kapısı kaldırıldı',
+    hazir: yol === '',
+    deger: yol === null ? 'okunamadı' : yol === '' ? 'kapalı' : `gizli yol ${yol}`,
+    aciklama:
+      'Kapı açıkken siteye gelen HERKES boş siyah "Stay Tuned" ekranı görür. ' +
+      'Yayın günü unutulursa hiçbir hata çıkmaz, site çalışıyor görünür ama ' +
+      'kimse presale sayfasına ulaşamaz. Kaldırmak için ' +
+      "PREVIEW_ACCESS_PATH = '' yapın.",
+  })
+}
+
 const eksikler = maddeler.filter((m) => !m.hazir)
 
 console.log('YAYINA HAZIRLIK\n')

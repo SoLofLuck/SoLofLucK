@@ -1,5 +1,6 @@
-import { Suspense, lazy, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { WalletContextProvider } from './context/WalletContextProvider'
+import { hashFromRoute, routeFromHash } from './lib/deepLink'
 import { Header } from './components/Header'
 import { Hero } from './components/Hero'
 import { TokenForm } from './components/TokenForm'
@@ -28,9 +29,42 @@ const SoLofLuckPage = lazy(() =>
 
 type Page = 'create' | 'liquidity' | 'privacy' | 'solofluck'
 
+// Adres çubuğundaki sekme yönlendirmesi. Bilinmeyen bir hash gelirse
+// varsayılana düşülüyor: kullanıcı ne yazarsa yazsın site açılmalı.
+const ROTA = {
+  pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
+  defaultPage: 'create' as const,
+  subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'] as const,
+  defaultSubTab: 'about' as const,
+  subTabPage: 'solofluck' as const,
+}
+
 function App() {
   const [network, setNetwork] = useState<NetworkId>(DEFAULT_NETWORK)
-  const [page, setPage] = useState<Page>('create')
+
+  // Sekme durumu adres çubuğunda tutuluyor: presale linki paylaşılabilsin,
+  // yenilemede aynı sekmede kalınsın, geri tuşu çalışsın. Mantık
+  // src/lib/deepLink.ts içinde ve testi var.
+  const [page, setPage] = useState<Page>(
+    () => routeFromHash(window.location.hash, ROTA).page,
+  )
+
+  // Geri/ileri tuşu ve elle değiştirilen adres.
+  useEffect(() => {
+    const uygula = () => setPage(routeFromHash(window.location.hash, ROTA).page)
+    window.addEventListener('hashchange', uygula)
+    return () => window.removeEventListener('hashchange', uygula)
+  }, [])
+
+  // Sekme değişince adres çubuğunu güncelle. SoLofLuck sayfasında alt sekme
+  // de hash'te olduğu için oraya dokunmuyoruz — orayı SoLofLuckPage yönetiyor.
+  useEffect(() => {
+    if (page === 'solofluck') return
+    const yeni = hashFromRoute(page, 'about', ROTA)
+    if (window.location.hash !== yeni) {
+      window.history.replaceState(null, '', yeni)
+    }
+  }, [page])
   const endpoint = useMemo(() => NETWORKS[network].endpoint, [network])
 
   return (

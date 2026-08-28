@@ -18,7 +18,13 @@
 // kopyanın kendisiyle uyuştuğunu kanıtlardı.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { PublicKey } from '@solana/web3.js'
@@ -68,6 +74,8 @@ try {
       'src/lib/luckClaim.ts',
       'src/lib/luckGame.ts',
       'src/lib/sendTx.ts',
+      'src/lib/presale.ts',
+      'src/lib/deepLink.ts',
       '--outDir', out,
       '--module', 'esnext',
       '--target', 'es2022',
@@ -102,9 +110,21 @@ try {
 // 2. config.ts, Vite'ın `import.meta.env`'ini okuyor; Node'da tanımsız
 //    olduğu için modül yüklenirken patlıyor. RPC uç noktası bu kontrolün
 //    konusu değil.
-for (const dosya of ['config.js', 'lib/luckClaim.js', 'lib/luckGame.js', 'lib/sendTx.js']) {
-  const yol = join(out, dosya)
-  if (!existsSync(yol)) continue
+//
+// Düzeltme, derlenen TÜM dosyalara uygulanıyor — elle tutulan bir listeye
+// değil. Liste sabitken yeni bir kaynak eklemek denetimi kırıyordu:
+// presale.ts eklendiğinde onun `./sendTx` import'u düzeltilmedi ve
+// ERR_MODULE_NOT_FOUND ile patladı. Bir sonraki dosyada aynı şeyin
+// yaşanmaması için özyinelemeli.
+const jsDosyalari = (dizin) =>
+  readdirSync(dizin, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory()
+      ? jsDosyalari(join(dizin, e.name))
+      : e.name.endsWith('.js')
+        ? [join(dizin, e.name)]
+        : [],
+  )
+for (const yol of jsDosyalari(out)) {
   writeFileSync(
     yol,
     readFileSync(yol, 'utf8')
@@ -471,6 +491,223 @@ for (const v of oyunVektorleri) {
   }
 }
 
+
+// --- Adres çubuğu yönlendirmesi (derin bağlantı) ---------------------------
+//
+// Sekmeler yalnızca React state'indeydi; presale linki paylaşılamıyordu.
+// Bir presale için bu ciddi bir eksik: duyuruda verilen adres kullanıcıyı
+// "Token Oluştur" sekmesine düşürüyordu.
+//
+// Kullanıcı adres çubuğuna ne yazarsa yazsın site AÇILMALI — bozuk bir
+// hash boş ekran vermemeli. Onun için burada bilinmeyen/bozuk girdiler de
+// sınanıyor.
+{
+  const dl = await import(pathToFileURL(join(out, 'lib/deepLink.js')).href)
+  const ROTA = {
+    pages: ['create', 'liquidity', 'privacy', 'solofluck'],
+    defaultPage: 'create',
+    subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'],
+    defaultSubTab: 'about',
+    subTabPage: 'solofluck',
+  }
+  const r = (h) => dl.routeFromHash(h, ROTA)
+
+  kontrol('rota: #solofluck/presale', JSON.stringify(r('#solofluck/presale')),
+    JSON.stringify({ page: 'solofluck', subTab: 'presale' }))
+  kontrol('rota: #liquidity', JSON.stringify(r('#liquidity')),
+    JSON.stringify({ page: 'liquidity', subTab: 'about' }))
+  kontrol('rota: boş hash -> varsayılan', JSON.stringify(r('')),
+    JSON.stringify({ page: 'create', subTab: 'about' }))
+  // Bilinmeyen girdiler site'yi kırmamalı.
+  kontrol('rota: bilinmeyen sayfa -> varsayılan', r('#yokboyle').page, 'create')
+  kontrol('rota: bilinmeyen alt sekme -> varsayılan',
+    r('#solofluck/yokboyle').subTab, 'about')
+  kontrol('rota: büyük harf toleranslı', r('#SOLOFLUCK/PRESALE').page, 'solofluck')
+  kontrol('rota: fazladan eğik çizgi', r('##solofluck//presale/').page, 'solofluck')
+  // Alt sekme yalnızca kendi sayfasında anlamlı olmalı.
+  kontrol('rota: başka sayfada alt sekme yok sayılıyor',
+    r('#liquidity/presale').subTab, 'about')
+
+  // Gidiş-dönüş: yazdığımız hash'i tekrar okuyunca aynı yere düşmeli.
+  let bozuk = []
+  for (const page of ROTA.pages) {
+    for (const subTab of ROTA.subTabs) {
+      const h = dl.hashFromRoute(page, subTab, ROTA)
+      const geri = r(h)
+      const beklenenAlt = page === 'solofluck' ? subTab : 'about'
+      if (geri.page !== page || geri.subTab !== beklenenAlt) {
+        bozuk.push(`${page}/${subTab} -> ${h} -> ${geri.page}/${geri.subTab}`)
+      }
+    }
+  }
+  kontrol('rota: gidiş-dönüş tutarlı',
+    bozuk.length === 0 ? true : `bozuk: ${bozuk.join(' · ')}`, true)
+
+  // App.tsx ile SoLofLuckPage.tsx aynı rota tanımını taşıyor; ayrışırlarsa
+  // sekme adres çubuğuyla uyumsuz hale gelir.
+  const appSrc = readFileSync(`${repoRoot}src/App.tsx`, 'utf8')
+  const sayfaSrc = readFileSync(
+    `${repoRoot}src/components/solofluck/SoLofLuckPage.tsx`, 'utf8')
+  const cikar = (src) => {
+    const m = src.match(/const ROTA = \{([\s\S]*?)\n\}/)
+    return m ? m[1].replace(/\s+/g, ' ').trim() : null
+  }
+  kontrol('rota: App.tsx ve SoLofLuckPage.tsx aynı tanımı kullanıyor',
+    cikar(appSrc) !== null && cikar(appSrc) === cikar(sayfaSrc), true)
+}
+
+// --- Presale para kapısı ---------------------------------------------------
+//
+// Presale düz bir cüzdan transferi: zincirde katkıyı engelleyecek bir
+// program YOK. Yani sitedeki bu tek karar, presale'in açık mı kapalı mı
+// olduğunu belirleyen TEK şey. Bileşenin içinde, sınanamaz halde durmamalı.
+//
+// `unscheduled` -> KAPALI olması kasıtlı bir değişiklik. Önceden takvim
+// ilan edilmemişken presale AÇIK bırakılıyordu ("test aşamasındayız"
+// gerekçesiyle). Sonucu şuydu: yayın günü "Yakında" kapısını kaldırıp
+// tarihi doldurmayı unutmak, tarihi olmayan ve karşılığında henüz basılmış
+// token bulunmayan bir presale'i herkese açmak demekti. İki ayrı kontrol
+// listesi maddesinin birbirine bu şekilde bağlı olması kabul edilemez.
+{
+  const presale = await import(pathToFileURL(join(out, 'lib/presale.js')).href)
+  const k = (ad, args, beklenen) =>
+    kontrol(`presale kapısı: ${ad}`, presale.presaleClosedReason(args), beklenen)
+
+  const acik = { configured: true, targetReached: false, phase: 'live' }
+  k('canlı ve hedef dolmamış -> AÇIK', acik, null)
+  k('cüzdan yapılandırılmamış -> kapalı', { ...acik, configured: false }, 'unconfigured')
+  k('hedef doldu (hard cap) -> kapalı', { ...acik, targetReached: true }, 'reached')
+  k('takvim ilan edilmedi -> kapalı', { ...acik, phase: 'unscheduled' }, 'unscheduled')
+  k('henüz başlamadı -> kapalı', { ...acik, phase: 'upcoming' }, 'upcoming')
+  k('süre doldu -> kapalı', { ...acik, phase: 'ended' }, 'ended')
+
+  // Öncelik sırası: birden fazla sebep varsa en ciddisi kazanmalı.
+  k(
+    'yapılandırılmamış + hedef dolu -> yapılandırma önce',
+    { configured: false, targetReached: true, phase: 'live' },
+    'unconfigured',
+  )
+  k(
+    'hedef dolu + takvim yok -> hedef önce',
+    { configured: true, targetReached: true, phase: 'unscheduled' },
+    'reached',
+  )
+
+  // Kapının GERÇEKTEN kapalı kaldığını, yani hiçbir kombinasyonun kazara
+  // açılmadığını da sınıyoruz.
+  let kazaraAcik = []
+  for (const configured of [true, false]) {
+    for (const targetReached of [true, false]) {
+      for (const phase of ['unscheduled', 'upcoming', 'live', 'ended']) {
+        const r = presale.presaleClosedReason({ configured, targetReached, phase })
+        if (r === null && !(configured && !targetReached && phase === 'live')) {
+          kazaraAcik.push(`${configured}/${targetReached}/${phase}`)
+        }
+      }
+    }
+  }
+  kontrol(
+    'presale kapısı: yalnızca (yapılandırılmış + hedef dolmamış + canlı) açık',
+    kazaraAcik.length === 0 ? true : `kazara açık: ${kazaraAcik.join(', ')}`,
+    true,
+  )
+}
+
+// --- PlayerState'in bayt düzeni: sitenin GERÇEK okuyucusu ------------------
+//
+// Site bu hesabı IDL kullanmadan, sabit ofsetlerle okuyor. Araya bir alan
+// eklemek yeter: TypeScript aynı ofsetlerden okumaya devam eder ve hiçbir
+// hata vermeden yanlış spin sayısı, yanlış kazanç gösterir.
+//
+// Düzen "bahsin koyulduğu andaki kurallar" alanlarıyla genişledi. Yeni
+// alanlar bilerek SONA eklendi ki mevcut ofsetler kaymasın — bu kontrol
+// tam olarak onu doğruluyor.
+{
+  const HEX = '38033c56ae10f4c309090909090909090909090909090909090909090909090909090909090909090b0000000300000001c1f4201d00000000fe0101110000000404040404040404040404040404040404040404040404040404040404040404002f685900000000010065cd1d0000000000ca9a3b00000000008c864700000000b80b3200e803d007'
+  const sahteHesap = {
+    getAccountInfo: async () => ({ data: Buffer.from(HEX, 'hex') }),
+  }
+  const oyuncuKey = new PublicKey(Buffer.alloc(32, 9))
+  let ps = null
+  let psHata = null
+  try {
+    ps = await oyun.fetchPlayerState(sahteHesap, oyuncuKey)
+  } catch (e) {
+    psHata = e instanceof Error ? e.message : String(e)
+  }
+  kontrol(
+    'PlayerState: okuma hata vermiyor',
+    psHata === null ? true : `HATA: ${psHata}`,
+    true,
+  )
+  kontrol('PlayerState: okunabildi', ps !== null, true)
+  kontrol('PlayerState: plays_count', ps?.playsCount, 11)
+  kontrol('PlayerState: wins_count', ps?.winsCount, 3)
+  kontrol('PlayerState: pending', ps?.pending, true)
+  kontrol('PlayerState: commit_slot', ps?.commitSlot, 488_699_073n)
+  kontrol('PlayerState: spins_remaining', ps?.spinsRemaining, 17)
+  kontrol('PlayerState: total_won', ps?.totalWonLamports, 1_500_000_000n)
+  kontrol('PlayerState: bonus_granted', ps?.bonusGranted, true)
+  kontrol(
+    'PlayerState: delegate',
+    ps?.delegate?.toBase58?.(),
+    new PublicKey(Buffer.alloc(32, 4)).toBase58(),
+  )
+}
+
+// --- Zarın altın vektörü: BELGE ile KOD aynı şeyi mi söylüyor -------------
+//
+// GUVENLIK.md, oyuncuların sonucu kendi başlarına doğrulayabilmesi için
+// zarın nasıl üretildiğini anlatıyor. O tarif yanlışsa belge işe yaramaz
+// olmaktan da kötüsü ZARARLI olur: doğrulamaya çalışan kişi farklı bir sayı
+// bulur ve "oyun hileli" sonucuna varır.
+//
+// Nitekim tarif YANLIŞTI. Belgede `keccak` yazıyordu; oysa oyun
+// `solana_program::hash::hash` yani SHA-256 kullanıyor. (Dağıtıcı merkle
+// ağacında gerçekten keccak kullanıyor — ikisi karıştırılmış.) Hatayı
+// dışarıdan kodu okuyan biri buldu, benim denetimlerim değil: komut ve sayı
+// denetliyordum, FORMÜL denetlemiyordum.
+//
+// Artık aynı vektör üç yerde birden koşuyor — belgede (Python), Rust
+// testinde (altin_zar_vektoru) ve burada. Üçü ayrışırsa CI düşer.
+{
+  const { sha256 } = await import('@noble/hashes/sha2')
+
+  const preimage = Buffer.concat([
+    Buffer.from([...Array(32).keys()]), // slot_hash
+    (() => { const b = Buffer.alloc(8); b.writeBigUInt64LE(488_699_073n); return b })(), // entropy_slot
+    Buffer.alloc(32, 7), // oyuncu
+    (() => { const b = Buffer.alloc(4); b.writeUInt32LE(5); return b })(), // plays_count
+  ])
+  kontrol('zar vektörü: preimage uzunluğu', preimage.length, 76)
+
+  const digest = Buffer.from(sha256(preimage))
+  kontrol(
+    'zar vektörü: digest',
+    digest.toString('hex'),
+    '3d54d1715c5d05dcfc12bb5dd95b197b078f3135b04aab6ead91103c1233cc6d',
+  )
+  kontrol('zar vektörü: zar', Number(digest.readBigUInt64LE(0) % 10_000n), 7_597)
+  kontrol('zar vektörü: katman', Number(digest.readBigUInt64LE(8) % 10_000n), 4_556)
+
+  // Belgedeki tarif ile kodun kullandığı hash fonksiyonu aynı mı.
+  const guvenlik = readFileSync(`${repoRoot}GUVENLIK.md`, 'utf8')
+  const rust = readFileSync(
+    `${repoRoot}program/luck-game/programs/luck-game/src/lib.rs`,
+    'utf8',
+  )
+  const belgeSha = /digest\s*=\s*sha256\(/.test(guvenlik)
+  const kodSha = /hash::hash\(&preimage\)/.test(rust)
+  kontrol('zar vektörü: belge sha256 diyor', belgeSha, true)
+  kontrol('zar vektörü: kod sha256 kullanıyor', kodSha, true)
+  // Belgenin içindeki doğrulama vektörü de belgeden okunuyor: biri
+  // güncellenip diğeri unutulursa yakalanır.
+  kontrol(
+    'zar vektörü: belgedeki digest kodunkiyle aynı',
+    guvenlik.includes(digest.toString('hex')),
+    true,
+  )
+}
 
 // --- Compute limit kararı ---------------------------------------------------
 //
