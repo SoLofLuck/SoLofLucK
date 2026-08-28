@@ -5,12 +5,11 @@ import type { Connection } from '@solana/web3.js'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { NETWORKS, type NetworkId } from '../config'
 
-// Logoyu ve metadata JSON'unu üçüncü taraf bir hesap/servise ihtiyaç
-// duymadan, doğrudan kullanıcının bağlı Solana cüzdanıyla ödeyerek Irys/
-// Arweave ağına kalıcı olarak yazıyoruz. Kayıt, API anahtarı ya da başka
-// bir siteye gitmeye gerek yok — küçük bir görsel için ücret genellikle
-// bir SOL'un binde birinden azdır ve cüzdanda normal bir işlem olarak
-// onaylanır.
+// The logo and the metadata JSON are written permanently to the Irys/Arweave
+// network, paid for directly with the user's connected Solana wallet, with no
+// need for a third-party account or service. No sign-up, no API key, no visiting
+// another site — for a small image the fee is usually less than a thousandth of
+// a SOL and is approved in the wallet as an ordinary transaction.
 
 export interface OnChainMetadataInput {
   name: string
@@ -21,11 +20,11 @@ export interface OnChainMetadataInput {
   telegram: string
 }
 
-// Metadata JSON'unun (image URL'i doldurulduktan sonra) gerçek boyutunu
-// önceden tam bilemesek de birkaç yüz bayttan büyük olmaz; ücreti tek
-// seferde ve fazlasıyla karşılayacak cömert bir tampon payı bırakıyoruz.
+// We cannot know the exact size of the metadata JSON in advance (once the image
+// URL has been filled in), but it will not exceed a few hundred bytes; we leave
+// a generous buffer that covers the fee in one go with room to spare.
 const METADATA_JSON_BUFFER_BYTES = 2048
-// İşlem ücreti + hesap kirası için ayrılan tampon (lamports).
+// The buffer set aside for the transaction fee plus account rent (lamports).
 const WALLET_FEE_BUFFER_LAMPORTS = 20_000
 
 function sol(lamports: number | string): string {
@@ -36,20 +35,19 @@ async function getIrysUploader(wallet: WalletContextState, network: NetworkId) {
   const builder = WebUploader(WebSolana)
     .withProvider(wallet)
     .withRpc(NETWORKS[network].endpoint)
-    // Irys varsayılan olarak "finalized" onayını bekliyor; bu Solana'da
-    // "confirmed"a göre çok daha yavaş (bazen 15-30+ sn) ve iç zaman
-    // aşımı süresini (30 sn) çoğu zaman aşıp gereksiz yere başarısız
-    // oluyordu. "confirmed" çok daha hızlı ve pratikte aynı derecede
-    // güvenilir.
+    // Irys waits for "finalized" confirmation by default; on Solana that is
+    // far slower than "confirmed" (sometimes 15-30+ s) and would often exceed
+    // the internal timeout (30 s) and fail for no good reason. "confirmed" is
+    // much faster and in practice just as reliable.
     .withTokenOptions({ finality: 'confirmed' })
 
   if (network === 'devnet') {
     builder.devnet()
   }
 
-  // UploadBuilder "thenable"dır (await edildiğinde .build() çalışır ve
-  // gerçek getPrice/fund/uploadFile metodlarına sahip Irys örneğini
-  // döndürür) — bu yüzden burada açıkça await ediyoruz.
+  // UploadBuilder is "thenable" (awaiting it runs .build() and returns the real
+  // Irys instance carrying the getPrice/fund/uploadFile methods) — which is why we
+  // await it explicitly here.
   return await builder
 }
 
@@ -57,15 +55,14 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// ÖNEMLİ: irys.fund() her çağrıldığında YENİ bir SOL transferi oluşturur ve
-// cüzdanda YENİ bir onay ister — bu yüzden burada "başarısız oldu, tekrar
-// dene" mantığını fund()'ı tekrar tekrar çağırarak kurmuyoruz (bu, arka
-// arkaya birden fazla cüzdan onayı istemesine ve dakikalarca sürmesine
-// sebep olurdu). Bunun yerine: ilk denemeden sonra hiçbir yeni işlem
-// göndermeden bakiyenin güncellenip güncellenmediğini kontrol ediyoruz
-// (SOL çoğu zaman gönderilmiş oluyor, sadece Irys'in onu görmesi
-// gecikiyor); yalnızca bakiye hâlâ yetersizse EN FAZLA bir kez daha
-// (toplam 2 cüzdan onayı) deniyoruz.
+// IMPORTANT: every call to irys.fund() creates a NEW SOL transfer and asks for
+// a NEW approval in the wallet — which is why we do not build the "it failed,
+// try again" logic here by calling fund() repeatedly (that would ask for several
+// wallet approvals back to back and take minutes). Instead: after the first
+// attempt we check whether the balance has updated without sending any new
+// transaction (the SOL has usually been sent, it is only Irys seeing it that
+// lags); only if the balance is still short do we try AT MOST once more (2
+// wallet approvals in total).
 async function ensureFunded(
   irys: Awaited<ReturnType<typeof getIrysUploader>>,
   connection: Connection,
@@ -76,48 +73,48 @@ async function ensureFunded(
   const price = await irys.getPrice(bytes)
   let balance = await irys.getLoadedBalance()
   if (!price.isGreaterThan(balance)) {
-    onStatus?.('Depolama ücreti zaten karşılanmış, yüklemeye geçiliyor...')
+    onStatus?.('The storage fee is already covered, moving on to the upload...')
     return
   }
 
   let topUp = price.minus(balance).multipliedBy(1.15).integerValue()
 
-  // Cüzdanda gerçekten bu kadar SOL var mı? Yoksa cüzdan zaten
-  // "yetersiz bakiye" diyerek işlemi reddedecek — bunu önceden
-  // tespit edip anlaşılır bir mesaj vermek, gizemli bir ağ hatası
-  // beklemekten çok daha iyi.
+  // Does the wallet actually hold that much SOL? If not, the wallet will
+  // reject the transaction with "insufficient balance" anyway — detecting
+  // that up front and giving a clear message is far better than waiting for
+  // a mysterious network error.
   const walletLamports = await connection.getBalance(walletPubkey)
   const needed = topUp.toNumber() + WALLET_FEE_BUFFER_LAMPORTS
   if (walletLamports < needed) {
     throw new Error(
-      `cüzdanınızda yeterli SOL yok (gerekli: ~${sol(needed)} SOL, mevcut: ${sol(walletLamports)} SOL). ` +
-        'Devnet\'te faucet.solana.com üzerinden ücretsiz SOL alabilirsiniz.',
+      `your wallet does not have enough SOL (needed: ~${sol(needed)} SOL, available: ${sol(walletLamports)} SOL). ` +
+        'On Devnet you can get free SOL from faucet.solana.com.',
     )
   }
 
-  onStatus?.(`Depolama ücreti (~${sol(topUp.toNumber())} SOL) için cüzdanınızda onay bekleniyor...`)
+  onStatus?.(`Waiting for approval in your wallet for the storage fee (~${sol(topUp.toNumber())} SOL)...`)
   let lastError: unknown
   try {
     await irys.fund(topUp)
-    onStatus?.('Depolama ücreti onaylandı.')
+    onStatus?.('The storage fee was confirmed.')
     return
   } catch (err) {
     lastError = err
   }
 
-  onStatus?.('Depolama ağı yanıt vermedi, birkaç saniye bekleniyor (yeni işlem gönderilmiyor)...')
+  onStatus?.('The storage network did not respond, waiting a few seconds (no new transaction is sent)...')
   await sleep(8000)
   balance = await irys.getLoadedBalance()
   if (!price.isGreaterThan(balance)) {
-    onStatus?.('Ücret bu arada onaylanmış, devam ediliyor...')
+    onStatus?.('The fee was confirmed in the meantime, continuing...')
     return
   }
 
-  onStatus?.('Cüzdanınızda bir onay isteği daha görünecek...')
+  onStatus?.('One more approval request will appear in your wallet...')
   try {
     topUp = price.minus(balance).multipliedBy(1.15).integerValue()
     await irys.fund(topUp)
-    onStatus?.('Depolama ücreti onaylandı.')
+    onStatus?.('The storage fee was confirmed.')
     return
   } catch (err) {
     lastError = err
@@ -125,8 +122,8 @@ async function ensureFunded(
 
   throw new Error(
     lastError instanceof Error
-      ? `depolama ağı yanıt vermedi — ${lastError.message}`
-      : 'depolama ağı yanıt vermedi',
+      ? `the storage network did not respond — ${lastError.message}`
+      : 'the storage network did not respond',
   )
 }
 
@@ -139,23 +136,22 @@ export async function uploadLogoAndMetadata(
   onStatus?: (status: string) => void,
 ): Promise<string> {
   if (!wallet.publicKey) {
-    throw new Error('cüzdan bağlı değil')
+    throw new Error('the wallet is not connected')
   }
 
-  onStatus?.('Depolama ağına bağlanılıyor...')
+  onStatus?.('Connecting to the storage network...')
   let irys: Awaited<ReturnType<typeof getIrysUploader>>
   try {
     irys = await getIrysUploader(wallet, network)
   } catch (err) {
-    throw stageError('Ağa bağlanılamadı', err)
+    throw stageError('Could not connect to the network', err)
   }
 
-  // Logo + metadata JSON için gereken ücreti TEK seferde önceden
-  // karşılıyoruz. Böylece ayrı ayrı iki kez ücret gönderip her birinde
-  // ayrı bir cüzdan onayı ve onay bekleme süresi yaşamak yerine, tüm
-  // yükleme boyunca en fazla bir kez (gerekirse bir kez daha) ücret
-  // gönderiyoruz.
-  onStatus?.('Depolama ücreti hesaplanıyor...')
+  // We cover the fee needed for the logo plus the metadata JSON up front, in ONE
+  // go. That way, instead of sending the fee twice separately with a wallet
+  // approval and a confirmation wait for each, we send it at most once (twice if
+  // necessary) across the whole upload.
+  onStatus?.('Calculating the storage fee...')
   try {
     await ensureFunded(
       irys,
@@ -165,18 +161,18 @@ export async function uploadLogoAndMetadata(
       onStatus,
     )
   } catch (err) {
-    throw stageError('Depolama ücreti gönderilemedi', err)
+    throw stageError('Could not send the storage fee', err)
   }
 
-  onStatus?.(`Logo (${(file.size / 1024).toFixed(0)} KB) kalıcı olarak ağa yükleniyor...`)
+  onStatus?.(`Uploading the logo (${(file.size / 1024).toFixed(0)} KB) permanently to the network...`)
   let imageReceipt: Awaited<ReturnType<typeof irys.uploadFile>>
   try {
     imageReceipt = await irys.uploadFile(file)
   } catch (err) {
-    throw stageError('Logo yüklenemedi', err)
+    throw stageError('The logo could not be uploaded', err)
   }
   const imageUrl = `https://gateway.irys.xyz/${imageReceipt.id}`
-  onStatus?.('Logo yüklendi, metadata hazırlanıyor...')
+  onStatus?.('The logo was uploaded, preparing the metadata...')
 
   const metadataJson = {
     name: input.name,
@@ -199,13 +195,13 @@ export async function uploadLogoAndMetadata(
     type: 'application/json',
   })
 
-  onStatus?.('Metadata kalıcı olarak ağa yükleniyor...')
+  onStatus?.('Uploading the metadata permanently to the network...')
   try {
     const metadataReceipt = await irys.uploadFile(metadataFile)
-    onStatus?.('Metadata yüklendi.')
+    onStatus?.('The metadata was uploaded.')
     return `https://gateway.irys.xyz/${metadataReceipt.id}`
   } catch (err) {
-    throw stageError('Metadata yüklenemedi', err)
+    throw stageError('The metadata could not be uploaded', err)
   }
 }
 

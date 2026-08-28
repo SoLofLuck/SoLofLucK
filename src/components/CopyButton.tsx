@@ -16,13 +16,13 @@ export function CopyButton({ value, label = 'Kopyala', className = '' }: Props) 
       setTimeout(() => setCopied(false), 1500)
     } catch {
       // Clipboard API yoksa (izin verilmedi, http vb.) sessizce yut —
-      // kullanıcı metni elle seçip kopyalayabilir.
+      // the user can select and copy the text by hand.
     }
   }
 
   return (
     <button type="button" className={`copy-btn ${className}`} onClick={handleCopy}>
-      {copied ? '✓ Kopyalandı' : label}
+      {copied ? '✓ Copied' : label}
     </button>
   )
 }

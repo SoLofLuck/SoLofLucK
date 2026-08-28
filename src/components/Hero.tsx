@@ -1,8 +1,8 @@
 const FEATURES = [
-  { icon: '⚡', title: 'Kod Yazmadan', text: 'Formu doldur, cüzdanını bağla, birkaç saniyede Solana token’ın hazır.' },
-  { icon: '🔐', title: 'Güvenli & Açık Kaynak', text: 'Özel anahtarların asla siteden çıkmaz; her şey cüzdanında imzalanır.' },
-  { icon: '🛠️', title: 'Tam Kontrol', text: 'Mint, freeze ve update yetkilerini istediğin an devretme/kaldırma imkânı.' },
-  { icon: '🍀', title: '$LUCK Presale', text: 'Bu siteye adanmış coin SoLofLuck ($LUCK) için ayrı sekmede presale ve çekiliş.' },
+  { icon: '⚡', title: 'No Code Needed', text: 'Fill in the form, connect your wallet, and your Solana token is ready in seconds.' },
+  { icon: '🔐', title: 'Safe & Open Source', text: 'Your private keys never leave the site; everything is signed in your wallet.' },
+  { icon: '🛠️', title: 'Full Control', text: 'Transfer or revoke the mint, freeze and update authorities whenever you like.' },
+  { icon: '🍀', title: '$LUCK Presale', text: 'The presale and raffle for SoLofLuck ($LUCK), the coin dedicated to this site, in its own tab.' },
 ]
 
 export function Hero() {
@@ -10,11 +10,11 @@ export function Hero() {
     <section className="hero">
       <div className="hero__badge">Solana SPL Token Creator</div>
       <h1>
-        Kendi <span className="gradient-text">Solana Token’ını</span> Dakikalar İçinde Oluştur
+        Create Your Own <span className="gradient-text">Solana Token</span> In Minutes
       </h1>
       <p className="hero__subtitle">
-        İsim, sembol, arz ve logo bilgilerini gir; cüzdanını bağla ve zincir üzerinde gerçek bir SPL
-        token oluştur. Ekstra kurulum ya da backend gerekmez — tamamen tarayıcıda çalışır.
+        Enter the name, symbol, supply and logo, connect your wallet, and create a real SPL token on
+        chain. No extra setup and no backend — it all runs in the browser.
       </p>
       <div className="hero__features">
         {FEATURES.map((f) => (

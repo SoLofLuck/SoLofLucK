@@ -1,12 +1,11 @@
 import { useEffect, useRef } from 'react'
 
-// SoLofLuck sayfasına özel arka plan: klasik "matrix" dijital yağmuru, ama
-// sütunların bir kısmı zaman zaman (ara ara) dört yapraklı yonca 🍀 ya da
-// "777" temalı altın rakamlar dökerek şans/kumarhane temasını hissettiriyor.
-// Performans için karakterler her animasyon karesinde değil, aralıklı
-// (throttled) olarak güncelleniyor; kullanıcı azaltılmış hareket istiyorsa
-// (prefers-reduced-motion) animasyon hiç başlamıyor, yerine tek bir statik
-// kare çiziliyor.
+// The backdrop specific to the SoLofLuck page: the classic "matrix" digital
+// rain, except that some columns occasionally drop four-leaf clovers 🍀 or gold
+// "777"-themed digits, which carries the luck/casino theme. For performance the
+// characters are updated on a throttle rather than on every animation frame; if
+// the user asks for reduced motion (prefers-reduced-motion) the animation never
+// starts and a single static frame is drawn instead.
 
 const FONT_SIZE = 18
 const GLYPHS = '01'
@@ -60,7 +59,7 @@ export function MatrixBackground() {
     ctx.textBaseline = 'top'
 
     if (reducedMotion) {
-      // Tek statik kare: hafif, göz yormayan bir doku.
+      // A single static frame: a light texture that is easy on the eyes.
       ctx.fillStyle = '#050710'
       ctx.fillRect(0, 0, width, height)
       ctx.globalAlpha = 0.35
@@ -81,8 +80,8 @@ export function MatrixBackground() {
       if (t - last < TICK_MS) return
       last = t
 
-      // Yarı saydam dolgu: önceki karakterleri tamamen silmek yerine iz
-      // bırakarak "düşme" hissi veriyor.
+      // A semi-transparent fill: instead of erasing the previous characters
+      // outright it leaves a trail, which gives the sense of "falling".
       ctx!.fillStyle = 'rgba(4, 6, 12, 0.16)'
       ctx!.fillRect(0, 0, width, height)
 

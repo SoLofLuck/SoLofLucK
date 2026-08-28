@@ -9,16 +9,16 @@ import type { WalletContextState } from '@solana/wallet-adapter-react'
 import BN from 'bn.js'
 import { sendInstructions } from './sendTx'
 
-// Devnet'e deploy edilmiş "satış kilidi" (anti-snipe) programı. Kaynak kodu
-// ve deploy geçmişi: program/sell-lock/ klasöründe. Bu, sitenin kendi
-// yazdığı, Token-2022 Transfer Hook arayüzünü uygulayan ayrı bir Solana
-// programıdır — token oluşturma/havuz akışlarından bağımsız olarak
-// oluşturulup Devnet'te doğrulandı.
+// The "sell lock" (anti-snipe) program deployed to Devnet. Source code and
+// deploy history: the program/sell-lock/ folder. This is a separate Solana
+// program written by this site that implements the Token-2022 Transfer Hook
+// interface — it was built and verified on Devnet independently of the token
+// creation and pool flows.
 export const SELL_LOCK_PROGRAM_ID = new PublicKey(
   '3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5',
 )
 
-// Anchor discriminator'ları = sha256("global:<instruction_adi>")[0..8].
+// Anchor discriminators = sha256("global:<instruction_name>")[0..8].
 const INITIALIZE_EXTRA_ACCOUNT_META_LIST_DISCRIMINATOR = Buffer.from([
   0x5c, 0xc5, 0xae, 0xc5, 0x29, 0x7c, 0x13, 0x03,
 ])
@@ -31,9 +31,9 @@ export interface SellLockDurationOption {
   seconds: number
 }
 
-// seconds: 0 = kilit yok (kapalı).
+// seconds: 0 = no lock (disabled).
 export const SELL_LOCK_DURATION_OPTIONS: SellLockDurationOption[] = [
-  { label: 'Kapalı (satış kilidi yok)', seconds: 0 },
+  { label: 'Disabled (no sell lock)', seconds: 0 },
   { label: '15 Dakika', seconds: 900 },
   { label: '1 Saat', seconds: 3600 },
   { label: '5 Saat', seconds: 18_000 },
@@ -96,8 +96,9 @@ export function buildRegisterLaunchIx(
   })
 }
 
-// Havuz oluşturulduktan hemen sonra bir kez çağrılır — süreyi ve havuzun
-// kasa adreslerini zincire kalıcı olarak yazar (bkz. program/sell-lock).
+// Called once immediately after the pool is created — it writes the duration
+// and the pool's vault addresses permanently to the chain (see
+// program/sell-lock).
 export async function registerLaunch(
   connection: Connection,
   wallet: WalletContextState,
@@ -108,14 +109,14 @@ export async function registerLaunch(
   onStatus?: (status: string) => void,
 ): Promise<string> {
   if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
+    throw new Error('Connect your wallet first to continue.')
   }
 
-  // Ortak, sertleştirilmiş gönderim yolu (bkz. sendTx.ts) — sitedeki diğer
-  // tüm zincir işlemleriyle aynı. Bu akış tek başına presale kadar riskli
-  // değil (kayıt tekrarlanabilir), ama düz gönderimin mobilde ürettiği
-  // sahte "başarısız" mesajları burada da kullanıcıyı gereksiz yere ikinci
-  // kez imza atmaya itiyordu.
+  // The shared, hardened send path (see sendTx.ts) — the same as every other
+  // on-chain transaction on the site. This flow is not as risky as the presale
+  // on its own (the registration can be repeated), but the spurious "failed"
+  // messages a plain send produces on mobile were pushing the user to sign a
+  // second time here too, for no reason.
   const signature = await sendInstructions(
     connection,
     { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction },
@@ -126,9 +127,9 @@ export async function registerLaunch(
   return signature
 }
 
-// Bir mint'in, bizim satış kilidi programımıza bağlı bir Transfer Hook
-// uzantısı olup olmadığını zincirden okur (Token-2022 olmayan mint'ler
-// veya hook'u başka bir programa ait mint'ler için false döner).
+// Reads from the chain whether a mint has a Transfer Hook extension bound to our
+// sell-lock program (returns false for non-Token-2022 mints, and for mints whose
+// hook belongs to another program).
 export async function hasSellLockHook(connection: Connection, mint: PublicKey): Promise<boolean> {
   try {
     const mintInfo = await getMint(connection, mint, undefined, TOKEN_2022_PROGRAM_ID)

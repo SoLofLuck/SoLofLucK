@@ -44,8 +44,8 @@ function ensureInterval() {
 }
 
 /**
- * Canlı SOL/USD fiyatını döner (yaklaşık 30 saniyede bir güncellenir).
- * Birden çok bileşen aynı polling döngüsünü paylaşır, gereksiz istek yapılmaz.
+ * Returns the live SOL/USD price (refreshed roughly every 30 seconds).
+ * Several components share the same polling loop, so no request is wasted.
  */
 export function useSolUsdPrice(): number | null {
   const [price, setPrice] = useState<number | null>(cachedPrice)

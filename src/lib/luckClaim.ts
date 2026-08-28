@@ -1,14 +1,14 @@
 // ---------------------------------------------------------------------------
-// Claim istemcisi — luck-distributor programına bağlanır
+// The claim client — talks to the luck-distributor program
 // ---------------------------------------------------------------------------
-// Presale payları ve çekiliş ödülleri zincirde bir "dağıtıcı" (distributor)
-// hesabında kilitli duruyor. Alıcı, payını kanıtlayan merkle proof'unu
-// getirip açılmış kısmı kendisi çekiyor.
+// Presale shares and raffle rewards sit locked on chain in a "distributor"
+// account. The recipient brings the merkle proof of their share and withdraws
+// the unlocked part themselves.
 //
-// Kanıtlar ve miktarlar tarayıcıda ÜRETİLMİYOR: yayınlanan merkle dosyasından
-// (public/merkle/round-N.json) okunuyor. Aynı dosyayı herkes indirip
-// scripts/build-merkle.mjs ile yeniden üretebilir — yani "site bana doğru
-// sayıyı mı gösteriyor?" sorusunun cevabı bize güvenmeyi gerektirmiyor.
+// Proofs and amounts are NOT generated in the browser: they are read from the
+// published merkle file (public/merkle/round-N.json). Anyone can download the
+// same file and rebuild it with scripts/build-merkle.mjs — so answering "is the
+// site showing me the right number?" does not require trusting us.
 import { Connection, PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js'
 import { sha256 } from '@noble/hashes/sha256'
 import { CLAIM_CONFIG, LUCK_TOKEN } from '../config'
@@ -22,12 +22,12 @@ export function isClaimConfigured(): boolean {
 }
 
 function programId(): PublicKey {
-  if (!CLAIM_CONFIG.programId) throw new Error('Claim programı henüz yapılandırılmadı.')
+  if (!CLAIM_CONFIG.programId) throw new Error('The claim program is not configured yet.')
   return new PublicKey(CLAIM_CONFIG.programId)
 }
 
 function mintKey(): PublicKey {
-  if (!LUCK_TOKEN.mint) throw new Error('$LUCK mint adresi henüz yapılandırılmadı.')
+  if (!LUCK_TOKEN.mint) throw new Error('The $LUCK mint address is not configured yet.')
   return new PublicKey(LUCK_TOKEN.mint)
 }
 
@@ -67,7 +67,7 @@ export function associatedTokenAddress(owner: PublicKey, mint: PublicKey): Publi
   )[0]
 }
 
-// --- Zincir okuma ----------------------------------------------------------
+// --- Reading the chain -----------------------------------------------------
 
 export interface DistributorState {
   merkleRoot: Uint8Array
@@ -81,9 +81,9 @@ export interface DistributorState {
 }
 
 /**
- * Distributor hesabını okur. Alan sırası programdaki `Distributor`
- * struct'ıyla birebir aynı olmak zorunda (bkz. luck-distributor lib.rs) —
- * Anchor bunları borsa sırasıyla, 8 baytlık discriminator'dan sonra yazıyor.
+ * Reads the Distributor account. The field order must match the `Distributor`
+ * struct in the program exactly (see luck-distributor lib.rs) — Anchor writes
+ * them in declaration order, after the 8-byte discriminator.
  */
 export async function fetchDistributor(
   connection: Connection,
@@ -125,7 +125,7 @@ export async function fetchDistributor(
   }
 }
 
-/** Bu cüzdanın bu turdan şimdiye kadar çektiği toplam. */
+/** The total this wallet has claimed from this round so far. */
 export async function fetchClaimed(
   connection: Connection,
   roundId: number,
@@ -138,10 +138,11 @@ export async function fetchClaimed(
 }
 
 /**
- * Verilen anda açılmış toplam miktar — programdaki `unlocked_amount`'ın
- * aynısı. Kasıtlı olarak yeniden yazıldı: arayüz zincire sormadan da doğru
- * sayıyı gösterebilsin diye. İkisi ayrışırsa kullanıcı "çekilebilir" görüp
- * işlemi reddedilirdi, o yüzden formül birebir aynı tutulmalı.
+ * The total amount unlocked at a given moment — the same as `unlocked_amount`
+ * in the program. Deliberately reimplemented so the interface can show the
+ * correct number without asking the chain. If the two drifted apart the user
+ * would see something as "claimable" and have their transaction rejected, so
+ * the formula must be kept identical.
  */
 export function unlockedAmount(d: DistributorState, total: bigint, nowSeconds: number): bigint {
   if (nowSeconds < d.startTs) return BigInt(0)
@@ -154,21 +155,20 @@ export function unlockedAmount(d: DistributorState, total: bigint, nowSeconds: n
 }
 
 /**
- * Zincirin kendi saatini okur (Clock sysvar'ı).
+ * Reads the chain's own clock (the Clock sysvar).
  *
- * Açılma takvimi ZİNCİRİN saatine göre işliyor, tarayıcının saatine göre
- * değil. Arayüz `Date.now()` kullanırsa, saati birkaç dakika ileri olan bir
- * kullanıcı — telefon saatleri kayabiliyor, bazen elle de ayarlanıyor —
- * açılmamış bir dilimi "çekilebilir" görür, imza atar ve işlem
- * `NothingToClaim` ile reddedilir. Üstelik bu tam olarak açılma anında,
- * yani herkesin aynı anda çekmeye çalıştığı dakikada olur.
+ * The unlock schedule runs on THE CHAIN's time, not the browser's. If the
+ * interface used `Date.now()`, a user whose clock runs a few minutes fast —
+ * phone clocks drift, and are sometimes set by hand — would see a slice that has
+ * not unlocked as "claimable", sign, and have the transaction rejected with
+ * `NothingToClaim`. And that would happen at exactly the moment of unlock, the
+ * minute when everybody is trying to claim at once.
  *
- * Sysvar hesabının verisi: slot (u64), epoch_start_timestamp (i64),
- * epoch (u64), leader_schedule_epoch (u64), sonra 32. bayttan itibaren
- * unix_timestamp (i64).
+ * The sysvar account's data: slot (u64), epoch_start_timestamp (i64), epoch
+ * (u64), leader_schedule_epoch (u64), then unix_timestamp (i64) from byte 32.
  *
- * Okuma başarısız olursa null döner; çağıran taraf tarayıcı saatine
- * düşer — saat farkı olasılığı, sekmenin hiç açılmamasından iyidir.
+ * Returns null if the read fails; the caller then falls back to the browser
+ * clock — the possibility of a clock skew beats the tab not opening at all.
  */
 export async function fetchChainTime(connection: Connection): Promise<number | null> {
   try {
@@ -182,7 +182,7 @@ export async function fetchChainTime(connection: Connection): Promise<number | n
   }
 }
 
-/** Takvimdeki bir sonraki açılışın zamanı (saniye) — yoksa null. */
+/** The time of the next unlock in the schedule (seconds) — null if there is none. */
 export function nextUnlockTs(d: DistributorState, nowSeconds: number): number | null {
   if (nowSeconds < d.startTs) return d.startTs
   const elapsed = nowSeconds - d.startTs
@@ -192,7 +192,7 @@ export function nextUnlockTs(d: DistributorState, nowSeconds: number): number | 
   return d.startTs + (done + 1) * d.periodSeconds
 }
 
-// --- Yayınlanan merkle dosyası ---------------------------------------------
+// --- The published merkle file ---------------------------------------------
 
 export interface ClaimEntry {
   address: string
@@ -210,19 +210,19 @@ export interface MerkleFile {
 const merkleCache = new Map<number, MerkleFile>()
 
 /**
- * Turun merkle dosyasını indirir. Dosya sitenin kendi kaynağından geliyor;
- * ayrıca kökü zincirdekiyle karşılaştırıyoruz — dosya bir şekilde yanlış ya
- * da eski olursa kullanıcıyı boş yere imzalatmak yerine erken duruyoruz.
+ * Downloads the round's merkle file. The file comes from the site's own origin;
+ * we also compare its root against the one on chain — so if the file is somehow
+ * wrong or stale, we stop early rather than making the user sign for nothing.
  */
 export async function fetchMerkleFile(roundId: number): Promise<MerkleFile> {
   const cached = merkleCache.get(roundId)
   if (cached) return cached
   const url = `${CLAIM_CONFIG.merkleBasePath}/round-${roundId}.json`
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`Dağıtım listesi bulunamadı (${url}).`)
+  if (!res.ok) throw new Error(`The distribution list was not found (${url}).`)
   const parsed = (await res.json()) as MerkleFile
   if (!parsed || !Array.isArray(parsed.claims)) {
-    throw new Error('Dağıtım listesi bozuk.')
+    throw new Error('The distribution list is corrupt.')
   }
   merkleCache.set(roundId, parsed)
   return parsed
@@ -246,18 +246,18 @@ export function bytesToHex(bytes: Uint8Array): string {
 
 // --- Talimat ---------------------------------------------------------------
 
-/** Anchor talimat ayırıcısı: sha256("global:<isim>")[0..8]. */
+/** The Anchor instruction discriminator: sha256("global:<name>")[0..8]. */
 function discriminator(name: string): Buffer {
   return Buffer.from(sha256(new TextEncoder().encode(`global:${name}`)).slice(0, 8))
 }
 
 /**
- * Claim talimatını kurar.
+ * Builds the claim instruction.
  *
- * `export` yalnızca doğrulanabilirlik için: scripts/check-abi.mjs bu
- * fonksiyonu çağırıp ürettiği baytları programın kendi ürettiği altın
- * vektörle karşılaştırıyor. Talimatı kopyalayarak sınamak, iki tarafın
- * uyuştuğunu değil kopyanın kendisiyle uyuştuğunu kanıtlardı.
+ * It is `export`ed purely for verifiability: scripts/check-abi.mjs calls this
+ * function and compares the bytes it produces against the golden vector the
+ * program itself produced. Testing a copy of the instruction would prove that
+ * the copy agrees with itself, not that the two sides agree.
  */
 export function buildClaimIx(
   claimant: PublicKey,
@@ -311,9 +311,9 @@ export async function claim(
   return sendInstructions(connection, signer, [buildClaimIx(signer.publicKey, roundId, entry)], onStatus)
 }
 
-// --- Görüntüleme -----------------------------------------------------------
+// --- Display ---------------------------------------------------------------
 
-/** En küçük birimden okunabilir $LUCK metnine. */
+/** From the smallest unit to a readable $LUCK string. */
 export function formatLuck(amount: bigint): string {
   const base = BigInt(10) ** BigInt(LUCK_TOKEN.decimals)
   const whole = amount / base

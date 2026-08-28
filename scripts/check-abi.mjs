@@ -726,12 +726,12 @@ for (const v of oyunVektorleri) {
   const gonder = await import(pathToFileURL(join(out, 'lib/sendTx.js')).href)
   const TAVAN = 1_400_000
   const TABAN = 300_000
-  kontrol('compute: ölçüm yok → TAVAN', gonder.hesaplaComputeLimit(null), TAVAN)
-  kontrol('compute: ölçüm 0 → TAVAN', gonder.hesaplaComputeLimit(0), TAVAN)
-  kontrol('compute: küçük işlem tabanın altında kalmıyor', gonder.hesaplaComputeLimit(10_000), TABAN)
+  kontrol('compute: ölçüm yok → TAVAN', gonder.computeUnitLimitFor(null), TAVAN)
+  kontrol('compute: ölçüm 0 → TAVAN', gonder.computeUnitLimitFor(0), TAVAN)
+  kontrol('compute: küçük işlem tabanın altında kalmıyor', gonder.computeUnitLimitFor(10_000), TABAN)
   // 400.000 × 1,3 = 520.000 — pay ekleniyor.
-  kontrol('compute: ölçüme %30 pay ekleniyor', gonder.hesaplaComputeLimit(400_000), 520_000)
-  kontrol('compute: tavan aşılmıyor', gonder.hesaplaComputeLimit(1_300_000), TAVAN)
+  kontrol('compute: ölçüme %30 pay ekleniyor', gonder.computeUnitLimitFor(400_000), 520_000)
+  kontrol('compute: tavan aşılmıyor', gonder.computeUnitLimitFor(1_300_000), TAVAN)
 }
 
 // --- Hesapların bayt düzeni: Claim sekmesinin GERÇEK okuyucuları ------------

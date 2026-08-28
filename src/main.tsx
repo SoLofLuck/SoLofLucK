@@ -5,8 +5,8 @@ import App from './App.tsx'
 import { StayTuned } from './components/StayTuned.tsx'
 import { PREVIEW_ACCESS_PATH } from './config.ts'
 
-// Test aşamasındaki "Stay Tuned" kapısı — ayrıntı için config.ts'teki
-// PREVIEW_ACCESS_PATH açıklamasına bakın.
+// The "Stay Tuned" gate used during testing — see the PREVIEW_ACCESS_PATH note
+// in config.ts for the details.
 const isPreviewPath = window.location.pathname.replace(/\/+$/, '') === PREVIEW_ACCESS_PATH
 
 createRoot(document.getElementById('root')!).render(

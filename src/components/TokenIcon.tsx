@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
-// Basit, resmi Solana logomark'ına yakın bir simge — SOL için harici bir
-// görsele bağımlı kalmamak adına gömülü tutuyoruz.
+// A simple icon close to the official Solana logomark — kept inline so we do
+// not depend on an external image for SOL.
 const SOL_ICON_DATA_URI =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(`
@@ -29,7 +29,7 @@ interface Props {
   size?: number
 }
 
-/** Coin ikonu: metadata görseli varsa onu, yoksa sembolün ilk harfini gösteren bir yuvarlak. */
+/** The coin icon: the metadata image if there is one, otherwise a circle showing the symbol's first letter. */
 export function TokenIcon({ image, symbol, size = 28 }: Props) {
   const [failed, setFailed] = useState(false)
   const initial = (symbol || '?').trim().charAt(0).toUpperCase() || '?'

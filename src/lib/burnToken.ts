@@ -12,61 +12,62 @@ import { sendInstructions, withRetry } from './sendTx'
 // ---------------------------------------------------------------------------
 // Token yakma (burn)
 // ---------------------------------------------------------------------------
-// "Yakma", token'ları bir çöp adrese GÖNDERMEK değildir — SPL Token
-// programının kendi `burn` talimatıyla tokenlar hem cüzdandaki hesaptan hem
-// de mint'in `supply` alanından KALICI olarak silinir. Solscan gibi
-// gezginlerde toplam arz doğrudan düşmüş görünür; kimsenin "aslında şu
-// cüzdanda duruyor" diyebileceği bir bakiye kalmaz.
+// "Burning" is not SENDING tokens to a dead address — with the SPL Token
+// program's own `burn` instruction the tokens are PERMANENTLY removed both from
+// the account in the wallet and from the mint's `supply` field. On explorers
+// such as Solscan the total supply is seen to drop directly; no balance remains
+// that anyone could point at and say "it is actually sitting in that wallet".
 //
-// Projede iki ayrı yerde gerekiyor:
-//   1. LP token'ının yakılması — havuz açıldıktan sonra likiditeyi ekip
-//      dahil kimsenin çekememesini sağlar ("likidite yakılır" taahhüdü).
-//   2. Presale hedefi dolmazsa, oransal olarak basılmayacak $LUCK'ın
-//      yakılması (bkz. config.ts'teki presale kuralları).
+// It is needed in two separate places in the project:
+//   1. Burning the LP token — after the pool is opened this makes it impossible
+//      for anyone, the team included, to withdraw the liquidity (the "liquidity
+//      is burned" commitment).
+//   2. If the presale target is not reached, burning the $LUCK that will not be
+//      minted proportionally (see the presale rules in config.ts).
 //
-// Bu yüzden fonksiyon LP'ye özel değil: cüzdandaki HERHANGİ bir SPL /
-// Token-2022 token'ı için çalışır.
+// So the function is not LP-specific: it works for ANY SPL / Token-2022 token in
+// the wallet.
 
 export interface BurnResult {
   signature: string
-  /** Yakılan miktar (kullanıcı birimi, ör. 1.5). */
+  /** The amount burned (in user units, e.g. 1.5). */
   amount: string
   mint: string
-  /** Yakma sonrası mint'in toplam arzı (kullanıcı birimi). */
+  /** The mint's total supply after the burn (in user units). */
   remainingSupply: string
 }
 
-/** `getMint` için doğru program id'sini bulur (legacy SPL mi, Token-2022 mi). */
+/** Finds the right program id for `getMint` (legacy SPL or Token-2022). */
 async function resolveTokenProgramId(
   connection: Connection,
   mint: PublicKey,
 ): Promise<PublicKey> {
   const info = await connection.getAccountInfo(mint)
-  if (!info) throw new Error('Mint adresi zincirde bulunamadı.')
+  if (!info) throw new Error('The mint address was not found on chain.')
   if (info.owner.equals(TOKEN_2022_PROGRAM_ID)) return TOKEN_2022_PROGRAM_ID
   if (info.owner.equals(TOKEN_PROGRAM_ID)) return TOKEN_PROGRAM_ID
-  throw new Error('Bu adres bir SPL Token mint hesabı değil.')
+  throw new Error('This address is not an SPL Token mint account.')
 }
 
 /**
- * Kullanıcı birimindeki bir miktarı (ör. "1.5") token'ın en küçük birimine
- * çevirir. Number üzerinden geçmiyoruz: 9 ondalıklı büyük miktarlarda
- * kayan nokta hatası, yakılan miktarı sessizce değiştirebilirdi.
+ * Converts an amount in user units (e.g. "1.5") into the token's smallest unit.
+ * We do not go through Number: at 9 decimals and large amounts, floating-point
+ * error could silently change the amount burned.
  */
 export function toBaseUnits(amount: string, decimals: number): bigint {
   const trimmed = amount.trim().replace(',', '.')
   if (!/^\d*\.?\d*$/.test(trimmed) || trimmed === '' || trimmed === '.') {
-    throw new Error('Geçerli bir miktar girin.')
+    throw new Error('Enter a valid amount.')
   }
   const [whole, frac = ''] = trimmed.split('.')
   if (frac.length > decimals) {
-    throw new Error(`Bu token en fazla ${decimals} ondalık basamak destekliyor.`)
+    throw new Error(`This token supports at most ${decimals} decimal places.`)
   }
   const padded = frac.padEnd(decimals, '0')
   return BigInt(whole || '0') * BigInt(10) ** BigInt(decimals) + BigInt(padded || '0')
 }
 
-/** En küçük birimdeki bir miktarı okunabilir metne çevirir. */
+/** Converts an amount in the smallest unit into readable text. */
 export function fromBaseUnits(amount: bigint, decimals: number): string {
   if (decimals === 0) return amount.toString()
   const base = BigInt(10) ** BigInt(decimals)
@@ -76,11 +77,11 @@ export function fromBaseUnits(amount: bigint, decimals: number): string {
 }
 
 /**
- * Cüzdandaki tokenları kalıcı olarak yakar.
+ * Permanently burns tokens held in the wallet.
  *
- * GERİ ALINAMAZ: yakılan token yeniden basılamaz (mint yetkisi iptal
- * edilmişse hiç basılamaz). Çağıran taraf mutlaka açık bir onay adımı
- * göstermelidir.
+ * IRREVERSIBLE: a burned token cannot be re-minted (and if the mint authority
+ * has been revoked, cannot be minted at all). The caller must show an explicit
+ * confirmation step.
  */
 export async function burnTokens(
   connection: Connection,
@@ -90,7 +91,7 @@ export async function burnTokens(
   onStatus?: (status: string) => void,
 ): Promise<BurnResult> {
   if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
+    throw new Error('Connect your wallet first to continue.')
   }
 
   const owner = wallet.publicKey
@@ -98,7 +99,7 @@ export async function burnTokens(
   try {
     mint = new PublicKey(mintAddress.trim())
   } catch {
-    throw new Error('Geçersiz mint adresi.')
+    throw new Error('Invalid mint address.')
   }
 
   onStatus?.('Token bilgisi okunuyor...')
@@ -107,30 +108,30 @@ export async function burnTokens(
   const decimals = mintInfo.decimals
 
   const baseAmount = toBaseUnits(amount, decimals)
-  if (baseAmount <= BigInt(0)) throw new Error('Yakılacak miktar sıfırdan büyük olmalı.')
+  if (baseAmount <= BigInt(0)) throw new Error('The amount to burn must be greater than zero.')
 
   const ata = getAssociatedTokenAddressSync(mint, owner, false, programId)
 
-  onStatus?.('Bakiye kontrol ediliyor...')
+  onStatus?.('Checking the balance...')
   let held: bigint
   try {
     const balance = await withRetry(() => connection.getTokenAccountBalance(ata))
     held = BigInt(balance.value.amount)
   } catch {
-    throw new Error('Bu token için cüzdanınızda bir hesap bulunamadı.')
+    throw new Error('No account for this token was found in your wallet.')
   }
   if (baseAmount > held) {
     throw new Error(
-      `Bakiyeniz yetersiz: elinizde ${fromBaseUnits(held, decimals)} var, ${amount} yakmaya çalışıyorsunuz.`,
+      `Insufficient balance: you hold ${fromBaseUnits(held, decimals)} and are trying to burn ${amount}.`,
     )
   }
 
-  // Gönderim, oyun tarafında sertleştirilmiş ortak yoldan geçiyor
-  // (src/lib/sendTx.ts): cüzdan onayı uzun sürüp blockhash'in ömrü dolarsa
-  // yeni bir blockhash'le yeniden imzalatıyor, mobil cüzdanın hiç geri
-  // dönmediği durumda zaman aşımıyla kesiyor ve preflight simülasyonunu
-  // atlıyor. Bunun ilk sürümde yapılmaması, yakmanın paylaşımlı devnet
-  // RPC'sinde "Blockhash not found" ile başarısız olmasına yol açmıştı.
+  // The send goes through the shared path hardened on the game side
+  // (src/lib/sendTx.ts): if wallet approval takes long enough for the blockhash
+  // to expire it re-signs with a fresh one, it cuts off with a timeout when a
+  // mobile wallet never comes back, and it skips the preflight simulation. Not
+  // doing this in the first version is what made burning fail with "Blockhash
+  // not found" on the shared devnet RPC.
   const signature = await sendInstructions(
     connection,
     { publicKey: owner, signTransaction: wallet.signTransaction },
@@ -138,9 +139,10 @@ export async function burnTokens(
     onStatus,
   )
 
-  // Arzı işlemden SONRA tekrar okuyoruz — "gerçekten düştü" kanıtını
-  // kullanıcıya tahmin ederek değil, zincirden okuyarak gösteriyoruz.
-  onStatus?.('Yeni toplam arz okunuyor...')
+  // We read the supply again AFTER the transaction — the proof that it
+  // "really did drop" is shown to the user by reading the chain, not by
+  // guessing.
+  onStatus?.('Reading the new total supply...')
   const after = await withRetry(() => getMint(connection, mint, 'confirmed', programId))
 
   return {

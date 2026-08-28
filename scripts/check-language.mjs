@@ -18,6 +18,14 @@
 //
 // False positives are handled by the allow-list below, and every entry there
 // has to state WHY — a silent exception makes the whole check worthless.
+//
+// Usage:
+//   node scripts/check-language.mjs              scan the whole repository
+//   node scripts/check-language.mjs src/lib      scan only those paths
+//
+// The filtered form exists because the full report is truncated to keep it
+// readable, so grepping it for one file can wrongly look clean. When paths are
+// given, every finding under them is printed.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { extname, join, relative } from 'node:path'
@@ -80,10 +88,16 @@ function walk(dir) {
   return out
 }
 
+// Optional path filters (repo-relative), for checking one file or directory.
+const filters = process.argv.slice(2).map((p) => p.replace(/^\.\//, '').replace(/\/+$/, ''))
+const matchesFilter = (relPath) =>
+  filters.length === 0 || filters.some((f) => relPath === f || relPath.startsWith(`${f}/`))
+
 const findings = []
 for (const file of walk(root)) {
   const rel = relative(root, file)
   if (isAllowed(rel)) continue
+  if (!matchesFilter(rel)) continue
   const lines = readFileSync(file, 'utf8').split('\n')
   lines.forEach((line, i) => {
     const hits = []
@@ -101,7 +115,11 @@ for (const file of walk(root)) {
 }
 
 if (findings.length === 0) {
-  console.log('No Turkish found. Every scanned file is English-only.')
+  console.log(
+    filters.length === 0
+      ? 'No Turkish found. Every scanned file is English-only.'
+      : `No Turkish found under: ${filters.join(', ')}`,
+  )
   process.exit(0)
 }
 
@@ -113,13 +131,18 @@ for (const f of findings) {
 }
 const sorted = [...byFile.entries()].sort((a, b) => b[1].length - a[1].length)
 
+// Filtered runs print every finding; a full-repo run is truncated so the report
+// stays readable while a lot is still outstanding.
+const fileLimit = filters.length > 0 ? sorted.length : 40
+const lineLimit = filters.length > 0 ? Infinity : 2
+
 console.error(`Turkish found in ${byFile.size} file(s), ${findings.length} line(s):\n`)
-for (const [file, list] of sorted.slice(0, 40)) {
+for (const [file, list] of sorted.slice(0, fileLimit)) {
   console.error(`  ${String(list.length).padStart(5)}  ${file}`)
-  for (const f of list.slice(0, 2)) {
+  for (const f of list.slice(0, lineLimit)) {
     console.error(`         line ${f.line} (${f.why}): ${f.text}`)
   }
 }
-if (sorted.length > 40) console.error(`  ... and ${sorted.length - 40} more file(s)`)
+if (sorted.length > fileLimit) console.error(`  ... and ${sorted.length - fileLimit} more file(s)`)
 console.error('\nEverything in this repository must be in English.')
 process.exit(1)

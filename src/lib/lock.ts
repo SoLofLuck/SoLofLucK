@@ -6,11 +6,11 @@ import BN from 'bn.js'
 import Decimal from 'decimal.js'
 import type { NetworkId } from '../config'
 
-// LP kilidi, Streamflow'un zaten Devnet ve Mainnet'te dağıtılmış, denetlenmiş
-// ve yaygın kullanılan zincir-üstü kilit/vesting programını çağırır — bu
-// sitenin kendi yazıp deploy ettiği bir program değildir. Kilit "iptal
-// edilemez / üstüne ekleme yapılamaz / devredilemez" olacak şekilde
-// oluşturulur, yani süre dolmadan biz dahil kimse LP'yi geri çekemez.
+// The LP lock calls Streamflow's on-chain lock/vesting program, which is already
+// deployed on Devnet and Mainnet, audited and widely used — it is not a program
+// this site wrote and deployed itself. The lock is created as
+// "non-cancelable / non-topupable / non-transferable", so nobody, us included,
+// can withdraw the LP before it expires.
 export const LOCK_DURATION_OPTIONS: { label: string; seconds: number }[] = [
   { label: '1 Saat', seconds: 60 * 60 },
   { label: '5 Saat', seconds: 5 * 60 * 60 },
@@ -40,15 +40,15 @@ export async function lockLpTokens(
   durationSeconds: number,
   onStatus?: (status: string) => void,
 ): Promise<LockResult> {
-  if (!wallet.publicKey) throw new Error('Devam etmek için önce cüzdanınızı bağlayın.')
+  if (!wallet.publicKey) throw new Error('Connect your wallet first to continue.')
 
   const adapter = wallet.wallet?.adapter as SignerWalletAdapter | undefined
   if (!adapter || typeof adapter.signTransaction !== 'function') {
-    throw new Error('Bağlı cüzdan işlem imzalamayı desteklemiyor.')
+    throw new Error('The connected wallet does not support signing transactions.')
   }
 
   const amount = new BN(new Decimal(uiAmount).mul(10 ** lpDecimals).toFixed(0))
-  if (amount.lten(0)) throw new Error('Kilitlenecek miktar sıfırdan büyük olmalı.')
+  if (amount.lten(0)) throw new Error('The amount to lock must be greater than zero.')
 
   const unlockDate = Math.floor(Date.now() / 1000) + durationSeconds
 
@@ -64,7 +64,7 @@ export async function lockLpTokens(
   const streamData = buildLockParams(lockParams)
   const client = getStreamflowClient(connection, network)
 
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
+  onStatus?.('Waiting for approval in your wallet...')
   const result = await client.create(streamData, { sender: adapter })
 
   return {

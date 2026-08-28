@@ -15,10 +15,10 @@ import {
   PRESALE_WALLET,
 } from '../config'
 
-// Solana Memo programı — presale katkısının modunu/tutarını, hiçbir özel
-// program yazmadan doğrudan işlem içinde, herkesin görebileceği şekilde
-// zincire not düşmek için kullanılıyor. Böylece ileride bir indexer/backend
-// eklendiğinde bilet sayımı bu memo kayıtlarından da doğrulanabilir.
+// The Solana Memo program — used to note the presale contribution's mode and
+// amount onto the chain, publicly visible, directly inside the transaction and
+// without writing any custom program. That way, if an indexer or backend is
+// added later, the ticket count can also be verified from these memo records.
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
 
 export type PresaleMode = 'flex' | 'fixed'
@@ -43,34 +43,34 @@ export function calcTickets(amountSol: number): number {
   return Math.floor((amountSol + 1e-9) / PRESALE_TICKET_UNIT_SOL)
 }
 
-/** Operasyon payının yüzde karşılığı (ör. 0.777) — arayüzde göstermek için. */
+/** The operations share as a percentage (e.g. 0.777) — for display in the UI. */
 export const PRESALE_OPS_FEE_PERCENT = (PRESALE_OPS_FEE_NUM / PRESALE_OPS_FEE_DEN) * 100
 
-/** Operasyon payı yapılandırıldı mı (cüzdan boşsa pay hiç alınmaz). */
+/** Is the operations share configured (with an empty wallet no share is taken). */
 export const presaleOpsFeeActive = Boolean(PRESALE_OPS_WALLET) && PRESALE_OPS_FEE_NUM > 0
 
 // ---------------------------------------------------------------------------
-// Sabit fiyat, hedef ve ilerleme
+// Fixed price, target and progress
 // ---------------------------------------------------------------------------
 
-/** Verilen SOL karşılığında alınacak $LUCK miktarı (sabit fiyat). */
+/** The amount of $LUCK received for a given amount of SOL (fixed price). */
 export function tokensForSol(amountSol: number): number {
   if (!Number.isFinite(amountSol) || amountSol <= 0) return 0
   return amountSol * PRESALE_TOKENS_PER_SOL
 }
 
 /**
- * Presale cüzdanında hedefe ulaşıldığında bulunması gereken bakiye.
+ * The balance the presale wallet must hold once the target is reached.
  *
- * Operasyon payı katkının içinden AYNI işlemde ayrıldığı için presale
- * cüzdanına yalnızca kalan kısım giriyor — yani 777 SOL'lük hedef, presale
- * cüzdanında 777 değil, 777 × (1 − pay) SOL demek. İlerleme çubuğu bu yüzden
- * ham bakiyeyi değil, bu eşiği referans alıyor.
+ * The operations share is split out of the contribution in the SAME
+ * transaction, so only the remainder enters the presale wallet — meaning a
+ * 777 SOL target is not 777 in the presale wallet but 777 x (1 - share) SOL.
+ * That is why the progress bar uses this threshold rather than the raw balance.
  */
 export const PRESALE_TARGET_POOL_SOL =
   PRESALE_TARGET_SOL * (1 - PRESALE_OPS_FEE_NUM / PRESALE_OPS_FEE_DEN)
 
-/** Presale cüzdanındaki bakiyeden, toplanan BRÜT katkıyı geri hesaplar. */
+/** Derives the GROSS contribution raised back from the presale wallet balance. */
 export function grossRaisedFromPoolSol(poolSol: number): number {
   const keepRatio = 1 - PRESALE_OPS_FEE_NUM / PRESALE_OPS_FEE_DEN
   if (keepRatio <= 0) return 0
@@ -78,17 +78,17 @@ export function grossRaisedFromPoolSol(poolSol: number): number {
 }
 
 export interface PresaleProgress {
-  /** Presale cüzdanındaki bakiye (SOL). */
+  /** The balance in the presale wallet (SOL). */
   poolSol: number
-  /** Buradan geri hesaplanan brüt katkı toplamı (SOL). */
+  /** The gross contribution total derived from it (SOL). */
   grossSol: number
-  /** Hedefe göre doluluk, 0-1 arası (1'i aşabilir). */
+  /** Fill relative to the target, 0-1 (can exceed 1). */
   ratio: number
-  /** Doluluk yüzdesi, 0-100 arasına sıkıştırılmış (çubuğun genişliği). */
+  /** Fill percentage, clamped to 0-100 (the bar's width). */
   percent: number
-  /** Hedef doldu mu — dolduysa katkı kabul edilmez. */
+  /** Is the target filled — if so, no contribution is accepted. */
   targetReached: boolean
-  /** Taban (soft cap) aşıldı mı. */
+  /** Has the floor (soft cap) been passed. */
   softCapReached: boolean
 }
 
@@ -105,7 +105,7 @@ export function computePresaleProgress(poolSol: number): PresaleProgress {
   }
 }
 
-/** Presale bitiş anı — başlangıç ilan edilmediyse null. */
+/** The moment the presale ends — null if no start has been announced. */
 export function presaleEndsAt(): Date | null {
   if (!PRESALE_START_ISO) return null
   const start = new Date(PRESALE_START_ISO)
@@ -126,22 +126,21 @@ export function presalePhaseAt(now: Date = new Date()): PresalePhase {
 }
 
 /**
- * Presale katkı kabul ediyor mu — ve etmiyorsa NEDEN.
+ * Is the presale accepting contributions — and if not, WHY.
  *
- * Bu, sitedeki tek para kapısı. Presale düz bir cüzdan transferi olduğu
- * için zincirde bunu engelleyecek bir program YOK; engel yalnızca burada.
+ * This is the site's only money gate. The presale is a plain wallet transfer,
+ * so there is NO on-chain program to stop it; the barrier exists only here.
  *
- * `unscheduled` DAHİL EDİLDİ ve bu kasıtlı bir değişiklik. Önceden takvim
- * ilan edilmemişken (`PRESALE_START_ISO = ''`) presale AÇIK bırakılıyordu,
- * gerekçe "test aşamasındayız" idi. Bunun sonucu şuydu: yayın günü
- * "Yakında" kapısını kaldırıp tarihi doldurmayı unutmak, tarihi olmayan
- * ve karşılığında henüz basılmış token bulunmayan bir presale'i herkese
- * açmak demekti. İki ayrı kontrol listesi maddesinin birbirine bu şekilde
- * bağlı olması kabul edilemez — birinin unutulması para kabul etmeye yol
- * açmamalı.
+ * `unscheduled` IS INCLUDED, and that is a deliberate change. Previously, with
+ * no schedule announced (`PRESALE_START_ISO = ''`), the presale was left OPEN,
+ * on the grounds that "we are still testing". The consequence was this: on
+ * launch day, removing the "Stay Tuned" gate while forgetting to fill in the
+ * date meant opening a presale to everyone with no date and no minted token
+ * behind it. Two separate checklist items being coupled like that is not
+ * acceptable — forgetting one of them must not lead to accepting money.
  *
- * Test aşamasında açık olması gerekiyorsa yapılacak şey bellidir ve
- * bilinçlidir: PRESALE_START_ISO'ya geçmiş bir tarih yazmak.
+ * If it does need to be open during testing, the thing to do is explicit and
+ * deliberate: write a past date into PRESALE_START_ISO.
  */
 export type PresaleClosedReason = 'unconfigured' | 'unscheduled' | 'upcoming' | 'ended' | 'reached'
 
@@ -158,23 +157,23 @@ export function presaleClosedReason(args: {
   return null
 }
 
-/** Kalan süreyi "12g 4s 30d" gibi kısa bir metne çevirir. */
+/** Renders the remaining time as a short string such as "12d 4h 30m". */
 export function formatRemaining(ms: number): string {
-  if (ms <= 0) return '0d'
+  if (ms <= 0) return '0m'
   const totalMinutes = Math.floor(ms / 60_000)
   const days = Math.floor(totalMinutes / (60 * 24))
   const hours = Math.floor((totalMinutes % (60 * 24)) / 60)
   const minutes = totalMinutes % 60
-  if (days > 0) return `${days}g ${hours}s ${minutes}d`
-  if (hours > 0) return `${hours}s ${minutes}d`
-  return `${minutes}d`
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
 }
 
 /**
- * Bir katkıyı, havuza gidecek kısım ile operasyon payına böler. Bölme
- * lamport (tam sayı) üzerinden yapılır ve pay AŞAĞI yuvarlanır — yani
- * yuvarlama farkı her zaman havuzun lehine kalır, katkıda bulunanın
- * aleyhine değil.
+ * Splits a contribution into the part going to the pool and the operations
+ * share. The split is done in lamports (whole numbers) and the share is rounded
+ * DOWN — so the rounding difference always falls in the pool's favour, never
+ * against the contributor.
  */
 export function splitContributionLamports(totalLamports: number): {
   poolLamports: number
@@ -186,15 +185,16 @@ export function splitContributionLamports(totalLamports: number): {
 }
 
 /**
- * Presale'e SOL gönderir. `flex` modda çekiliş bileti kazandırmaz (serbest
- * katkı); `fixed` modda her PRESALE_TICKET_UNIT_SOL (0.5 SOL) için 1 bilet
- * kazandırır.
+ * Sends SOL to the presale. Tickets are granted from the amount alone, at 1
+ * ticket per PRESALE_TICKET_UNIT_SOL (0.5 SOL), in both modes — `flex` (free
+ * contribution) and `fixed` (a preset package) differ only in how the amount is
+ * entered.
  *
- * Katkı tek bir işlemde iki transfere bölünür: havuza gidecek kısım
- * PRESALE_WALLET'a, operasyon payı (bkz. PRESALE_OPS_WALLET) ayrı bir
- * cüzdana. İzlenebilirlik için her iki tutarı da içeren bir memo eklenir.
- * Operasyon cüzdanı yapılandırılmamışsa pay alınmaz ve katkının tamamı
- * PRESALE_WALLET'a gider.
+ * The contribution is split into two transfers inside a single transaction: the
+ * pool's part to PRESALE_WALLET and the operations share to a separate wallet
+ * (see PRESALE_OPS_WALLET). A memo containing both amounts is added for
+ * traceability. If the operations wallet is not configured, no share is taken
+ * and the whole contribution goes to PRESALE_WALLET.
  */
 export async function sendPresaleContribution(
   connection: Connection,
@@ -205,29 +205,29 @@ export async function sendPresaleContribution(
   onStatus?: (status: string) => void,
 ): Promise<PresaleContributionResult> {
   if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error('Cüzdan bağlı değil.')
+    throw new Error('The wallet is not connected.')
   }
   if (!PRESALE_WALLET) {
-    throw new Error('Presale henüz yapılandırılmadı (PRESALE_WALLET boş).')
+    throw new Error('The presale is not configured yet (PRESALE_WALLET is empty).')
   }
   if (!Number.isFinite(amountSol) || amountSol <= 0) {
-    throw new Error('Geçersiz miktar.')
+    throw new Error('Invalid amount.')
   }
 
   const payer = wallet.publicKey
-  // Biletler HER ZAMAN gönderilen brüt tutar üzerinden hesaplanır —
-  // operasyon payı bilet sayısını düşürmez.
-  // Bilet artık moda bakılmaksızın tutardan hesaplanıyor (bkz. config.ts
-  // PRESALE_TICKET_UNIT_SOL notu): mod, gönderenin kendi yazdığı memo'dan
-  // okunuyordu ve taklit edilebilirdi; ayrıca aynı parayı gönderen iki
-  // kişiden birine bilet verip diğerine vermemek savunulabilir değildi.
+  // Tickets are ALWAYS computed from the gross amount sent — the operations
+  // share does not reduce the ticket count.
+  // Tickets are now computed from the amount regardless of mode (see the
+  // PRESALE_TICKET_UNIT_SOL note in config.ts): the mode was read from a memo
+  // written by the sender and could be faked; and granting tickets to one of
+  // two people who sent the same money but not the other was indefensible.
   const tickets = calcTickets(amountSol)
 
   const totalLamports = Math.round(amountSol * LAMPORTS_PER_SOL)
   const { poolLamports, opsLamports } = splitContributionLamports(totalLamports)
 
   const ixs: TransactionInstruction[] = []
-  // Havuza gidecek kısım presale cüzdanına...
+  // The pool's part goes to the presale wallet...
   ixs.push(
     SystemProgram.transfer({
       fromPubkey: payer,
@@ -235,9 +235,10 @@ export async function sendPresaleContribution(
       lamports: poolLamports,
     }),
   )
-  // ...operasyon payı ise AYNI işlemde ayrı bir cüzdana. Presale cüzdanına
-  // hiç uğramadığı için TGE'de havuza konacak tutar presale cüzdanının
-  // bakiyesine eşit olur; elle ayıklama gerekmez.
+  // ...and the operations share goes to a separate wallet in the SAME
+  // transaction. Because it never passes through the presale wallet, the amount
+  // to be put into the pool at TGE equals the presale wallet's balance exactly;
+  // no manual sorting is needed.
   if (opsLamports > 0) {
     ixs.push(
       SystemProgram.transfer({
@@ -261,26 +262,26 @@ export async function sendPresaleContribution(
     ),
   )
 
-  // Ortak, sertleştirilmiş gönderim yolu (bkz. sendTx.ts). Burası eskiden
-  // düz bir `getLatestBlockhash → sign → sendRawTransaction →
-  // confirmTransaction` dizisiydi ve presale, kullanıcının GERÇEK parayla
-  // dokunduğu ilk yer olduğu için en riskli noktadaydı:
+  // The shared, hardened send path (see sendTx.ts). This used to be a plain
+  // `getLatestBlockhash -> sign -> sendRawTransaction -> confirmTransaction`
+  // sequence, and since the presale is the first place a user touches with REAL
+  // money, it was the riskiest point in the app:
   //
-  // - confirmTransaction bir websocket aboneliği açıyor. Mobilde cüzdan
-  //   onayı için uygulama değiştirilince tarayıcı sayfayı arka plana alıyor
-  //   ve abonelik sessizce kopuyor. Bildirim hiç gelmediği için işlem
-  //   ZİNCİRE YAZILMIŞ olsa bile "block height exceeded" hatası veriliyordu.
-  //   Katkısının gittiğini görmeyen kullanıcının yapacağı ilk şey TEKRAR
-  //   GÖNDERMEK — yani iki kez ödemek.
-  // - Öncelik ücreti yoktu; ağ yoğunken işlem lider tarafından sessizce
-  //   düşürülüyor ve blockhash süresi doluyor.
-  // - Tek gönderim yapılıyordu; paylaşımlı RPC'lerde çoğu zaman yetmiyor.
-  // - signTransaction zaman aşımına bağlı değildi; Phantom'ın deep-link
-  //   akışı geri dönmezse ekran sonsuza kadar kilitli kalıyordu.
+  // - confirmTransaction opens a websocket subscription. On mobile, switching
+  //   apps to approve in the wallet puts the page in the background and the
+  //   subscription silently drops. Because the notification never arrives, a
+  //   "block height exceeded" error was reported even when the transaction HAD
+  //   BEEN WRITTEN TO THE CHAIN. The first thing a user who cannot see their
+  //   contribution land will do is SEND IT AGAIN — i.e. pay twice.
+  // - There was no priority fee; under load the transaction is silently dropped
+  //   by the leader and the blockhash expires.
+  // - Only one send was made; on shared RPCs that is often not enough.
+  // - signTransaction had no timeout; if Phantom's deep-link flow never came
+  //   back, the screen stayed locked forever.
   //
-  // sendInstructions bunların hepsini kapatıyor ve yeniden imza istemeden
-  // önce daha önce gönderilmiş imzaların zincire yazılıp yazılmadığına
-  // bakıyor — yani çift ödeme riski olmadan tekrar deniyor.
+  // sendInstructions closes all of these, and before asking for a new signature
+  // it checks whether previously sent signatures have landed on chain — so it
+  // retries without any risk of double payment.
   const signature = await sendInstructions(
     connection,
     { publicKey: payer, signTransaction: wallet.signTransaction },
@@ -294,10 +295,10 @@ export async function sendPresaleContribution(
 }
 
 // ---------------------------------------------------------------------------
-// Yerel (tarayıcı) geçmiş — gerçek bir indexer/backend gelene kadar,
-// kullanıcının bu cüzdanla yaptığı katkıları ve topladığı bilet sayısını
-// anında gösterebilmek için localStorage'a da yazılır. Kaynak doğruluk her
-// zaman zincirdeki işlem + memo'dur.
+// Local (browser) history — until a real indexer or backend exists,
+// contributions made with this wallet and the tickets collected are also
+// written to localStorage so they can be shown instantly. The source of truth
+// is always the on-chain transaction plus its memo.
 // ---------------------------------------------------------------------------
 
 export interface StoredContribution extends PresaleContributionResult {
@@ -316,8 +317,8 @@ function recordContribution(network: NetworkId, entry: PresaleContributionResult
     list.push({ ...entry, at: Date.now() })
     window.localStorage.setItem(key, JSON.stringify(list))
   } catch {
-    // localStorage yoksa (ör. gizli sekme kısıtlaması) sessizce yut —
-    // bu, geçmiş görüntülemeyi etkiler ama katkı işlemini etkilemez.
+    // If localStorage is unavailable (e.g. a private-tab restriction) swallow
+    // it quietly — it affects the history view, not the contribution itself.
   }
 }
 

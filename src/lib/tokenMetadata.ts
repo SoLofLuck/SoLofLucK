@@ -7,7 +7,7 @@ export interface TokenMeta {
   image?: string
 }
 
-// Aynı mint için tekrar tekrar zincirden okumayı önlemek için basit bir önbellek.
+// A simple cache, so the same mint is not read from the chain over and over.
 const cache = new Map<string, TokenMeta | null>()
 
 function findMetadataPda(mint: PublicKey): PublicKey {
@@ -19,8 +19,8 @@ function findMetadataPda(mint: PublicKey): PublicKey {
 }
 
 /**
- * Bir mint'in on-chain Metaplex Token Metadata'sından isim/sembol okur.
- * Metadata yoksa (ör. metadata'sız oluşturulmuş bir token) `null` döner.
+ * Reads the name and symbol from a mint's on-chain Metaplex Token Metadata.
+ * Returns `null` if there is no metadata (e.g. a token created without any).
  */
 export async function getTokenMetadata(connection: Connection, mint: PublicKey): Promise<TokenMeta | null> {
   const key = mint.toBase58()
@@ -40,7 +40,8 @@ export async function getTokenMetadata(connection: Connection, mint: PublicKey):
         const json = await res.json()
         if (typeof json?.image === 'string' && json.image) meta.image = json.image
       } catch {
-        // Görsel alınamazsa isim/sembolle devam edilir — logo zorunlu değil.
+        // If the image cannot be fetched we continue with the name and symbol —
+        // a logo is not required.
       }
     }
     cache.set(key, meta)

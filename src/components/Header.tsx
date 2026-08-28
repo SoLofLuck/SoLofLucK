@@ -22,7 +22,7 @@ export function Header({ network, onNetworkChange }: Props) {
           className="network-select"
           value={network}
           onChange={(e) => onNetworkChange(e.target.value as NetworkId)}
-          aria-label="Ağ seçimi"
+          aria-label="Network selection"
         >
           {Object.values(NETWORKS).map((n) => (
             <option key={n.id} value={n.id}>

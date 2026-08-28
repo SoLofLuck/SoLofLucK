@@ -30,7 +30,7 @@ async function listForProgram(
     .filter((x): x is WalletTokenBalance => x !== null)
 }
 
-/** Bağlı cüzdanın sahip olduğu, hem legacy SPL Token hem Token-2022 hesaplarını listeler. */
+/** Lists the connected wallet's accounts, both legacy SPL Token and Token-2022. */
 export async function listAllWalletTokens(connection: Connection, owner: PublicKey): Promise<WalletTokenBalance[]> {
   const [legacy, token2022] = await Promise.all([
     listForProgram(connection, owner, TOKEN_PROGRAM_ID),
@@ -39,7 +39,7 @@ export async function listAllWalletTokens(connection: Connection, owner: PublicK
   return [...legacy, ...token2022]
 }
 
-/** Yalnızca Token-2022 hesaplarını listeler (ör. gizli transfer için). */
+/** Lists only the Token-2022 accounts (e.g. for a confidential transfer). */
 export async function listWalletToken2022Accounts(
   connection: Connection,
   owner: PublicKey,

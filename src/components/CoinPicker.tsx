@@ -7,11 +7,11 @@ import { NATIVE_SOL_MINT } from '../lib/raydium'
 import { TokenIcon, SOL_ICON } from './TokenIcon'
 
 interface Props {
-  /** true ise yalnızca Token-2022 hesapları listelenir (ör. gizli transfer). */
+  /** When true, only Token-2022 accounts are listed (e.g. for a confidential transfer). */
   token2022Only?: boolean
-  /** true ise listenin başında hızlı "SOL" seçeneği gösterilir. */
+  /** When true, a quick "SOL" option is shown at the top of the list. */
   allowSol?: boolean
-  /** Explorer linki için ağ eki, ör. "?cluster=devnet". Boş bırakılırsa Mainnet varsayılır. */
+  /** The network suffix for the Explorer link, e.g. "?cluster=devnet". Empty means Mainnet. */
   explorerCluster?: string
   onSelect: (mintAddress: string) => void
 }
@@ -43,12 +43,12 @@ function copyToClipboard(e: MouseEvent, text: string) {
 }
 
 /**
- * Cüzdandaki coin'leri, Raydium'un "Select a token" penceresine benzer bir
- * tasarımla listeleyip seçtiren, sayfalar arası paylaşılan bir seçici.
- * Kalabalık görünmesin diye liste varsayılan olarak kapalıdır; kompakt bir
- * düğmeye tıklanınca aranabilir/kaydırılabilir bir panel açılır. Seçim
- * yapıldığında sadece mint adresini bildirir — seçildikten sonra ne
- * yapılacağına (havuz oluşturma, gizli transfer vb.) çağıran sayfa karar verir.
+ * A picker shared across pages that lists the coins in the wallet and lets one
+ * be selected, in a design close to Raydium's "Select a token" dialog. The list
+ * is closed by default so the page does not look crowded; clicking a compact
+ * button opens a searchable, scrollable panel. On selection it reports only the
+ * mint address — what happens next (creating a pool, a confidential transfer and
+ * so on) is decided by the calling page.
  */
 export function CoinPicker({ token2022Only = false, allowSol = false, explorerCluster = '', onSelect }: Props) {
   const { connection } = useConnection()
@@ -78,8 +78,8 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
       .then(async (result) => {
         if (cancelled) return
         setTokens(result)
-        // İsim/sembol/logoyu arka planda tek tek doldur — liste hemen görünsün,
-        // metadata geldikçe güncellensin.
+        // Fill in the name, symbol and logo one by one in the background — the list
+        // should appear immediately and update as the metadata arrives.
         result.forEach((t, i) => {
           getTokenMetadata(connection, new PublicKey(t.mint)).then((meta) => {
             if (cancelled || !meta) return
@@ -92,7 +92,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
           })
         })
       })
-      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : 'Token listesi alınamadı.'))
+      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : 'Could not fetch the token list.'))
       .finally(() => !cancelled && setLoading(false))
 
     return () => {
@@ -143,7 +143,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
             <span>{selected.symbol || shortMint(selected.mint)}</span>
           </span>
         ) : (
-          <span className="coin-picker__trigger-placeholder">Coin Seçin</span>
+          <span className="coin-picker__trigger-placeholder">Select A Coin</span>
         )}
         <span className="coin-picker__trigger-chevron">▾</span>
       </button>
@@ -152,7 +152,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
         <div className="coin-picker__overlay" onClick={() => setIsOpen(false)}>
           <div className="coin-picker__modal" onClick={(e) => e.stopPropagation()}>
             <div className="coin-picker__modal-header">
-              <h3>Coin Seçin</h3>
+              <h3>Select A Coin</h3>
               <button type="button" className="coin-picker__close" onClick={() => setIsOpen(false)} aria-label="Kapat">
                 ✕
               </button>
@@ -161,18 +161,18 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
               <span className="coin-picker__search-icon">⌕</span>
               <input
                 type="text"
-                placeholder="İsim, sembol ya da mint adresiyle ara"
+                placeholder="Search by name, symbol or mint address"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 autoFocus
               />
             </div>
             <div className="coin-picker__modal-body">
-              {loading && <p className="subtab-desc">Cüzdanınızdaki token'lar yükleniyor...</p>}
+              {loading && <p className="subtab-desc">Loading the tokens in your wallet...</p>}
               {error && <div className="alert alert--error">{error}</div>}
-              {!wallet.connected && <p className="subtab-desc">Devam etmek için önce cüzdanınızı bağlayın.</p>}
+              {!wallet.connected && <p className="subtab-desc">Connect your wallet first to continue.</p>}
               {displayList && displayList.length === 0 && (
-                <p className="subtab-desc">Eşleşen coin bulunamadı.</p>
+                <p className="subtab-desc">No matching coin was found.</p>
               )}
               {displayList && displayList.length > 0 && (
                 <div className="coin-picker__list">
@@ -189,7 +189,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
                     >
                       <TokenIcon image={t.image} symbol={t.symbol} size={32} />
                       <span className="coin-row__info">
-                        <span className="coin-row__symbol">{t.symbol || 'İsimsiz Token'}</span>
+                        <span className="coin-row__symbol">{t.symbol || 'Unnamed Token'}</span>
                         <span className="coin-row__name">{t.name || shortMint(t.mint)}</span>
                       </span>
                       <span className="coin-row__right">
@@ -211,8 +211,8 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
                             target="_blank"
                             rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            aria-label="Explorer'da görüntüle"
-                            title="Explorer'da görüntüle"
+                            aria-label="View on Explorer"
+                            title="View on Explorer"
                           >
                             ↗
                           </a>
@@ -231,7 +231,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
                 style={{ marginTop: 12 }}
               >
                 <label className="field">
-                  <span>Ya da mint adresini yapıştırın</span>
+                  <span>Or paste a mint address</span>
                   <input
                     type="text"
                     placeholder="Token mint adresi"

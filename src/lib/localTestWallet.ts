@@ -1,13 +1,13 @@
 import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js'
 import type { TxSigner } from './luckGame'
 
-// Sadece devnet hata ayıklama içindir: Phantom'ın mobil deep-link onay
-// akışı yavaş/başarısız olduğunda (bkz. luckGame.ts'teki blockhash
-// süresi dolma sorunu) kullanıcının oyunu gerçek cüzdan olmadan, anında
-// imzalayan yerel bir "test cüzdanı" ile deneyip oyun mantığının kendisinin
-// çalıştığını doğrulamasını sağlar. Gizli anahtar SADECE tarayıcının
-// localStorage'ında saklanır, hiçbir yere gönderilmez — üzerine gerçek
-// para/coin YATIRILMAMALIDIR, sadece küçük miktarda devnet test SOL'u içindir.
+// For devnet debugging only: when Phantom's mobile deep-link approval flow is
+// slow or fails (see the blockhash-expiry problem in luckGame.ts), this lets the
+// user try the game without a real wallet, with a local "test wallet" that signs
+// instantly, and confirm that the game logic itself works. The private key is
+// stored ONLY in the browser's localStorage and is never sent anywhere — real
+// money or coins MUST NOT be deposited on it; it is for a small amount of devnet
+// test SOL only.
 const STORAGE_KEY = 'luckGame.testWalletSecretKeyV1'
 
 export function loadOrCreateTestWallet(): Keypair {
@@ -17,14 +17,14 @@ export function loadOrCreateTestWallet(): Keypair {
       return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(stored)))
     }
   } catch {
-    // Bozuk/okunamayan veri — yenisini üret.
+    // Corrupt or unreadable data — generate a new one.
   }
   const kp = Keypair.generate()
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(kp.secretKey)))
   } catch {
-    // localStorage yazılamıyorsa (gizli sekme vb.) sorun değil, sadece
-    // sayfa yenilenince yeni bir test cüzdanı üretilecek.
+    // If localStorage cannot be written (a private tab etc.) that is fine; a
+    // new test wallet is simply generated on refresh.
   }
   return kp
 }
@@ -32,9 +32,9 @@ export function loadOrCreateTestWallet(): Keypair {
 export function toTxSigner(kp: Keypair): TxSigner {
   return {
     publicKey: kp.publicKey,
-    // Yerel keypair ile imzalama tamamen senkron ve anında — cüzdan
-    // uygulaması geçişi/deep-link gecikmesi yok, dolayısıyla blockhash
-    // süresi dolma riski neredeyse sıfır.
+    // Signing with a local keypair is fully synchronous and instant — there is
+    // no wallet app switch or deep-link delay, so the risk of the blockhash
+    // expiring is almost zero.
     signTransaction: async (tx: Transaction) => {
       tx.sign(kp)
       return tx
@@ -42,7 +42,7 @@ export function toTxSigner(kp: Keypair): TxSigner {
   }
 }
 
-/** Bakiye hedefin altındaysa devnet airdrop ister; devnet faucet'i hız sınırlı olabilir. */
+/** Requests a devnet airdrop if the balance is below the target; the devnet faucet may be rate-limited. */
 export async function ensureTestWalletFunded(
   connection: Connection,
   publicKey: PublicKey,

@@ -1,8 +1,8 @@
-// Site test aşamasındayken solofluck.com kök adresine gelen herkese
-// gösterilen, tamamen düz siyah "yakında" sayfası. Gerçek uygulama, config.ts
-// içindeki PREVIEW_ACCESS_PATH ile eşleşen gizli bir yol üzerinden açılır
-// (bkz. src/main.tsx). Bu bir güvenlik önlemi değil, sadece test aşamasında
-// meraklı ziyaretçileri yavaşlatan bir gizleme (obscurity) katmanıdır.
+// The entirely plain black "coming soon" page shown to everyone who arrives at
+// the solofluck.com root while the site is in testing. The real app opens
+// through a hidden path matching PREVIEW_ACCESS_PATH in config.ts (see
+// src/main.tsx). This is not a security measure, only a layer of obscurity that
+// slows down curious visitors during testing.
 export function StayTuned() {
   return (
     <div

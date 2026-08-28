@@ -8,81 +8,81 @@ import {
 } from '@solana/web3.js'
 
 // ---------------------------------------------------------------------------
-// Ortak işlem gönderme katmanı
+// The shared transaction-sending layer
 // ---------------------------------------------------------------------------
-// Bu dosyadaki mantık önce oyun tarafında (luckGame.ts) yazıldı ve gerçek
-// kullanımda üç ayrı hata sınıfına karşı sertleştirildi. Aynı korumalar
-// yakma gibi başka akışlarda da gerektiği için buraya taşındı — düz bir
-// `getLatestBlockhash → sign → sendRawTransaction` dizisi, mobil cüzdan +
-// paylaşımlı RPC koşullarında güvenilir DEĞİL.
+// The logic in this file was first written on the game side (luckGame.ts) and
+// hardened in real use against three separate classes of failure. The same
+// protections are needed in other flows such as burning, so it moved here — a
+// plain `getLatestBlockhash -> sign -> sendRawTransaction` sequence is NOT
+// reliable under mobile-wallet + shared-RPC conditions.
 
-/** Gerçek cüzdan adaptörü (Phantom vb.) ve yerel anahtarlar için ortak arayüz. */
+/** The common interface for a real wallet adapter (Phantom etc.) and local keys. */
 export interface TxSigner {
   publicKey: PublicKey
   signTransaction: (tx: Transaction) => Promise<Transaction>
 }
 
-// NOT: cüzdan adaptörünün kendi `sendTransaction` metodu BİLEREK
-// kullanılmıyor. Mobilde bir tur gidiş-geliş kazandırıyor, ama işlemi
-// CÜZDANIN seçili olduğu ağa yayınlıyor — bizim bağlandığımız ağa değil.
-// Cüzdan başka bir ağdayken (ör. Phantom'da Devnet yerine Testnet seçili)
-// işlem sessizce yanlış ağa gidiyor. İmzayı alıp kendi bağlantımızdan
-// göndermek, işlemin her zaman sitenin seçtiği ağa gitmesini garanti
-// ediyor; hız kazancı bu garantiden vazgeçmeye değmez.
+// NOTE: the wallet adapter's own `sendTransaction` method is DELIBERATELY not
+// used. It saves a round trip on mobile, but it broadcasts the transaction to
+// THE WALLET'S selected network — not to the one we are connected to. If the
+// wallet is on a different network (e.g. Testnet instead of Devnet in Phantom)
+// the transaction silently goes to the wrong network. Taking the signature and
+// sending it over our own connection guarantees the transaction always goes to
+// the network the site selected; the speed gain is not worth losing that
+// guarantee.
 
-// İşlemlere eklenen küçük öncelik ücreti. Ağ yoğunken önceliksiz işlemler
-// lider tarafından sessizce düşürülüyor ve blockhash süresi doluyor —
-// kullanıcının gördüğü "işlem zincire yazılmadı" hatasının sebeplerinden
-// biri buydu.
+// The small priority fee added to transactions. Under load, transactions
+// without priority are silently dropped by the leader and the blockhash
+// expires — that was one of the causes of the "the transaction did not land"
+// error users saw.
 const PRIORITY_FEE_MICRO_LAMPORTS = 5_000
 
-// İşlem birimi (compute unit) limiti ÖLÇÜLEREK belirleniyor, sabit
-// değil.
+// The compute-unit limit is determined by MEASUREMENT, not by a constant.
 //
-// Sabit 300.000 kullanılıyordu ve bu, tek paketlik alımlar için fazlasıyla
-// yeterli ama "bakiyemi spin'e dönüştür" akışı için DEĞİL: o akış tek
-// işleme 20 adede kadar buy_spins koyabiliyor ve her biri birkaç CPI
-// transferi yapıyor. Toplam sessizce 300.000'i aşarsa işlem zincirde
-// "exceeded CUs" ile düşer — üstelik kullanıcının gördüğü hata sebebi
-// hiç anlatmaz.
+// A fixed 300,000 was used, which is more than enough for a single-package
+// purchase but NOT for the "convert my balance into spins" flow: that flow can
+// put up to 20 buy_spins into one transaction and each of them makes several
+// CPI transfers. If the total silently exceeds 300,000 the transaction fails on
+// chain with "exceeded CUs" — and the error the user sees explains none of it.
 //
-// Limiti körlemesine yükseltmek de doğru değil: öncelik ücreti İSTENEN
-// limitle çarpılıyor, yani 1,4 milyon istemek her küçük işlemin ücretini
-// gereksizce büyütürdü.
+// Raising the limit blindly is not right either: the priority fee is multiplied
+// by the REQUESTED limit, so asking for 1.4 million would needlessly inflate the
+// fee of every small transaction.
 //
-// Çözüm: önce yüksek bir limitle SİMÜLE edip gerçekte kaç birim
-// harcandığını okuyoruz, sonra onun üstüne pay ekleyip limiti öyle
-// koyuyoruz. Böylece küçük işlemler ucuz kalıyor, büyük partiler de
-// geçiyor.
+// The solution: simulate first with a high limit, read how many units were
+// actually consumed, then add headroom and set the limit from that. Small
+// transactions stay cheap and large batches still go through.
 //
-// SİMÜLASYON SONUÇ VERMEZSE NE OLACAK — burada bir kez yanlış karar
-// vermiştim. Ölçüm başarısızsa 300.000'e düşüyordu; yani RPC'nin
-// sallandığı anda (simülasyon "BlockhashNotFound" dönebiliyor, nitekim
-// dönüyor) tam da bu değişikliğin düzeltmek için var olduğu 20 talimatlık
-// parti yeniden "exceeded CUs" ile düşerdi. "Güvenli taraf" küçük limit
-// değil, BÜYÜK limit: ölçemediğimizde tavanı istiyoruz.
+// WHAT HAPPENS IF THE SIMULATION GIVES NO ANSWER — I got this wrong once. It
+// used to fall back to 300,000 on a failed measurement; so the moment the RPC
+// wobbled (a simulation can return "BlockhashNotFound", and does) the very
+// 20-instruction batch this change exists to fix would fail with "exceeded CUs"
+// again. The "safe side" is not the small limit but the LARGE one: when we
+// cannot measure, we ask for the ceiling.
 //
-// Maliyeti önemsiz: öncelik ücreti istenen limitle çarpılıyor, tavan
-// 1.400.000 × 5.000 µlamport / 10^6 = 7.000 lamport (0,000007 SOL).
-// Düşen bir işlemin maliyeti ise hem taban ücret hem de kullanıcının
-// yeniden denemesi.
+// The cost is negligible: the priority fee is multiplied by the requested limit,
+// so the ceiling is 1,400,000 x 5,000 microlamports / 10^6 = 7,000 lamports
+// (0.000007 SOL). The cost of a dropped transaction is both the base fee and the
+// user having to try again.
 const COMPUTE_UNIT_LIMIT_FALLBACK = 300_000
 const COMPUTE_UNIT_LIMIT_MAX = 1_400_000
-/** Ölçülen tüketimin üstüne bırakılan pay — zincirdeki durum simülasyon
- *  anındakinden biraz farklı olabilir (ör. hesap yeni oluşmuş olabilir). */
+/** The headroom left above the measured consumption — the on-chain state can
+ *  differ slightly from the moment of simulation (e.g. an account may have just
+ *  been created). */
 const COMPUTE_UNIT_HEADROOM = 1.3
 
 /**
- * Simülasyonun okuduğu tüketimden istenecek compute limitini hesaplar.
+ * Computes the compute limit to request from the consumption the simulation
+ * read.
  *
- * `consumed === null` (ölçüm yapılamadı) ya da 0 ise TAVAN isteniyor —
- * yukarıdaki açıklamaya bakınız. Ölçüm varsa pay eklenip taban ile tavan
- * arasına sıkıştırılıyor.
+ * If `consumed === null` (no measurement was possible) or 0, the CEILING is
+ * requested — see the explanation above. When there is a measurement, headroom
+ * is added and the result is clamped between the floor and the ceiling.
  *
- * Ayrı bir fonksiyon olmasının sebebi sınanabilirlik: scripts/check-abi.mjs
- * bu kararı gerçek kodu çağırarak doğruluyor.
+ * It is a separate function for testability: scripts/check-abi.mjs verifies this
+ * decision by calling the real code.
  */
-export function hesaplaComputeLimit(consumed: number | null): number {
+export function computeUnitLimitFor(consumed: number | null): number {
   if (consumed === null || consumed <= 0) return COMPUTE_UNIT_LIMIT_MAX
   return Math.min(
     COMPUTE_UNIT_LIMIT_MAX,
@@ -92,37 +92,35 @@ export function hesaplaComputeLimit(consumed: number | null): number {
 
 export interface SendOptions {
   /**
-   * Cüzdanın yanında imza atması gereken ek anahtarlar — ör. yeni bir mint
-   * hesabı oluşturulurken mint keypair'i.
+   * Extra keys that must sign alongside the wallet — e.g. the mint keypair when
+   * a new mint account is being created.
    *
-   * Bunlar cüzdana gitmeden ÖNCE `partialSign` ile ekleniyor. Yeniden
-   * deneme turlarında AYNI anahtarlar kullanılıyor: mint adresi
-   * değişmiyor. Eskiden bu akış kendi gönderim kodunu yazdığı için bir
-   * "aslında zincire yazılmıştı" durumunda kullanıcı tekrar deniyor ve
-   * İKİNCİ BİR MINT oluşuyordu.
+   * These are added with `partialSign` BEFORE the transaction goes to the
+   * wallet. Retry cycles use THE SAME keys: the mint address does not change.
+   * This flow used to write its own send code, so on an "it actually did land"
+   * case the user would retry and A SECOND MINT would be created.
    */
   extraSigners?: Keypair[]
 
   /**
-   * Cüzdan onayı beklenirken gösterilecek durum mesajı. `null` verilirse bu
-   * adım hiç gösterilmez — yerel bir anahtarla (delegate/test cüzdanı)
-   * imzalanan işlemler ANINDA ve onaysız tamamlandığından, kullanıcıya
-   * yanlışlıkla "cüzdanınızda onay bekleniyor" gibi bir mesaj gösterilmemesi
-   * için. Sadece GERÇEK cüzdan imzası gerektiren adımlarda varsayılan mesaj
-   * kullanılmalı.
+   * The status message shown while waiting for wallet approval. Passing `null`
+   * skips that step entirely — transactions signed with a local key (the
+   * delegate or test wallet) complete INSTANTLY and without approval, so the
+   * user must not mistakenly be shown something like "waiting for approval in
+   * your wallet". The default message should be used only on steps that
+   * genuinely require a REAL wallet signature.
    */
   confirmMessage?: string | null
 }
 
 /**
- * Bir promise'i, verilen süre içinde ne sonuçlanır ne de hata verirse
- * belirtilen mesajla reddeden bir zaman aşımına bağlar. Mobil cüzdanlarda
- * (özellikle Phantom'ın deep-link ile uygulama arasında geçiş yapan onay
- * akışında) uygulama geçişi başarısız olursa `wallet.signTransaction()`
- * SONSUZA KADAR ne çözülüyor ne reddediliyor — bu da ekranı "İşlem
- * bekleniyor" durumunda kalıcı olarak kilitliyordu. Her ağ/cüzdan adımını
- * bu sarmalayıcıyla sınırlıyoruz ki en kötü ihtimalle net bir hata
- * mesajıyla sonuçlansın, sonsuza dek donmasın.
+ * Binds a promise to a timeout that rejects with the given message if it
+ * neither resolves nor rejects within that time. On mobile wallets (especially
+ * Phantom's approval flow, which switches between apps over a deep link), if the
+ * app switch fails then `wallet.signTransaction()` NEVER resolves or rejects —
+ * which left the screen permanently locked on "waiting for transaction". Every
+ * network/wallet step is bounded by this wrapper so that at worst it ends in a
+ * clear error rather than freezing forever.
  */
 export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -141,20 +139,20 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, message: string)
 }
 
 /**
- * İki bilinen geçici RPC hatası sınıfına karşı kısa backoff'lu tekrar
- * deneme: (1) public/paylaşımlı RPC'lerin IP başına hız sınırı; (2) yük
- * dengelemeli sağlayıcılarda getLatestBlockhash() bir düğümden, ardından
- * gönderilen işlemin preflight simülasyonu henüz o blockhash'i görmemiş
- * farklı bir düğümden yanıt alabiliyor ("Blockhash not found"). Her
- * deneme ayrıca bir zaman aşımına bağlı.
+ * Retry with a short backoff against two known classes of transient RPC error:
+ * (1) the per-IP rate limit on public/shared RPCs; (2) on load-balanced
+ * providers, getLatestBlockhash() can be answered by one node while the
+ * preflight simulation of the transaction sent afterwards is answered by a
+ * different node that has not seen that blockhash yet ("Blockhash not found").
+ * Each attempt is also bounded by a timeout.
  */
 export async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelayMs = 800): Promise<T> {
   for (let i = 0; i < attempts; i++) {
     try {
-      return await withTimeout(fn(), 20_000, 'RPC isteği zaman aşımına uğradı.')
+      return await withTimeout(fn(), 20_000, 'The RPC request timed out.')
     } catch (err) {
       const isTransient =
-        err instanceof Error && /429|rate limit|blockhash not found|zaman aşımına uğradı/i.test(err.message)
+        err instanceof Error && /429|rate limit|blockhash not found|timed out/i.test(err.message)
       if (!isTransient || i === attempts - 1) throw err
       await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** i))
     }
@@ -172,25 +170,24 @@ export type ConfirmOutcome =
   | { kind: 'expired' }
 
 /**
- * Başarısız bir işlemin zincirdeki loglarını çeker.
+ * Fetches the on-chain logs of a failed transaction.
  *
- * `getSignatureStatuses` yalnızca kuru bir hata kodu döndürüyor (ör.
- * `{"InstructionError":[0,{"Custom":6003}]}`) — bu, ne kullanıcıya ne bize
- * bir şey anlatıyor. Programın kendi `msg!` çıktıları ise gerçek sebebi
- * yazıyor. Teşhisi tahmine bırakmamak için hatayla birlikte bunları da
- * gösteriyoruz.
+ * `getSignatureStatuses` returns only a bare error code (e.g.
+ * `{"InstructionError":[0,{"Custom":6003}]}`) — which tells neither the user nor
+ * us anything. The program's own `msg!` output states the real cause. We show
+ * those alongside the error so diagnosis is not left to guesswork.
  */
 async function fetchFailureLogs(connection: Connection, signature: string): Promise<string> {
   try {
     const tx = await withTimeout(
       connection.getTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 }),
       15_000,
-      'log sorgusu zaman aşımı',
+      'the log query timed out',
     )
     const logs = tx?.meta?.logMessages ?? []
     if (logs.length === 0) return ''
-    // Son satırlar hatayı içeriyor; başlangıçtaki "invoke/success"
-    // gürültüsünü almaya gerek yok.
+    // The last lines contain the error; there is no need to take the
+    // "invoke/success" noise from the start.
     return logs.slice(-6).join('\n')
   } catch {
     return ''
@@ -198,24 +195,25 @@ async function fetchFailureLogs(connection: Connection, signature: string): Prom
 }
 
 /**
- * İşlemin zincire yazılmasını HTTP yoklamasıyla bekler — `confirmTransaction`
- * ile DEĞİL.
+ * Waits for the transaction to land by HTTP polling — NOT with
+ * `confirmTransaction`.
  *
- * `sendInstructions` bunu kendi içinde kullanıyor. Ayrıca dışa açık, çünkü
- * bazı akışlar (ör. gizli transfer planı) birden çok işlemi TEK cüzdan
- * onayında imzalatıp sırayla göndermek zorunda — o akışlar sendInstructions'ın
- * tek-işlem modeline sığmıyor ama aynı onay sorununu yaşıyor.
+ * `sendInstructions` uses this internally. It is also exported, because some
+ * flows (e.g. the confidential transfer plan) have to sign several transactions
+ * under ONE wallet approval and send them in sequence — those do not fit
+ * sendInstructions' single-transaction model but suffer the same confirmation
+ * problem.
  *
- * Sebep: `confirmTransaction` bir websocket aboneliği açıyor. Mobilde cüzdan
- * onayı için uygulama değiştirildiğinde tarayıcı sayfayı arka plana alıyor ve
- * bu abonelik sessizce kopuyor. Bildirim hiç gelmediği için işlem ZİNCİRE
- * YAZILMIŞ olsa bile "block height exceeded" hatası veriliyordu — kullanıcı
- * yakma başarısız sandı, oysa tokenlar yanmış olabilirdi. HTTP yoklaması
- * arka plana alınmaya dayanıklı.
+ * The reason: `confirmTransaction` opens a websocket subscription. On mobile,
+ * when the user switches apps to approve in the wallet, the browser backgrounds
+ * the page and that subscription silently drops. Because the notification never
+ * arrives, a "block height exceeded" error was reported even when the
+ * transaction HAD LANDED — the user thought the burn had failed while the tokens
+ * may well have been burned. HTTP polling survives being backgrounded.
  *
- * Aynı döngüde imzalı işlem periyodik olarak YENİDEN yayınlanıyor: paylaşımlı
- * devnet/mainnet RPC'leri yoğunlukta işlem düşürebiliyor ve tek gönderim
- * çoğu zaman yetmiyor.
+ * In the same loop the signed transaction is periodically REBROADCAST: shared
+ * devnet/mainnet RPCs can drop transactions under load and a single send is
+ * often not enough.
  */
 export async function confirmBySignature(
   connection: Connection,
@@ -242,10 +240,10 @@ export async function confirmBySignature(
 
     const height = await connection.getBlockHeight().catch(() => null)
     if (height !== null && height > lastValidBlockHeight) {
-      // Blockhash penceresi kapandı. Kapanmadan hemen önce yazılmış olma
-      // ihtimaline karşı son bir kez daha bakıyoruz — burada acele edip
-      // "expired" dönmek, kullanıcıdan aynı işlem için ikinci bir imza
-      // istemek demek olurdu (yani çift yakma riski).
+      // The blockhash window has closed. In case it landed just before it did,
+      // we look one more time — rushing to return "expired" here would mean
+      // asking the user for a second signature for the same transaction (i.e.
+      // the risk of burning twice).
       await sleep(2000)
       const finalStatus = await connection
         .getSignatureStatuses([signature])
@@ -257,11 +255,11 @@ export async function confirmBySignature(
     }
 
     if (Date.now() - lastResendAt > 3000) {
-      // Yeniden yayın: aynı imza, aynı işlem — mükerrer bir işlem
-      // oluşturmaz, yalnızca düşürülmüş olabilecek paketi tekrar gönderir.
+      // Rebroadcast: the same signature, the same transaction — it creates no
+      // duplicate, it only re-sends a packet that may have been dropped.
       connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 }).catch(() => {})
       lastResendAt = Date.now()
-      onStatus?.('Onay bekleniyor (işlem ağa tekrar gönderiliyor)...')
+      onStatus?.('Waiting for confirmation (resending the transaction to the network)...')
     }
 
     await sleep(1500)
@@ -271,19 +269,19 @@ export async function confirmBySignature(
 }
 
 /**
- * İmza istemeden ÖNCE işlemi simüle eder ve kesin bir hata varsa net bir
- * mesajla durur.
+ * Simulates the transaction BEFORE asking for a signature and stops with a
+ * clear message if there is a definite error.
  *
- * Neden gerekli: gerçek gönderimde `skipPreflight: true` kullanıyoruz
- * (blockhash yayılma gecikmesi yüzünden sahte "Blockhash not found"
- * hatalarını atlamak için). Ama preflight'ı atlamanın bedeli, GERÇEK
- * hataların da gizlenmesi: cüzdanda ağ ücreti için SOL kalmadığında işlem
- * lider tarafından reddediliyor, hiç zincire yazılmıyor ve biz bunu
- * "blockhash süresi doldu" diye raporluyorduk. Kullanıcı defalarca imza
- * atıp neden başarısız olduğunu göremiyordu.
+ * Why this is needed: on the real send we use `skipPreflight: true` (to skip
+ * spurious "Blockhash not found" errors caused by blockhash propagation delay).
+ * But the price of skipping preflight is that REAL errors are hidden too: when
+ * the wallet has no SOL left for the network fee the transaction is rejected by
+ * the leader, never lands, and we were reporting that as "the blockhash
+ * expired". The user signed over and over without being able to see why it
+ * failed.
  *
- * Simülasyon imza gerektirmiyor, ücretsiz ve hızlı — bu yüzden cüzdanı
- * hiç rahatsız etmeden önce çalıştırıyoruz.
+ * A simulation needs no signature, costs nothing and is fast — which is why we
+ * run it before bothering the wallet at all.
  */
 async function assertSimulationPasses(
   connection: Connection,
@@ -297,9 +295,9 @@ async function assertSimulationPasses(
       600,
     )
   } catch {
-    // Simülasyonun KENDİSİ başarısız olduysa (RPC hatası, zaman aşımı) yolu
-    // tıkamıyoruz — geçici olabilir ve kullanıcıyı gerçek bir sorun olmadan
-    // durdurmak istemeyiz.
+    // If the SIMULATION ITSELF failed (an RPC error, a timeout) we do not block
+    // the path — it may be transient and we do not want to stop the user when
+    // there is no real problem.
     return null
   }
 
@@ -310,68 +308,68 @@ async function assertSimulationPasses(
   const raw = JSON.stringify(err)
   const logs = (result.value.logs ?? []).join('\n')
 
-  // Kullanıcının düzeltebileceği, net sorunlar — bunlarda cüzdanı hiç
-  // açmadan duruyoruz.
+  // Clear problems the user can fix — for these we stop without ever opening
+  // the wallet.
   if (/InsufficientFundsForFee/i.test(raw) || /insufficient lamports/i.test(logs)) {
     throw new Error(
-      'Cüzdanınızda ağ ücretini ödeyecek kadar SOL yok. Devnet\'te ücretsiz SOL için ' +
-        'faucet.solana.com adresini kullanabilir, Mainnet\'te cüzdanınıza biraz SOL göndermeniz gerekir.',
+      'Your wallet does not have enough SOL to pay the network fee. On Devnet you can get free ' +
+        'SOL from faucet.solana.com; on Mainnet you need to send some SOL to your wallet.',
     )
   }
   if (/insufficient funds/i.test(logs)) {
-    throw new Error('Bakiye yetersiz — işlemin gerektirdiği tutar cüzdanınızda yok.')
+    throw new Error('Insufficient balance — your wallet does not hold the amount this transaction requires.')
   }
-  // Programın kendi reddi (Anchor/SPL hata kodu): gerçek ve tekrarlanabilir
-  // bir hata, göstermeye değer.
+  // The program's own rejection (an Anchor/SPL error code): a real and
+  // reproducible error, worth showing.
   if (/InstructionError/i.test(raw)) {
-    throw new Error(`İşlem simülasyonu başarısız: ${raw}${logs ? `\n${logs.slice(-400)}` : ''}`)
+    throw new Error(`The transaction simulation failed: ${raw}${logs ? `\n${logs.slice(-400)}` : ''}`)
   }
 
-  // Geri kalan her şey SONUÇSUZ sayılıyor ve yolu tıkamıyor. Özellikle
-  // "BlockhashNotFound": simulateTransaction kendi blockhash'ini çekiyor ve
-  // yük dengelemeli RPC'lerde simülasyonu yapan düğüm o blockhash'i henüz
-  // görmemiş olabiliyor. Bu, işlemle ilgili bir sorun DEĞİL — nitekim bu
-  // kontrolü ilk eklediğimde spin satın alma tam da bu yüzden hiç
-  // başlayamadan hata veriyordu. Ön kontrolün işi, kullanıcının
-  // düzeltebileceği net sorunları erken yakalamak; şüpheli her durumda
-  // işlemi durdurmak değil.
-  console.warn('Simülasyon sonuçsuz, işleme devam ediliyor:', raw, logs)
+  // Everything else counts as INCONCLUSIVE and does not block the path.
+  // "BlockhashNotFound" in particular: simulateTransaction fetches its own
+  // blockhash, and on load-balanced RPCs the node running the simulation may not
+  // have seen that blockhash yet. That is NOT a problem with the transaction —
+  // indeed, when this check was first added, buying spins failed before it could
+  // even start for exactly this reason. The job of a pre-check is to catch
+  // early the clear problems a user can fix, not to stop the transaction on
+  // every suspicion.
+  console.warn('The simulation was inconclusive, continuing with the transaction:', raw, logs)
   return consumed
 }
 
 /**
- * Ücreti ödeyecek hesabın SİTENİN BAĞLI OLDUĞU ağdaki bakiyesini kontrol
- * eder.
+ * Checks the fee payer's balance ON THE NETWORK THE SITE IS CONNECTED TO.
  *
- * Bu kontrol, cüzdanın kendi ekranında gösterdiği bakiyeye değil, bizim
- * RPC bağlantımıza bakıyor — ve tam da bu yüzden değerli: cüzdan başka bir
- * ağa ayarlıysa (ör. Phantom "Testnet Mode" içinde Devnet yerine Testnet
- * seçiliyse) kullanıcı cüzdanında dolu bir bakiye görüyor ama işlemler
- * bizim ağımızda ücretsiz kalıyor ve hiç zincire yazılmıyor. Mesajda hem
- * gerçek bakiyeyi hem de ağ adını veriyoruz ki yanlış ağ durumu anlaşılsın.
+ * This check looks at our RPC connection rather than the balance the wallet
+ * shows on its own screen — and that is precisely what makes it valuable: if the
+ * wallet is set to a different network (e.g. Testnet instead of Devnet inside
+ * Phantom's "Testnet Mode") the user sees a healthy balance in their wallet
+ * while on our network the transactions have no fee cover and never land. The
+ * message states both the real balance and the network name so a
+ * wrong-network situation is recognisable.
  */
 async function assertFeePayerFunded(connection: Connection, feePayer: PublicKey): Promise<void> {
   let lamports: number
   try {
-    lamports = await withTimeout(connection.getBalance(feePayer), 15_000, 'Bakiye sorgusu zaman aşımı.')
+    lamports = await withTimeout(connection.getBalance(feePayer), 15_000, 'The balance query timed out.')
   } catch {
-    return // Geçici RPC sorunu — kullanıcıyı boşuna durdurmuyoruz.
+    return // A transient RPC problem — no reason to stop the user.
   }
 
-  // Taban işlem ücreti (5.000) + öncelik ücreti üst sınırı + küçük bir pay.
+  // The base transaction fee (5,000) + the priority fee ceiling + a small margin.
   const needed = 5_000 + (COMPUTE_UNIT_LIMIT_MAX * PRIORITY_FEE_MICRO_LAMPORTS) / 1_000_000 + 5_000
   if (lamports >= needed) return
 
   const sol = (lamports / 1_000_000_000).toFixed(9).replace(/0+$/, '').replace(/\.$/, '')
   throw new Error(
-    `Bu ağda cüzdanınızda ${sol} SOL var; işlem ücreti için yeterli değil. ` +
-      'Cüzdanınızda dolu bir bakiye görüyorsanız cüzdanınız BAŞKA BİR AĞA ayarlı olabilir — ' +
-      'sitedeki ağ seçimiyle (üst soldaki menü) cüzdanınızın ağının aynı olduğundan emin olun. ' +
-      'Devnet için ücretsiz SOL: faucet.solana.com',
+    `Your wallet holds ${sol} SOL on this network, which is not enough for the transaction fee. ` +
+      'If you can see a healthy balance in your wallet, your wallet may be set to A DIFFERENT ' +
+      'NETWORK — make sure your wallet is on the same network as the site (the menu at the top ' +
+      'left). Free SOL for Devnet: faucet.solana.com',
   )
 }
 
-/** Daha önce gönderilmiş imzalardan zincire yazılmış olan var mı? */
+/** Has any of the previously sent signatures landed on chain? */
 async function findLandedSignature(
   connection: Connection,
   signatures: string[],
@@ -390,13 +388,14 @@ async function findLandedSignature(
 }
 
 /**
- * Talimatları imzalatıp gönderir ve zincire yazılmasını bekler.
+ * Signs and sends the instructions, then waits for them to land on chain.
  *
- * Normal koşulda TEK bir cüzdan onayı ister. Yalnızca işlem gerçekten
- * zincire yazılmadıysa (blockhash penceresi kapandı ve imza hiçbir durumda
- * görünmüyor) yeni bir blockhash'le yeniden imza istenir. Her yeni turdan
- * ÖNCE önceki imzalar tekrar kontrol edilir: biri aslında yazılmışsa döngü
- * orada biter — aynı işlemi iki kez göndermemek için.
+ * Under normal conditions it asks for ONE wallet approval. A new signature with
+ * a fresh blockhash is only requested when the transaction genuinely did not
+ * land (the blockhash window closed and the signature appears in no status).
+ * BEFORE each new cycle the previous signatures are checked again: if one of
+ * them actually did land, the loop ends there — so the same transaction is never
+ * sent twice.
  */
 export async function sendInstructions(
   connection: Connection,
@@ -406,23 +405,23 @@ export async function sendInstructions(
   options?: SendOptions,
 ): Promise<string> {
   const confirmMessage =
-    options?.confirmMessage === undefined ? 'Cüzdanınızda onay bekleniyor...' : options.confirmMessage
+    options?.confirmMessage === undefined ? 'Waiting for approval in your wallet...' : options.confirmMessage
 
   const attempted: string[] = []
   const maxCycles = 3
-  // İlk turda ölçülüp sonraki turlarda yeniden kullanılıyor.
-  // Ölçüm yapılana kadar tavan; bkz. hesaplaComputeLimit açıklaması.
+  // Measured on the first cycle and reused on later ones.
+  // The ceiling until a measurement exists; see the computeUnitLimitFor note.
   let computeUnitLimit = COMPUTE_UNIT_LIMIT_MAX
 
   for (let cycle = 0; cycle < maxCycles; cycle++) {
     const alreadyLanded = await findLandedSignature(connection, attempted)
     if (alreadyLanded) return alreadyLanded
 
-    // Öncelik ücreti talimatları en başa: ağ yoğunken önceliksiz işlemler
-    // lider tarafından sessizce düşürülüyor ve blockhash süresi doluyor.
-    // İlk turda limiti ölçmek için TAVANDAN başlıyoruz: düşük bir limitle
-    // simüle etmek, gerçekte sığacak bir işlemi "exceeded CUs" ile
-    // düşürüp yanlış teşhis verirdi.
+    // The priority-fee instructions go first: under load, transactions without
+    // priority are silently dropped by the leader and the blockhash expires.
+    // On the first cycle we start FROM THE CEILING in order to measure the
+    // limit: simulating with a low limit would fail a transaction that actually
+    // fits with "exceeded CUs" and give a false diagnosis.
     const buildTx = (units: number) =>
       new Transaction()
         .add(ComputeBudgetProgram.setComputeUnitLimit({ units }))
@@ -431,83 +430,87 @@ export async function sendInstructions(
 
     let tx = buildTx(cycle === 0 ? COMPUTE_UNIT_LIMIT_MAX : computeUnitLimit)
 
-    onStatus?.(cycle === 0 ? 'İşlem hazırlanıyor...' : `İşlem yeniden hazırlanıyor (${cycle + 1}. deneme)...`)
-    // 'confirmed' ile mümkün olan en TAZE blockhash'i alıyoruz; daha eski
-    // (finalized) bir blockhash, zaten kısa olan geçerlilik penceresinin
-    // bir kısmını daha baştan harcamış olurdu.
+    onStatus?.(
+      cycle === 0 ? 'Preparing the transaction...' : `Preparing the transaction again (attempt ${cycle + 1})...`,
+    )
+    // We take the FRESHEST possible blockhash with 'confirmed'; an older
+    // (finalized) blockhash would already have spent part of the validity
+    // window, which is short to begin with.
     const { blockhash, lastValidBlockHeight } = await withRetry(() =>
       connection.getLatestBlockhash('confirmed'),
     )
     tx.recentBlockhash = blockhash
     tx.feePayer = signer.publicKey
 
-    // İmza istemeden önce kesin hataları yakala (yetersiz bakiye vb.).
-    // Yalnızca ilk turda: sonraki turlar aynı talimatları taşıyor.
+    // Catch definite errors (insufficient balance etc.) before asking for a
+    // signature. Only on the first cycle: later cycles carry the same
+    // instructions.
     if (cycle === 0) {
-      onStatus?.('İşlem kontrol ediliyor...')
+      onStatus?.('Checking the transaction...')
       await assertFeePayerFunded(connection, signer.publicKey)
       const consumed = await assertSimulationPasses(connection, tx)
-      computeUnitLimit = hesaplaComputeLimit(consumed)
-      // Ölçülen limitle yeniden kuruyoruz: tavan limitle göndermek işlemi
-      // düşürmezdi ama öncelik ücreti İSTENEN limitle çarpıldığı için
-      // her işlemi gereksizce pahalılaştırırdı.
+      computeUnitLimit = computeUnitLimitFor(consumed)
+      // Rebuild with the measured limit: sending with the ceiling would not drop
+      // the transaction, but because the priority fee is multiplied by the
+      // REQUESTED limit it would needlessly make every transaction more
+      // expensive.
       tx = buildTx(computeUnitLimit)
       tx.recentBlockhash = blockhash
       tx.feePayer = signer.publicKey
     }
 
-    // Ek imzacılar cüzdandan ÖNCE imzalamalı: cüzdan adaptörleri mevcut
-    // imzaları koruyup kendi imzasını ekliyor, tersi çalışmıyor.
+    // Extra signers must sign BEFORE the wallet: wallet adapters preserve
+    // existing signatures and add their own, but not the other way around.
     if (options?.extraSigners?.length) {
       tx.partialSign(...options.extraSigners)
     }
 
     if (confirmMessage) onStatus?.(confirmMessage)
 
-    // Mobilde uygulama geçişi + kullanıcının okuma süresi rahatlıkla bir
-    // dakikayı buluyor; bu yüzden onay için geniş bir pencere bırakıyoruz.
-    // Yine de sonsuz değil: deep-link hiç geri dönmezse net bir hata verip
-    // ekranı kilitli bırakmıyoruz.
+    // On mobile, the app switch plus the user's reading time easily reaches a
+    // minute, so we leave a wide window for approval. Still not infinite: if the
+    // deep link never comes back we give a clear error rather than leaving the
+    // screen locked.
     //
-    // skipPreflight: yük dengelemeli RPC düğümleri arasında kısa süreli
-    // state gecikmesi yüzünden preflight simülasyonu, gönderilen düğümde
-    // henüz görünmeyen (ama geçerli) bir blockhash'i reddedebiliyor
-    // ("Blockhash not found"). Gerçek sonucu imza durumundan okuyoruz.
+    // skipPreflight: because of brief state lag between load-balanced RPC nodes,
+    // the preflight simulation can reject a blockhash that is valid but not yet
+    // visible on the node it lands on ("Blockhash not found"). We read the real
+    // outcome from the signature status instead.
     const signedTx = await withTimeout(
       signer.signTransaction(tx),
       120_000,
-      'Cüzdan onayı 2 dakika içinde tamamlanmadı. Cüzdan uygulamanızı kontrol edin (onay isteği hâlâ açık olabilir) ve tekrar deneyin.',
+      'The wallet approval did not complete within 2 minutes. Check your wallet app (the approval request may still be open) and try again.',
     )
     const rawTx = signedTx.serialize()
 
-    onStatus?.('İşlem ağa gönderiliyor...')
+    onStatus?.('Sending the transaction to the network...')
     const signature = await withRetry(() =>
-      // maxRetries, RPC düğümünün işlemi lidere TEKRAR TEKRAR iletmesini
-      // sağlıyor. Bir ara bunu 0'a çekmiştim ("kendi yeniden yayınımız var"
-      // diye) — ama istemciden 3sn'de bir gönderim, düğümün her slot başında
-      // yeniden iletmesinin yerini tutmuyor.
+      // maxRetries makes the RPC node forward the transaction to the leader
+      // REPEATEDLY. I once set this to 0 (reasoning "we do our own
+      // rebroadcast") — but a send every 3s from the client does not replace the
+      // node forwarding it on every slot.
       connection.sendRawTransaction(rawTx, { skipPreflight: true, maxRetries: 5 }),
     )
     attempted.push(signature)
 
-    onStatus?.('Onay bekleniyor...')
+    onStatus?.('Waiting for confirmation...')
     const outcome = await confirmBySignature(connection, signature, rawTx, lastValidBlockHeight, onStatus)
 
     if (outcome.kind === 'ok') return signature
     if (outcome.kind === 'failed') {
-      onStatus?.('Hata ayrıntıları okunuyor...')
+      onStatus?.('Reading the error details...')
       const logs = await fetchFailureLogs(connection, signature)
       throw new Error(
-        `İşlem zincirde başarısız oldu: ${JSON.stringify(outcome.err)}${logs ? `\n\n${logs}` : ''}`,
+        `The transaction failed on chain: ${JSON.stringify(outcome.err)}${logs ? `\n\n${logs}` : ''}`,
       )
     }
     if (cycle === maxCycles - 1) {
       throw new Error(
-        'İşlem zincire yazılmadı (blockhash süresi doldu). Ağ yoğun olabilir — biraz bekleyip tekrar deneyin. ' +
-          'Cüzdanınızdaki bakiye değişmediyse hiçbir işlem gerçekleşmemiştir.',
+        'The transaction did not land (the blockhash expired). The network may be busy — wait a ' +
+          'moment and try again. If your wallet balance has not changed, nothing happened.',
       )
     }
-    onStatus?.('İşlem zamanında zincire yazılmadı — yeni bir onayla tekrar deneniyor...')
+    onStatus?.('The transaction did not land in time — retrying with a new approval...')
   }
   throw new Error('unreachable')
 }
