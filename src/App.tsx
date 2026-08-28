@@ -7,31 +7,31 @@ import { TokenForm } from './components/TokenForm'
 import { Footer } from './components/Footer'
 import { NETWORKS, DEFAULT_NETWORK, type NetworkId } from './config'
 
-// Raydium SDK oldukça büyük olduğu için bu sekmeyi yalnızca kullanıcı
-// gerçekten ziyaret ettiğinde ayrı bir parça (chunk) olarak yüklüyoruz —
-// Token Oluştur sayfasının ilk açılışını yavaşlatmasın diye.
+// The Raydium SDK is fairly large, so this tab is loaded as a separate chunk
+// only when the user actually visits it — it must not slow down the first paint
+// of the Create Token page.
 const LiquidityPage = lazy(() =>
   import('./components/LiquidityPage').then((m) => ({ default: m.LiquidityPage })),
 )
 
-// zk-sdk (WASM tabanlı zero-knowledge kanıt kütüphanesi) oldukça büyük
-// olduğu için bu sekmeyi de yalnızca ziyaret edildiğinde ayrı parça olarak yüklüyoruz.
+// zk-sdk (the WASM-based zero-knowledge proof library) is also large, so this
+// tab too is loaded as a separate chunk only when it is visited.
 const ConfidentialTransferPage = lazy(() =>
   import('./components/ConfidentialTransferPage').then((m) => ({ default: m.ConfidentialTransferPage })),
 )
 
-// Matrix arka plan animasyonu + presale sekmesi bu sitenin kendi coin'ine
-// özel olduğu için diğer araçların ilk yüklemesini etkilememesi adına ayrı
-// parça olarak yükleniyor.
+// The matrix background animation and the presale tab are specific to this
+// site's own coin, so they load as a separate chunk to keep the other tools'
+// first load unaffected.
 const SoLofLuckPage = lazy(() =>
   import('./components/solofluck/SoLofLuckPage').then((m) => ({ default: m.SoLofLuckPage })),
 )
 
 type Page = 'create' | 'liquidity' | 'privacy' | 'solofluck'
 
-// Adres çubuğundaki sekme yönlendirmesi. Bilinmeyen bir hash gelirse
-// varsayılana düşülüyor: kullanıcı ne yazarsa yazsın site açılmalı.
-const ROTA = {
+// Tab routing in the address bar. An unknown hash falls back to the default:
+// whatever the user types, the site must still open.
+const ROUTES = {
   pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
   defaultPage: 'create' as const,
   subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'] as const,
@@ -42,27 +42,27 @@ const ROTA = {
 function App() {
   const [network, setNetwork] = useState<NetworkId>(DEFAULT_NETWORK)
 
-  // Sekme durumu adres çubuğunda tutuluyor: presale linki paylaşılabilsin,
-  // yenilemede aynı sekmede kalınsın, geri tuşu çalışsın. Mantık
-  // src/lib/deepLink.ts içinde ve testi var.
+  // The tab state lives in the address bar: so a presale link can be shared, so
+  // a refresh keeps you on the same tab, and so the back button works. The logic
+  // is in src/lib/deepLink.ts and has its own test.
   const [page, setPage] = useState<Page>(
-    () => routeFromHash(window.location.hash, ROTA).page,
+    () => routeFromHash(window.location.hash, ROUTES).page,
   )
 
-  // Geri/ileri tuşu ve elle değiştirilen adres.
+  // Back/forward buttons and a manually edited address.
   useEffect(() => {
-    const uygula = () => setPage(routeFromHash(window.location.hash, ROTA).page)
-    window.addEventListener('hashchange', uygula)
-    return () => window.removeEventListener('hashchange', uygula)
+    const apply = () => setPage(routeFromHash(window.location.hash, ROUTES).page)
+    window.addEventListener('hashchange', apply)
+    return () => window.removeEventListener('hashchange', apply)
   }, [])
 
-  // Sekme değişince adres çubuğunu güncelle. SoLofLuck sayfasında alt sekme
-  // de hash'te olduğu için oraya dokunmuyoruz — orayı SoLofLuckPage yönetiyor.
+  // Update the address bar when the tab changes. On the SoLofLuck page the
+  // sub-tab is in the hash too, so we leave it alone — SoLofLuckPage owns it.
   useEffect(() => {
     if (page === 'solofluck') return
-    const yeni = hashFromRoute(page, 'about', ROTA)
-    if (window.location.hash !== yeni) {
-      window.history.replaceState(null, '', yeni)
+    const next = hashFromRoute(page, 'about', ROUTES)
+    if (window.location.hash !== next) {
+      window.history.replaceState(null, '', next)
     }
   }, [page])
   const endpoint = useMemo(() => NETWORKS[network].endpoint, [network])
@@ -77,21 +77,21 @@ function App() {
             className={`page-tab ${page === 'create' ? 'page-tab--active' : ''}`}
             onClick={() => setPage('create')}
           >
-            Token Oluştur
+            Create Token
           </button>
           <button
             type="button"
             className={`page-tab ${page === 'liquidity' ? 'page-tab--active' : ''}`}
             onClick={() => setPage('liquidity')}
           >
-            Likidite Havuzu
+            Liquidity Pool
           </button>
           <button
             type="button"
             className={`page-tab ${page === 'privacy' ? 'page-tab--active' : ''}`}
             onClick={() => setPage('privacy')}
           >
-            Gizli Miktar Transferi
+            Confidential Amount Transfer
           </button>
           <button
             type="button"
@@ -112,20 +112,20 @@ function App() {
           )}
           {page === 'liquidity' && (
             <div className="form-section form-section--wide">
-              <Suspense fallback={<div className="alert alert--info">Yükleniyor...</div>}>
+              <Suspense fallback={<div className="alert alert--info">Loading...</div>}>
                 <LiquidityPage network={network} />
               </Suspense>
             </div>
           )}
           {page === 'privacy' && (
             <div className="form-section">
-              <Suspense fallback={<div className="alert alert--info">Yükleniyor...</div>}>
+              <Suspense fallback={<div className="alert alert--info">Loading...</div>}>
                 <ConfidentialTransferPage network={network} />
               </Suspense>
             </div>
           )}
           {page === 'solofluck' && (
-            <Suspense fallback={<div className="alert alert--info">Yükleniyor...</div>}>
+            <Suspense fallback={<div className="alert alert--info">Loading...</div>}>
               <SoLofLuckPage network={network} />
             </Suspense>
           )}

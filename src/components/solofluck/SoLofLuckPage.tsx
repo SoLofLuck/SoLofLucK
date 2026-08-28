@@ -10,9 +10,9 @@ import { ClaimTab } from './ClaimTab'
 
 type SubTab = 'about' | 'tokenomics' | 'presale' | 'claim' | 'game'
 
-// App.tsx'tekiyle aynı yönlendirme tanımı. İkisinin ayrışmaması gerekiyor;
-// check-abi bunu doğruluyor.
-const ROTA = {
+// The same routing definition as in App.tsx. The two must not drift apart;
+// check-abi verifies that.
+const ROUTES = {
   pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
   defaultPage: 'create' as const,
   subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'] as const,
@@ -21,11 +21,11 @@ const ROTA = {
 }
 
 const SUBTABS: { id: SubTab; label: string }[] = [
-  { id: 'about', label: 'Hakkında' },
+  { id: 'about', label: 'About' },
   { id: 'tokenomics', label: 'Tokenomics' },
   { id: 'presale', label: 'Presale' },
-  { id: 'claim', label: '🎁 Payım' },
-  { id: 'game', label: '🎰 Oyun' },
+  { id: 'claim', label: '🎁 My Share' },
+  { id: 'game', label: '🎰 Game' },
 ]
 
 interface Props {
@@ -39,23 +39,23 @@ const SOCIAL_ITEMS = [
 ].filter((s) => s.url)
 
 export function SoLofLuckPage({ network }: Props) {
-  // Alt sekme de adres çubuğunda: #solofluck/presale paylaşılabilir olsun.
-  // Bir presale için bu tek başına önemli — duyuruda verilen adres
-  // kullanıcıyı doğrudan presale'e götürmeli.
+  // The sub-tab lives in the address bar too, so #solofluck/presale can be
+  // shared. For a presale that matters on its own — the address given in an
+  // announcement must take the user straight to the presale.
   const [tab, setTab] = useState<SubTab>(
-    () => routeFromHash(window.location.hash, ROTA).subTab,
+    () => routeFromHash(window.location.hash, ROUTES).subTab,
   )
 
   useEffect(() => {
-    const uygula = () => setTab(routeFromHash(window.location.hash, ROTA).subTab)
-    window.addEventListener('hashchange', uygula)
-    return () => window.removeEventListener('hashchange', uygula)
+    const apply = () => setTab(routeFromHash(window.location.hash, ROUTES).subTab)
+    window.addEventListener('hashchange', apply)
+    return () => window.removeEventListener('hashchange', apply)
   }, [])
 
   useEffect(() => {
-    const yeni = hashFromRoute('solofluck', tab, ROTA)
-    if (window.location.hash !== yeni) {
-      window.history.replaceState(null, '', yeni)
+    const next = hashFromRoute('solofluck', tab, ROUTES)
+    if (window.location.hash !== next) {
+      window.history.replaceState(null, '', next)
     }
   }, [tab])
 
@@ -64,13 +64,13 @@ export function SoLofLuckPage({ network }: Props) {
       <MatrixBackground />
       <div className="luck-page__content">
         <section className="luck-hero">
-          <div className="luck-hero__badge">🍀 777 · Solana'da Şansını Dene 🍀</div>
+          <div className="luck-hero__badge">🍀 777 · Try Your Luck On Solana 🍀</div>
           <h1>
             <span className="luck-gradient-text">SoLofLuck</span> ($LUCK)
           </h1>
           <p className="luck-hero__subtitle">
-            Bu siteye adanmış, Solana ağında yaşayan bir şans coin'i. Presale'e katıl, çekiliş
-            biletlerini topla, tokenomics'i incele — hepsi tek sekmede.
+            A luck coin dedicated to this site, living on the Solana network. Join the presale,
+            collect raffle tickets, study the tokenomics — all in one tab.
           </p>
         </section>
 
@@ -105,7 +105,7 @@ export function SoLofLuckPage({ network }: Props) {
               ))}
             </div>
           )}
-          <p>$LUCK dahil bu sitedeki hiçbir içerik yatırım tavsiyesi değildir.</p>
+          <p>Nothing on this site, $LUCK included, is investment advice.</p>
         </footer>
       </div>
     </div>

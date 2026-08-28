@@ -503,14 +503,14 @@ for (const v of oyunVektorleri) {
 // sınanıyor.
 {
   const dl = await import(pathToFileURL(join(out, 'lib/deepLink.js')).href)
-  const ROTA = {
+  const ROUTES = {
     pages: ['create', 'liquidity', 'privacy', 'solofluck'],
     defaultPage: 'create',
     subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'],
     defaultSubTab: 'about',
     subTabPage: 'solofluck',
   }
-  const r = (h) => dl.routeFromHash(h, ROTA)
+  const r = (h) => dl.routeFromHash(h, ROUTES)
 
   kontrol('rota: #solofluck/presale', JSON.stringify(r('#solofluck/presale')),
     JSON.stringify({ page: 'solofluck', subTab: 'presale' }))
@@ -530,9 +530,9 @@ for (const v of oyunVektorleri) {
 
   // Gidiş-dönüş: yazdığımız hash'i tekrar okuyunca aynı yere düşmeli.
   let bozuk = []
-  for (const page of ROTA.pages) {
-    for (const subTab of ROTA.subTabs) {
-      const h = dl.hashFromRoute(page, subTab, ROTA)
+  for (const page of ROUTES.pages) {
+    for (const subTab of ROUTES.subTabs) {
+      const h = dl.hashFromRoute(page, subTab, ROUTES)
       const geri = r(h)
       const beklenenAlt = page === 'solofluck' ? subTab : 'about'
       if (geri.page !== page || geri.subTab !== beklenenAlt) {
@@ -549,7 +549,7 @@ for (const v of oyunVektorleri) {
   const sayfaSrc = readFileSync(
     `${repoRoot}src/components/solofluck/SoLofLuckPage.tsx`, 'utf8')
   const cikar = (src) => {
-    const m = src.match(/const ROTA = \{([\s\S]*?)\n\}/)
+    const m = src.match(/const ROUTES = \{([\s\S]*?)\n\}/)
     return m ? m[1].replace(/\s+/g, ' ').trim() : null
   }
   kontrol('rota: App.tsx ve SoLofLuckPage.tsx aynı tanımı kullanıyor',
@@ -890,4 +890,4 @@ if (hatalar.length > 0) {
   )
   process.exit(1)
 }
-console.log(`\n${kontroller.length} kontrolün hepsi geçti — istemci ve program aynı ABI'yi konuşuyor.`)
+console.log(`\nAll ${kontroller.length} checks passed — the client and the program speak the same ABI.`)

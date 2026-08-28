@@ -17,8 +17,9 @@ function solscanUrl(address: string) {
   return `https://solscan.io/account/${address}`
 }
 
-// Adresi kısaltmadan gösteriyoruz (doğrulama için tamamı gerekli); dar
-// ekranlarda kutunun içinde kaydırılabiliyor (bkz. .luck-tokenomics__wallet-addr).
+// Addresses are shown in full, never shortened (the whole string is needed to
+// verify them); on narrow screens the box scrolls horizontally instead
+// (see .luck-tokenomics__wallet-addr).
 function WalletRow({ label, address }: { label: string; address: string }) {
   return (
     <li className="luck-tokenomics__wallet">
@@ -31,13 +32,13 @@ function WalletRow({ label, address }: { label: string; address: string }) {
       >
         {address}
       </a>
-      <CopyButton value={address} label="Kopyala" />
+      <CopyButton value={address} label="Copy" />
     </li>
   )
 }
 
 function formatSupply(n: number) {
-  return n.toLocaleString('tr-TR')
+  return n.toLocaleString('en-US')
 }
 
 export function TokenomicsTab() {
@@ -45,7 +46,7 @@ export function TokenomicsTab() {
     <div className="luck-tokenomics">
       <div className="luck-tokenomics__summary">
         <div className="luck-tokenomics__stat">
-          <span>Toplam Arz</span>
+          <span>Total Supply</span>
           <strong>{formatSupply(LUCK_TOKEN.totalSupply)} $LUCK</strong>
         </div>
         <div className="luck-tokenomics__stat">
@@ -53,18 +54,18 @@ export function TokenomicsTab() {
           <strong>{LUCK_TOKEN.decimals}</strong>
         </div>
         <div className="luck-tokenomics__stat">
-          <span>Ağ</span>
+          <span>Network</span>
           <strong>Solana (SPL Token)</strong>
         </div>
       </div>
 
-      <div className="luck-tokenomics__bar" role="img" aria-label="Tokenomics dağılım grafiği">
+      <div className="luck-tokenomics__bar" role="img" aria-label="Tokenomics distribution chart">
         {TOKENOMICS.map((t) => (
           <div
             key={t.key}
             className="luck-tokenomics__bar-segment"
             style={{ width: `${t.percent}%`, background: t.color }}
-            title={`${t.label} — %${t.percent}`}
+            title={`${t.label} — ${t.percent}%`}
           />
         ))}
       </div>
@@ -76,7 +77,7 @@ export function TokenomicsTab() {
             <div className="luck-tokenomics__row-body">
               <div className="luck-tokenomics__row-head">
                 <strong>{t.label}</strong>
-                <span className="luck-tokenomics__percent">%{t.percent}</span>
+                <span className="luck-tokenomics__percent">{t.percent}%</span>
               </div>
               <div className="luck-tokenomics__row-supply">
                 {formatSupply(Math.round((LUCK_TOKEN.totalSupply * t.percent) / 100))} $LUCK
@@ -87,50 +88,52 @@ export function TokenomicsTab() {
         ))}
       </ul>
 
-      <h3 className="luck-tokenomics__subhead">Presale Kuralları</h3>
+      <h3 className="luck-tokenomics__subhead">Presale Rules</h3>
       <ul className="luck-tokenomics__sol-list">
         <li>
-          <span>Fiyat (sabit)</span>
+          <span>Price (fixed)</span>
           <strong>1 SOL = {formatSupply(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>
         </li>
         <li>
-          <span>Hedef (hard cap)</span>
+          <span>Target (hard cap)</span>
           <strong>{PRESALE_TARGET_SOL} SOL</strong>
         </li>
         <li>
-          <span>Taban (soft cap)</span>
+          <span>Floor (soft cap)</span>
           <strong>{PRESALE_SOFT_CAP_SOL} SOL</strong>
         </li>
         <li>
-          <span>Süre</span>
-          <strong>{PRESALE_DURATION_WEEKS} hafta</strong>
+          <span>Duration</span>
+          <strong>{PRESALE_DURATION_WEEKS} weeks</strong>
         </li>
       </ul>
       <p className="subtab-desc">
-        Fiyat sabittir — katkıda bulunan, parayı gönderirken kaç $LUCK alacağını tam olarak bilir.
-        Hedefe süre dolmadan ulaşılırsa presale o anda kapanır ve TGE'ye geçilir; {PRESALE_TARGET_SOL}{' '}
-        SOL'den fazlası kabul edilmez.
+        The price is fixed — a contributor knows exactly how many $LUCK they will receive at the
+        moment they send the money. If the target is reached before the deadline the presale closes
+        right there and TGE follows; nothing above {PRESALE_TARGET_SOL} SOL is accepted.
       </p>
       <p className="subtab-desc">
-        <strong>Hedef dolmazsa arz oranlanır.</strong> Hedefin %X'i toplandıysa{' '}
-        <strong>her kovadan</strong> (presale, likidite, topluluk, ekip, pazarlama) yalnızca %X'i
-        basılır, kalan %100−X <strong>yakılır</strong>. Yukarıdaki yüzdelik dağılım aynen korunur.
-        Böylece havuzun açılış fiyatı toplanan miktardan bağımsız olarak sabit kalır ve presale
-        alıcısı hangi tutarda kapanırsa kapansın listelemede presale fiyatının üstünde başlar.
-        Yalnızca satılmayan presale tokenlerini yakıp likidite kovasını sabit bırakmak bunu
-        bozardı: havuza giden SOL azalırken token sabit kalır, açılış fiyatı presale fiyatının
-        altına düşerdi.
+        <strong>If the target is not reached, the supply is scaled down proportionally.</strong> If
+        X% of the target was collected, only X% is minted <strong>out of every bucket</strong>{' '}
+        (presale, liquidity, community, team, marketing) and the remaining 100−X%{' '}
+        <strong>is burned</strong>. The percentage split above is preserved exactly. That keeps the
+        pool's opening price independent of the amount raised, so whatever level the presale closes
+        at, a presale buyer starts above the presale price at listing. Burning only the unsold
+        presale tokens while leaving the liquidity bucket untouched would break this: less SOL would
+        go into the pool while the token side stayed the same, and the opening price would fall
+        below the presale price.
       </p>
       <p className="subtab-desc">
-        <strong>Taban {PRESALE_SOFT_CAP_SOL} SOL.</strong> Bu tutara ulaşılmazsa TGE yapılmaz ve
-        katkılar iade edilir — iadeler zincirde tek tek doğrulanabilir.
+        <strong>The floor is {PRESALE_SOFT_CAP_SOL} SOL.</strong> If that amount is not reached
+        there is no TGE and contributions are refunded — every refund is individually verifiable on
+        chain.
       </p>
 
-      <h3 className="luck-tokenomics__subhead">Kilit ve Açılış Takvimi</h3>
+      <h3 className="luck-tokenomics__subhead">Lock &amp; Unlock Schedule</h3>
       <p className="subtab-desc">
-        Tasarım ilkesi şu: <strong>hiçbir açılış, likidite havuzunun emebileceğinden büyük
-        olmamalı.</strong> Bu yüzden her kova kademeli açılıyor ve büyük kilitlerin bitiş günleri
-        birbirinden ayrı — takvimde tek bir "herkesin sattığı gün" yok.
+        The design principle is this: <strong>no unlock should ever be larger than the liquidity
+        pool can absorb.</strong> That is why every bucket unlocks in stages and the end dates of
+        the large locks are spread apart — there is no single "everybody sells" day on the calendar.
       </p>
       <div className="luck-tokenomics__timeline">
         {VESTING_SCHEDULE.map((v) => (
@@ -151,15 +154,15 @@ export function TokenomicsTab() {
         ))}
       </div>
 
-      <h3 className="luck-tokenomics__subhead">Pazarlama Kovasının İçi</h3>
+      <h3 className="luck-tokenomics__subhead">Inside The Marketing Bucket</h3>
       <p className="subtab-desc">
-        <strong>CEX listeleme rezervi — {formatSupply(MARKETING_BREAKDOWN.cexReserve.total)}</strong>{' '}
-        (toplam arzın %10'u), {MARKETING_BREAKDOWN.cexReserve.wallets} ayrı kasada,
-        her biri {formatSupply(MARKETING_BREAKDOWN.cexReserve.perWallet)}. Her kasa bir borsa
-        listelemesi içindir; kasa adresleri yayınlanır ve her kullanım borsa duyurusu + işlem
-        linkiyle kanıtlanır. Bu rezerv <strong>kilitli değildir</strong> — kasıtlı olarak öyle,
-        çünkü hızlı gelen bir listeleme fırsatında kırmak zorunda kalacağımız bir kilit sözü
-        vermek istemiyoruz.
+        <strong>CEX listing reserve — {formatSupply(MARKETING_BREAKDOWN.cexReserve.total)}</strong>{' '}
+        (10% of total supply), held in {MARKETING_BREAKDOWN.cexReserve.wallets} separate vaults of{' '}
+        {formatSupply(MARKETING_BREAKDOWN.cexReserve.perWallet)} each. Each vault is meant for one
+        exchange listing; the vault addresses are published and every use is proven with the
+        exchange announcement plus the transaction link. This reserve is{' '}
+        <strong>not locked</strong> — deliberately so, because we do not want to make a lock
+        promise we would have to break the moment a listing opportunity arrives on short notice.
       </p>
       <ul className="luck-tokenomics__wallet-list">
         {MARKETING_BREAKDOWN.cexReserve.addresses.map((w) => (
@@ -170,40 +173,40 @@ export function TokenomicsTab() {
         {MARKETING_BREAKDOWN.flow.items.map((it) => (
           <li key={it.label}>
             <span>
-              {it.label} ({it.units} birim)
+              {it.label} ({it.units} units)
             </span>
             <strong>{formatSupply(it.amount)}</strong>
           </li>
         ))}
       </ul>
       <p className="subtab-desc">
-        Akan kısım toplam {formatSupply(MARKETING_BREAKDOWN.flow.total)} (1 birim ={' '}
-        {formatSupply(MARKETING_BREAKDOWN.flow.unit)}): <strong>7 hafta kilitli</strong>, sonra{' '}
-        <strong>7 ay</strong> boyunca aylık eşit dilimlerle kullanılır.
+        The flowing part totals {formatSupply(MARKETING_BREAKDOWN.flow.total)} (1 unit ={' '}
+        {formatSupply(MARKETING_BREAKDOWN.flow.unit)}): <strong>locked for 7 weeks</strong>, then
+        spent in equal monthly slices over <strong>7 months</strong>.
       </p>
 
-      <h3 className="luck-tokenomics__subhead">Toplanan SOL Nereye Gidiyor?</h3>
+      <h3 className="luck-tokenomics__subhead">Where Does The Collected SOL Go?</h3>
       <p className="subtab-desc">
-        Yukarıdaki tablo <strong>token</strong> dağılımıdır. Bu tablo ise presale'de toplanan{' '}
-        <strong>parayı</strong> gösterir — ikisi ayrı şeylerdir. Katkının{' '}
-        <strong>%{PRESALE_OPS_FEE_PERCENT.toLocaleString('tr-TR')}</strong>'lik kısmı, token
-        yayınlanana kadarki giderler için aynı işlemde ayrı bir cüzdana gider ve havuza eklenmez.
-        Kalan tutar şöyle kullanılır:
+        The table above is the <strong>token</strong> distribution. This one shows the{' '}
+        <strong>money</strong> raised in the presale — the two are separate things.{' '}
+        <strong>{PRESALE_OPS_FEE_PERCENT.toLocaleString('en-US')}%</strong> of each contribution
+        goes to a separate wallet in the same transaction, covering expenses until the token is
+        live, and is not added to the pool. The rest is used as follows:
       </p>
       <ul className="luck-tokenomics__sol-list">
         {PRESALE_SOL_ALLOCATION.map((a) => (
           <li key={a.key}>
             <span>{a.label}</span>
-            <strong>%{a.percent}</strong>
+            <strong>{a.percent}%</strong>
           </li>
         ))}
       </ul>
 
-      <h3 className="luck-tokenomics__subhead">Yayınlanan Cüzdanlar</h3>
+      <h3 className="luck-tokenomics__subhead">Published Wallets</h3>
       <p className="subtab-desc">
-        Yukarıdaki kilit ve dağıtım sözlerinin tamamı zincirde doğrulanabilir. Aşağıdaki
-        adreslerin bakiyesini ve her hareketini Solscan'de kendiniz takip edebilirsiniz — bize
-        güvenmenize gerek yok, bakın.
+        Every lock and distribution promise above is verifiable on chain. You can follow the
+        balance and every movement of the addresses below yourself on Solscan — you do not have to
+        trust us, just look.
       </p>
       <ul className="luck-tokenomics__wallet-list">
         {PUBLIC_WALLETS.filter((w) => w.address).map((w) => (
@@ -211,38 +214,41 @@ export function TokenomicsTab() {
         ))}
       </ul>
 
-      <h3 className="luck-tokenomics__subhead">Lansman Taahhütleri</h3>
+      <h3 className="luck-tokenomics__subhead">Launch Commitments</h3>
       <ul className="luck-tokenomics__pledges">
         <li>
-          <strong>Likidite yakılır.</strong> Havuz açıldıktan sonra LP token'ları yakılır; havuzdaki
-          likiditeyi ekip dahil kimse çekemez. Yakma işleminin linki burada yayınlanır.
+          <strong>Liquidity is burned.</strong> Once the pool is open the LP tokens are burned;
+          nobody, the team included, can withdraw the liquidity from that pool. The link to the burn
+          transaction is published here.
         </li>
         <li>
-          <strong>Mint yetkisi iptal edilir.</strong> Lansmandan sonra yeni $LUCK basılamaz, toplam
-          arz {formatSupply(LUCK_TOKEN.totalSupply)} olarak sabitlenir.
+          <strong>Mint authority is revoked.</strong> After launch no new $LUCK can be minted; the
+          total supply is fixed at {formatSupply(LUCK_TOKEN.totalSupply)}.
         </li>
         <li>
-          <strong>Freeze yetkisi iptal edilir.</strong> Hiçbir cüzdan dondurulamaz — token satışı
-          teknik olarak engellenemez.
+          <strong>Freeze authority is revoked.</strong> No wallet can be frozen — selling the token
+          cannot be blocked technically.
         </li>
         <li>
-          <strong>$LUCK standart bir SPL token'dır.</strong> Gizli transfer, transfer vergisi veya
-          kara liste gibi bir uzantı içermez; bakiyeler herkese açık ve doğrulanabilir.
+          <strong>$LUCK is a standard SPL token.</strong> It carries no extension such as
+          confidential transfers, a transfer tax or a blacklist; balances are public and verifiable.
         </li>
         <li>
-          <strong>CEX kasalarının adresleri yayınlanır.</strong> Üç kasanın her hareketi zincirde
-          izlenebilir; kullanılmayan kasa, takvim sonunda yakılır veya çekiliş kovasına aktarılır.
+          <strong>The CEX vault addresses are published.</strong> Every movement of the three vaults
+          can be traced on chain; any vault left unused is burned at the end of the schedule or
+          moved into the raffle bucket.
         </li>
         <li>
-          <strong>Ekip 7 ay boyunca hiçbir token alamaz.</strong> Kilit bittikten sonra da tek
-          seferde değil, 7 ay boyunca aylık dilimlerle açılır.
+          <strong>The team receives no tokens for 7 months.</strong> Even once the lock ends the
+          tokens do not arrive at once — they unlock in monthly slices over 7 months.
         </li>
       </ul>
 
       <div className="alert alert--info">
-        Bu dağılım ve taahhütler henüz zincire yazılmamış bir plandır ({`src/config.ts`} dosyasındaki{' '}
-        <code>TOKENOMICS</code> listesi) — coin, "Token Oluştur" sekmesinden gerçekten
-        oluşturulduğunda mint/freeze yetkileri ve kilit süreleri bu plana göre ayarlanmalıdır.
+        This split and these commitments are still a plan that has not been written to the chain yet
+        (the <code>TOKENOMICS</code> list in {`src/config.ts`}) — when the coin is actually created
+        from the "Create Token" tab, the mint/freeze authorities and lock durations must be set to
+        match this plan.
       </div>
     </div>
   )

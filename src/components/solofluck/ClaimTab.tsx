@@ -32,22 +32,22 @@ interface RoundView {
   unlocked: bigint
   claimable: bigint
   nextUnlock: number | null
-  /** Yayınlanan dosyanın kökü zincirdekiyle uyuşuyor mu? */
+  /** Does the published file's root match the one on chain? */
   rootMatches: boolean
 }
 
 function roundLabel(id: number): string {
-  return id === CLAIM_CONFIG.presaleRoundId ? 'Presale payın' : `${id}. hafta çekilişi`
+  return id === CLAIM_CONFIG.presaleRoundId ? 'Your presale share' : `Week ${id} raffle`
 }
 
 function formatCountdown(seconds: number): string {
-  if (seconds <= 0) return 'şimdi'
+  if (seconds <= 0) return 'now'
   const d = Math.floor(seconds / 86400)
   const h = Math.floor((seconds % 86400) / 3600)
   const m = Math.floor((seconds % 3600) / 60)
-  if (d > 0) return `${d} gün ${h} saat`
-  if (h > 0) return `${h} saat ${m} dk`
-  return `${m} dk`
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
 }
 
 export function ClaimTab({ network }: Props) {
@@ -61,25 +61,25 @@ export function ClaimTab({ network }: Props) {
   const [status, setStatus] = useState('')
   const [busyRound, setBusyRound] = useState<number | null>(null)
   const [lastSignature, setLastSignature] = useState('')
-  // Saat ZİNCİRDEN geliyor, tarayıcıdan değil. Açılma takvimi zincirin
-  // saatine göre işlediği için, saati ileri olan bir kullanıcı açılmamış
-  // bir dilimi "çekilebilir" görür ve işlemi reddedilir — hem de tam
-  // herkesin çekmeye çalıştığı dakikada.
+  // The clock comes FROM THE CHAIN, not from the browser. The unlock schedule
+  // runs on chain time, so a user whose clock runs fast would see a slice that
+  // has not unlocked yet as "claimable" and have the transaction rejected —
+  // precisely in the minute when everybody is trying to claim.
   //
-  // Zincire saniyede bir sormuyoruz: bir kez fark (offset) ölçülüyor,
-  // sonra sayaç tarayıcı saatiyle akıp o farkı ekliyor. Böylece geri
-  // sayım akıcı kalırken sayı zincire bağlı oluyor.
+  // We do not ask the chain once a second: the offset is measured once, then
+  // the counter ticks on browser time and adds that offset. The countdown
+  // stays smooth while the number stays anchored to the chain.
   const [clockOffset, setClockOffset] = useState(0)
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
 
   useEffect(() => {
-    let iptal = false
-    fetchChainTime(connection).then((zincir) => {
-      if (iptal || zincir === null) return
-      setClockOffset(zincir - Math.floor(Date.now() / 1000))
+    let cancelled = false
+    fetchChainTime(connection).then((chainTime) => {
+      if (cancelled || chainTime === null) return
+      setClockOffset(chainTime - Math.floor(Date.now() / 1000))
     })
     return () => {
-      iptal = true
+      cancelled = true
     }
   }, [connection])
 
@@ -103,7 +103,7 @@ export function ClaimTab({ network }: Props) {
       const found: RoundView[] = []
 
       for (const id of ids) {
-        // Henüz yapılmamış turların dosyası yok — sessizce atlıyoruz.
+        // Rounds that have not happened yet have no file — skip them quietly.
         let file
         try {
           file = await fetchMerkleFile(id)
@@ -134,7 +134,7 @@ export function ClaimTab({ network }: Props) {
       setRounds(found)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Dağıtım bilgisi okunamadı.')
+      setError(err instanceof Error ? err.message : 'Could not read the distribution data.')
     } finally {
       setLoading(false)
     }
@@ -142,10 +142,10 @@ export function ClaimTab({ network }: Props) {
 
   useEffect(() => {
     void refresh()
-    // `chainNow` her 30 saniyede değişiyor ama her değişimde zinciri
-    // yeniden sorgulamak gereksiz yük olurdu; bilerek yalnızca
-    // cüzdan/bağlantı değişince yeniliyoruz. Geri sayım metni zaten
-    // `chainNow` ile render'da güncelleniyor.
+    // `chainNow` changes every 30 seconds, but re-querying the chain on every
+    // change would be pointless load; we deliberately refresh only when the
+    // wallet or the connection changes. The countdown text already updates from
+    // `chainNow` during render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configured, wallet.publicKey, connection])
 
@@ -168,7 +168,7 @@ export function ClaimTab({ network }: Props) {
       await refresh()
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Çekme işlemi başarısız oldu.')
+      setError(err instanceof Error ? err.message : 'The claim transaction failed.')
       setStatus('')
     } finally {
       setBusyRound(null)
@@ -179,8 +179,8 @@ export function ClaimTab({ network }: Props) {
     return (
       <div className="luck-claim">
         <div className="alert alert--info">
-          🔒 Dağıtım henüz başlamadı. Presale kapandıktan ve $LUCK yayınlandıktan sonra payını bu
-          sekmeden çekebileceksin.
+          🔒 Distribution has not started yet. Once the presale closes and $LUCK goes live you
+          will be able to claim your share from this tab.
         </div>
       </div>
     )
@@ -191,14 +191,14 @@ export function ClaimTab({ network }: Props) {
   return (
     <div className="luck-claim">
       <p className="subtab-desc">
-        Presale payın ve kazandığın çekiliş ödülleri zincirde, kimsenin elle müdahale edemeyeceği
-        bir programda duruyor. Açılan kısmı buradan sen çekiyorsun — ekip senin adına bir şey
-        göndermiyor, gönderemiyor da.
+        Your presale share and any raffle rewards you won sit on chain, in a program nobody can
+        intervene in by hand. You claim the unlocked part yourself from here — the team does not
+        send anything on your behalf, and could not if it wanted to.
       </p>
 
       {!wallet.connected && (
         <div className="luck-presale__connect">
-          <p>Payını görmek için cüzdanını bağla.</p>
+          <p>Connect your wallet to see your share.</p>
           <WalletMultiButton />
         </div>
       )}
@@ -208,22 +208,25 @@ export function ClaimTab({ network }: Props) {
 
       {lastSignature && (
         <div className="alert alert--success">
-          ✅ Tokenler cüzdanına gönderildi.{' '}
+          ✅ The tokens were sent to your wallet.{' '}
           <a
             href={`https://solscan.io/tx/${lastSignature}${explorer}`}
             target="_blank"
             rel="noopener noreferrer"
           >
-            İşlemi gör
+            View the transaction
           </a>
         </div>
       )}
 
-      {wallet.connected && loading && <div className="alert alert--info">Payın hesaplanıyor...</div>}
+      {wallet.connected && loading && (
+        <div className="alert alert--info">Calculating your share...</div>
+      )}
 
       {wallet.connected && !loading && rounds.length === 0 && (
         <div className="alert alert--info">
-          Bu cüzdan için bir pay bulunamadı. Presale'e başka bir cüzdanla katıldıysan onu bağla.
+          No share was found for this wallet. If you joined the presale with a different wallet,
+          connect that one.
         </div>
       )}
 
@@ -233,25 +236,25 @@ export function ClaimTab({ network }: Props) {
 
           {!r.rootMatches && (
             <div className="alert alert--error">
-              ⚠️ Yayınlanan liste zincirdeki kayıtla uyuşmuyor. Çekme denemesi reddedilir — lütfen
-              sayfayı yenile, sorun sürerse bize bildir.
+              ⚠️ The published list does not match the record on chain. A claim attempt would be
+              rejected — please refresh the page, and tell us if the problem persists.
             </div>
           )}
 
           <div className="result-card__row">
-            <span>Toplam payın</span>
+            <span>Your total share</span>
             <strong>{formatLuck(BigInt(r.entry.amount))} {LUCK_TOKEN.symbol}</strong>
           </div>
           <div className="result-card__row">
-            <span>Bugüne kadar açılan</span>
+            <span>Unlocked so far</span>
             <strong>{formatLuck(r.unlocked)} {LUCK_TOKEN.symbol}</strong>
           </div>
           <div className="result-card__row">
-            <span>Çektiğin</span>
+            <span>Already claimed</span>
             <strong>{formatLuck(r.claimed)} {LUCK_TOKEN.symbol}</strong>
           </div>
           <div className="result-card__row">
-            <span>Şimdi çekebileceğin</span>
+            <span>Claimable now</span>
             <strong className="luck-claim__claimable">
               {formatLuck(r.claimable)} {LUCK_TOKEN.symbol}
             </strong>
@@ -259,7 +262,7 @@ export function ClaimTab({ network }: Props) {
 
           {r.nextUnlock !== null && (
             <div className="result-card__row">
-              <span>Sonraki açılış</span>
+              <span>Next unlock</span>
               <strong>{formatCountdown(r.nextUnlock - chainNow)}</strong>
             </div>
           )}
@@ -271,10 +274,10 @@ export function ClaimTab({ network }: Props) {
             disabled={busyRound !== null || r.claimable === BigInt(0) || !r.rootMatches}
           >
             {busyRound === r.id
-              ? 'Çekiliyor...'
+              ? 'Claiming...'
               : r.claimable > BigInt(0)
-                ? `${formatLuck(r.claimable)} ${LUCK_TOKEN.symbol} çek`
-                : 'Şu an çekilebilecek bir şey yok'}
+                ? `Claim ${formatLuck(r.claimable)} ${LUCK_TOKEN.symbol}`
+                : 'Nothing to claim right now'}
           </button>
         </div>
       ))}

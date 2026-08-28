@@ -34,20 +34,20 @@ function formatUsd(sol: number, solUsd: number | null): string {
   return `≈ $${(sol * solUsd).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
 }
 
-/** SOL tutarını okunabilir metne — kalan kontenjan uyarılarında kullanılıyor. */
+/** SOL amount as readable text — used in the remaining-quota warnings. */
 function fmtSol(n: number): string {
-  return n.toLocaleString('tr-TR', { maximumFractionDigits: 3 })
+  return n.toLocaleString('en-US', { maximumFractionDigits: 3 })
 }
 
 function formatTokens(n: number): string {
-  return n.toLocaleString('tr-TR', { maximumFractionDigits: 0 })
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
 
 /**
- * Presale cüzdanının bakiyesinden canlı doluluk. Katkılar düz SOL transferi
- * olduğu için ayrı bir indexer'a gerek yok — cüzdanın bakiyesi toplananın
- * kendisi. Operasyon payı bu cüzdana hiç girmediğinden brüt tutar
- * computePresaleProgress içinde geri hesaplanıyor.
+ * Live progress read from the presale wallet's balance. Contributions are plain
+ * SOL transfers, so no separate indexer is needed — the wallet's balance IS the
+ * amount raised. The operations share never enters this wallet, so the gross
+ * amount is derived back inside computePresaleProgress.
  */
 function usePresaleProgress(connection: { getBalance: (k: PublicKey) => Promise<number> }) {
   const [poolSol, setPoolSol] = useState<number | null>(null)
@@ -66,8 +66,8 @@ function usePresaleProgress(connection: { getBalance: (k: PublicKey) => Promise<
         const lamports = await connection.getBalance(key)
         if (!cancelled) setPoolSol(lamports / LAMPORTS_PER_SOL)
       } catch {
-        // RPC geçici olarak cevap vermediyse eski değeri koru — çubuğu
-        // sıfırlamak, "toplanan para kayboldu" gibi yanlış bir izlenim verir.
+        // If the RPC is temporarily unreachable, keep the previous value —
+        // zeroing the bar would falsely suggest the raised money vanished.
       }
     }
     read()
@@ -81,7 +81,7 @@ function usePresaleProgress(connection: { getBalance: (k: PublicKey) => Promise<
   return poolSol
 }
 
-/** Dakikada bir yenilenen "şu an" — geri sayımı canlı tutar. */
+/** A "now" that refreshes once a minute — keeps the countdown live. */
 function useNow(intervalMs = 60_000) {
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
@@ -109,9 +109,9 @@ export function PresaleTab({ network }: Props) {
   const [loading, setLoading] = useState<'flex' | 'fixed' | null>(null)
   const [lastSignature, setLastSignature] = useState('')
 
-  // getLocalContributions küçük bir localStorage okuması yaptığı için her
-  // render'da yeniden hesaplamak yerine memoize etmeye gerek yok; yeni bir
-  // katkı sonrası setLastSignature çağrısı zaten yeniden render tetikler.
+  // getLocalContributions performs a small localStorage read, so there is no
+  // need to memoize it per render; after a new contribution the
+  // setLastSignature call already triggers a re-render.
   const history = getLocalContributions(network)
 
   const configured = Boolean(PRESALE_WALLET)
@@ -122,10 +122,10 @@ export function PresaleTab({ network }: Props) {
   const progress = computePresaleProgress(poolSol ?? 0)
   const phase = presalePhaseAt(now)
   const endsAt = presaleEndsAt()
-  // Katkı yalnızca presale gerçekten açıkken kabul edilir. Karar saf bir
-  // fonksiyonda (presaleClosedReason) ve testi var — bu, sitedeki tek para
-  // kapısı olduğu için mantığın bileşenin içinde, sınanamaz halde durmaması
-  // gerekiyor.
+  // A contribution is only accepted while the presale is genuinely open. The
+  // decision lives in a pure function (presaleClosedReason) that has its own
+  // test — this is the site's only money gate, so the logic must not sit
+  // untestable inside the component.
   const closedReason = presaleClosedReason({
     configured,
     targetReached: progress.targetReached,
@@ -133,15 +133,15 @@ export function PresaleTab({ network }: Props) {
   })
   const canContribute = wallet.connected && closedReason === null
 
-  // KALAN KONTENJAN. Site "777 SOL'den fazla katkı kabul edilmez (hard cap)"
-  // diyor ama bunu hiçbir şey uygulamıyordu: 770 SOL'deyken 100 SOL gönderen
-  // birinin işlemi geçer ve toplam 870'e çıkardı — verdiğimiz sözü tutmamış
-  // olurduk. Presale düz bir cüzdan transferi olduğu için zincirde bunu
-  // engelleyecek bir program yok; engelin arayüzde olması ŞART.
+  // REMAINING QUOTA. The site says "no contribution above 777 SOL is accepted
+  // (hard cap)" but nothing enforced it: at 770 SOL, someone sending 100 SOL
+  // would go through and push the total to 870 — we would have broken our own
+  // promise. The presale is a plain wallet transfer, so there is no on-chain
+  // program to stop it; the barrier MUST live in the interface.
   //
-  // Not: siteyi hiç kullanmadan doğrudan cüzdana gönderen birini bu da
-  // durduramaz. Bu durum için politikayı kurallarda açıkça yazıyoruz:
-  // hedefi aşan tutar iade edilir.
+  // Note: this still cannot stop someone who sends straight to the wallet
+  // without ever using the site. For that case the policy is stated explicitly
+  // in the rules: anything above the target is refunded.
   const remainingSol = Math.max(0, PRESALE_TARGET_SOL - progress.grossSol)
   const exceedsQuota = (amount: number) => amount > remainingSol + 1e-9
 
@@ -150,13 +150,13 @@ export function PresaleTab({ network }: Props) {
     setError('')
     const amount = Number(flexAmount)
     if (!Number.isFinite(amount) || amount <= 0) {
-      setError('Geçerli bir SOL miktarı girin.')
+      setError('Enter a valid SOL amount.')
       return
     }
     if (exceedsQuota(amount)) {
       setError(
-        `Kalan kontenjan ${fmtSol(remainingSol)} SOL. Hedefi (${PRESALE_TARGET_SOL} SOL) aşan ` +
-          'katkı kabul edilmiyor — lütfen miktarı düşür.',
+        `Remaining quota is ${fmtSol(remainingSol)} SOL. Contributions above the target ` +
+          `(${PRESALE_TARGET_SOL} SOL) are not accepted — please lower the amount.`,
       )
       return
     }
@@ -165,10 +165,10 @@ export function PresaleTab({ network }: Props) {
       const res = await sendPresaleContribution(connection, wallet, network, 'flex', amount, setStatus)
       setLastSignature(res.signature)
       setFlexAmount('')
-      setStatus(`Katkın alındı: ${amount} SOL gönderildi.`)
+      setStatus(`Your contribution was received: ${amount} SOL sent.`)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'İşlem başarısız oldu.')
+      setError(err instanceof Error ? err.message : 'The transaction failed.')
       setStatus('')
     } finally {
       setLoading(null)
@@ -178,13 +178,13 @@ export function PresaleTab({ network }: Props) {
   async function handleFixedSubmit() {
     setError('')
     if (!selectedTier) {
-      setError('Önce bir paket seçin.')
+      setError('Pick a package first.')
       return
     }
     if (exceedsQuota(selectedTier)) {
       setError(
-        `Kalan kontenjan ${fmtSol(remainingSol)} SOL. Bu paket hedefi aşıyor — daha küçük bir ` +
-          'paket seç ya da serbest katkıdan kalan tutarı gönder.',
+        `Remaining quota is ${fmtSol(remainingSol)} SOL. This package exceeds the target — pick a ` +
+          'smaller one, or send the remaining amount as a free contribution.',
       )
       return
     }
@@ -192,11 +192,11 @@ export function PresaleTab({ network }: Props) {
     try {
       const res = await sendPresaleContribution(connection, wallet, network, 'fixed', selectedTier, setStatus)
       setLastSignature(res.signature)
-      setStatus(`${selectedTier} SOL gönderildi, ${res.tickets} çekiliş bileti kazandın! 🍀`)
+      setStatus(`${selectedTier} SOL sent, you earned ${res.tickets} raffle tickets! 🍀`)
       setSelectedTier(null)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'İşlem başarısız oldu.')
+      setError(err instanceof Error ? err.message : 'The transaction failed.')
       setStatus('')
     } finally {
       setLoading(null)
@@ -207,16 +207,16 @@ export function PresaleTab({ network }: Props) {
     <div className="luck-presale">
       {!configured && (
         <div className="alert alert--warning">
-          ⚠️ Presale cüzdanı henüz yapılandırılmadı ({`src/config.ts`} içindeki{' '}
-          <code>PRESALE_WALLET</code>). Katkı gönderme butonları, adres girilene kadar devre dışı.
+          ⚠️ The presale wallet has not been configured yet (<code>PRESALE_WALLET</code> in{' '}
+          {`src/config.ts`}). The contribution buttons stay disabled until an address is set.
         </div>
       )}
 
       <div className="luck-presale__meter">
         <div className="luck-presale__meter-head">
-          <span className="luck-presale__meter-label">Presale Hedefi</span>
+          <span className="luck-presale__meter-label">Presale Target</span>
           <span className="luck-presale__meter-value">
-            {poolSol === null ? '—' : progress.grossSol.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}{' '}
+            {poolSol === null ? '—' : progress.grossSol.toLocaleString('en-US', { maximumFractionDigits: 2 })}{' '}
             / {PRESALE_TARGET_SOL} SOL
           </span>
         </div>
@@ -231,7 +231,7 @@ export function PresaleTab({ network }: Props) {
           <div
             className="luck-presale__bar-softcap"
             style={{ left: `${(PRESALE_SOFT_CAP_SOL / PRESALE_TARGET_SOL) * 100}%` }}
-            title={`Taban: ${PRESALE_SOFT_CAP_SOL} SOL`}
+            title={`Floor: ${PRESALE_SOFT_CAP_SOL} SOL`}
           />
         </div>
         <div className="luck-presale__meter-foot">
@@ -240,80 +240,83 @@ export function PresaleTab({ network }: Props) {
           </span>
           <span>
             {phase === 'live' && endsAt
-              ? `Bitişe ${formatRemaining(endsAt.getTime() - now.getTime())}`
+              ? `${formatRemaining(endsAt.getTime() - now.getTime())} left`
               : phase === 'upcoming'
-                ? 'Henüz başlamadı'
+                ? 'Not started yet'
                 : phase === 'ended'
-                  ? 'Presale sona erdi'
-                  : `${PRESALE_DURATION_WEEKS} hafta — tarih yakında`}
+                  ? 'The presale has ended'
+                  : `${PRESALE_DURATION_WEEKS} weeks — date coming soon`}
           </span>
         </div>
       </div>
 
       {closedReason === 'reached' && (
         <div className="alert alert--info">
-          🎉 Hedefe ulaşıldı — presale kapandı. Sıradaki adım TGE: likidite havuzu açılır ve LP
-          token'ları yakılır.
+          🎉 The target was reached — the presale is closed. Next up is TGE: the liquidity pool is
+          opened and the LP tokens are burned.
         </div>
       )}
       {closedReason === 'ended' && (
         <div className="alert alert--info">
-          Presale süresi doldu. Toplanan tutara göre arz oranlanır, kalan tokenler yakılır.
+          The presale period is over. The supply is scaled to the amount raised and the remaining
+          tokens are burned.
         </div>
       )}
       {closedReason === 'upcoming' && (
-        <div className="alert alert--info">Presale henüz başlamadı — katkı kabul edilmiyor.</div>
+        <div className="alert alert--info">
+          The presale has not started yet — contributions are not accepted.
+        </div>
       )}
       {closedReason === 'unscheduled' && (
         <div className="alert alert--info">
-          Presale tarihi henüz ilan edilmedi — katkı kabul edilmiyor. Tarih duyurulduğunda burada
-          geri sayım görünecek.
+          The presale date has not been announced yet — contributions are not accepted. Once the
+          date is announced a countdown appears here.
         </div>
       )}
 
       {!wallet.connected && (
         <div className="luck-presale__connect">
-          <p>Presale'e katılmak için önce cüzdanını bağla.</p>
+          <p>Connect your wallet first to join the presale.</p>
           <WalletMultiButton />
         </div>
       )}
 
-      {/* Bu uyarı bilerek gönderme formlarının HEMEN ÜSTÜNDE ve kırmızı
-          tonda: presale dağıtımı, parayı GÖNDEREN adrese yapılıyor. Borsa
-          hesabından gönderen biri, tokenleri borsanın toplama adresine
-          göndermemizi istemiş oluyor — o tokenler pratikte kaybolur ve geri
-          getirilemez. Sayfanın altındaki kurallar listesine gömülse
-          kaçırılırdı. */}
+      {/* This warning sits DIRECTLY ABOVE the send forms and in red on
+          purpose: the presale distribution goes to the address that SENT the
+          money. Someone sending from an exchange account is effectively asking
+          us to send the tokens to the exchange's collection address — those
+          tokens are practically lost and cannot be recovered. Buried in the
+          rules list at the bottom of the page it would be missed. */}
       <div className="alert alert--error luck-presale__exchange-warning">
-        <strong>⚠️ Borsa hesabından GÖNDERMEYİN.</strong> Tokenler yalnızca SOL'u gönderen
-        adrese dağıtılır. Binance, OKX, Bybit gibi bir borsadan gönderirseniz tokenler
-        borsanın adresine gider ve <strong>geri getirilemez</strong>. Phantom, Solflare gibi
-        kendi anahtarınızın olduğu bir cüzdandan gönderin.
+        <strong>⚠️ DO NOT send from an exchange account.</strong> Tokens are distributed only to
+        the address that sent the SOL. If you send from an exchange such as Binance, OKX or Bybit,
+        the tokens go to the exchange's address and <strong>cannot be recovered</strong>. Send from
+        a wallet where you hold the keys yourself, such as Phantom or Solflare.
       </div>
 
       {closedReason === null && poolSol !== null && (
         <div className="alert alert--info luck-presale__quota">
-          Kalan kontenjan: <strong>{fmtSol(remainingSol)} SOL</strong> — hedef{' '}
-          {PRESALE_TARGET_SOL} SOL dolunca presale kapanır.
+          Remaining quota: <strong>{fmtSol(remainingSol)} SOL</strong> — the presale closes once the{' '}
+          {PRESALE_TARGET_SOL} SOL target is filled.
         </div>
       )}
 
       <div className="luck-presale__grid">
         <form className="token-form luck-presale__card" onSubmit={handleFlexSubmit}>
-          <h2>Serbest Katkı</h2>
+          <h2>Free Contribution</h2>
           <p className="subtab-desc">
-            İstediğin kadar SOL gönder. Fiyat sabit:{' '}
-            <strong>1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>. Her{' '}
-            {PRESALE_TICKET_UNIT_SOL} SOL {'\u2014'} hangi modu kullandığından bağımsız {'\u2014'}{' '}
-            <strong>1 çekiliş bileti</strong> kazandırır.
+            Send as much SOL as you like. The price is fixed:{' '}
+            <strong>1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK</strong>. Every{' '}
+            {PRESALE_TICKET_UNIT_SOL} SOL {'—'} whichever mode you use {'—'} earns{' '}
+            <strong>1 raffle ticket</strong>.
           </p>
           <label className="field">
-            <span>Miktar (SOL)</span>
+            <span>Amount (SOL)</span>
             <input
               type="number"
               min="0"
               step="0.01"
-              placeholder="ör. 2.5"
+              placeholder="e.g. 2.5"
               value={flexAmount}
               onChange={(e) => setFlexAmount(e.target.value)}
               disabled={!canContribute}
@@ -330,16 +333,16 @@ export function PresaleTab({ network }: Props) {
             className="btn btn--primary btn--block"
             disabled={!canContribute || loading !== null}
           >
-            {loading === 'flex' ? 'Gönderiliyor...' : 'Katkıda Bulun'}
+            {loading === 'flex' ? 'Sending...' : 'Contribute'}
           </button>
         </form>
 
         <div className="token-form luck-presale__card">
-          <h2>Hazır Paketler</h2>
+          <h2>Ready-Made Packages</h2>
           <p className="subtab-desc">
-            Hazır tutarlardan birini seç — her {PRESALE_TICKET_UNIT_SOL} SOL için{' '}
-            <strong>1 çekiliş bileti</strong>. Serbest katkıyla aynı oran; bu sekme sadece
-            hızlı seçim kolaylığı.
+            Pick one of the preset amounts — <strong>1 raffle ticket</strong> for every{' '}
+            {PRESALE_TICKET_UNIT_SOL} SOL. The rate is identical to the free contribution; this tab
+            is only a shortcut.
           </p>
           <div className="luck-tier-grid">
             {PRESALE_TIERS.map((tier) => (
@@ -364,69 +367,72 @@ export function PresaleTab({ network }: Props) {
             disabled={!canContribute || loading !== null || !selectedTier}
           >
             {loading === 'fixed'
-              ? 'Gönderiliyor...'
+              ? 'Sending...'
               : selectedTier
-                ? `${selectedTier} SOL Gönder (${calcTickets(selectedTier)} bilet)`
-                : 'Bir paket seç'}
+                ? `Send ${selectedTier} SOL (${calcTickets(selectedTier)} tickets)`
+                : 'Pick a package'}
           </button>
         </div>
       </div>
 
       {presaleOpsFeeActive && (
         <p className="luck-presale__ops-note">
-          Katkının <strong>%{PRESALE_OPS_FEE_PERCENT.toLocaleString('tr-TR')}</strong>'lik kısmı
-          operasyon payı olarak ayrılır — token yayınlanana kadarki giderleri (havuz açma ücreti, token
-          metadata, RPC, alan adı, pazarlama) karşılar. Bu pay, aynı işlemde ayrı bir cüzdana gider
-          ve <strong>likidite havuzuna eklenmez</strong>; kalan{' '}
-          <strong>%{(100 - PRESALE_OPS_FEE_PERCENT).toLocaleString('tr-TR')}</strong> presale
-          cüzdanında toplanır. Çekiliş biletlerin gönderdiğin <strong>tam tutar</strong> üzerinden
-          hesaplanır, pay bilet sayını düşürmez. İmzalamadan önce cüzdanında her iki alıcıyı da
-          görürsün.
+          <strong>{PRESALE_OPS_FEE_PERCENT.toLocaleString('en-US')}%</strong> of your contribution
+          is set aside as the operations share — it covers the costs until the token goes live (pool
+          creation fee, token metadata, RPC, domain name, marketing). That share goes to a separate
+          wallet in the same transaction and is <strong>not added to the liquidity pool</strong>;
+          the remaining <strong>{(100 - PRESALE_OPS_FEE_PERCENT).toLocaleString('en-US')}%</strong>{' '}
+          collects in the presale wallet. Your raffle tickets are calculated on the{' '}
+          <strong>full amount</strong> you send — the share does not reduce your ticket count. You
+          see both recipients in your wallet before you sign.
         </p>
       )}
 
       <ul className="luck-presale__rules">
         <li>
-          <strong>Sabit fiyat.</strong> 1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK. Ne
-          kadar toplanırsa toplansın bu oran değişmez; gönderirken tam olarak ne alacağını bilirsin.
+          <strong>Fixed price.</strong> 1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK. That
+          rate does not change no matter how much is raised; you know exactly what you get as you
+          send it.
         </li>
         <li>
-          <strong>Hedef {PRESALE_TARGET_SOL} SOL, süre {PRESALE_DURATION_WEEKS} hafta.</strong>{' '}
-          Hedefe erken ulaşılırsa presale o anda kapanır ve TGE'ye geçilir.
+          <strong>Target {PRESALE_TARGET_SOL} SOL, duration {PRESALE_DURATION_WEEKS} weeks.</strong>{' '}
+          If the target is reached early the presale closes right there and TGE follows.
         </li>
         <li>
-          <strong>Hedef dolmazsa arz oranlanır.</strong> Hedefin %X'i toplandıysa her kovadan
-          (presale, likidite, topluluk, ekip, pazarlama) yalnızca %X'i basılır, kalanı{' '}
-          <strong>yakılır</strong>. Yüzdelik dağılım aynen korunur ve havuz açılış fiyatı
-          değişmez — hangi tutarda kapanırsa kapansın presale fiyatının üstünde açılır.
+          <strong>If the target is not reached, the supply is scaled down.</strong> If X% of the
+          target was collected, only X% is minted out of every bucket (presale, liquidity,
+          community, team, marketing) and the rest <strong>is burned</strong>. The percentage split
+          is preserved exactly and the pool's opening price does not change — whatever level it
+          closes at, it opens above the presale price.
         </li>
         <li>
-          <strong>Taban {PRESALE_SOFT_CAP_SOL} SOL.</strong> Bu tutara ulaşılmazsa TGE yapılmaz ve
-          katkılar iade edilir. İade işlemleri zincirde takip edilebilir.
+          <strong>The floor is {PRESALE_SOFT_CAP_SOL} SOL.</strong> If that amount is not reached
+          there is no TGE and contributions are refunded. The refund transactions can be followed on
+          chain.
         </li>
         <li>
-          <strong>Hedefi aşan katkı iade edilir.</strong> Bu sayfa, kalan kontenjandan büyük bir
-          katkıyı göndermene izin vermez. Ama presale düz bir cüzdan transferi olduğu için,
-          siteyi hiç kullanmadan doğrudan kasaya gönderen birini zincirde durduracak bir program
-          yok — hedefi aşan tutar, gönderen adrese iade edilir ve iade işlemi zincirde
-          görünür.
+          <strong>Anything above the target is refunded.</strong> This page will not let you send a
+          contribution larger than the remaining quota. But because the presale is a plain wallet
+          transfer, no on-chain program can stop someone who sends straight to the wallet without
+          ever using the site — any amount above the target is refunded to the sending address and
+          the refund is visible on chain.
         </li>
         <li>
-          <strong>Dağıtım claim ile.</strong> Tokenler TGE'de bir claim programına kilitlenir;
-          açılan kısmı bu sayfadan sen çekersin. TGE'de %9, sonraki 13 hafta boyunca her hafta
-          %7 daha açılır — 91. günde tamamı serbest.
+          <strong>Distribution happens through claim.</strong> At TGE the tokens are locked in a
+          claim program and you withdraw the unlocked part from this page yourself. 9% unlocks at
+          TGE and a further 7% every week for the next 13 weeks — everything is free on day 91.
         </li>
         <li>
-          <strong>Alıcı listesi zincirden çıkar.</strong> Kim ne kadar gönderdiği presale
-          kasasının işlem geçmişinde herkese açık. Listeyi bizden bağımsız olarak sen de
-          üretip kendi payını doğrulayabilirsin — bize güvenmen gerekmiyor.
+          <strong>The recipient list comes out of the chain.</strong> Who sent how much is public in
+          the presale wallet's transaction history. You can build the list independently of us and
+          verify your own share — you do not have to trust us.
         </li>
         <li>
-          <strong>Çekiliş biletleri.</strong> Her {PRESALE_TICKET_UNIT_SOL} SOL = 1 bilet.
-          Haftalık çekilişlerde her hafta {RAFFLE.ticket.winnersPerRound} biletli kazanan
-          çıkar, her biri {formatTokens(RAFFLE.perWinnerTokens)} $LUCK alır. Kazananlar,
-          gelecekteki bir Solana slot'unun blockhash'iyle seçilir: o slot henüz oluşmadığı
-          için sonucu kimse (biz dahil) önceden bilemez, oluştuktan sonra herkes doğrulayabilir.
+          <strong>Raffle tickets.</strong> Every {PRESALE_TICKET_UNIT_SOL} SOL = 1 ticket. In the
+          weekly raffles {RAFFLE.ticket.winnersPerRound} ticket winners are drawn each week and each
+          receives {formatTokens(RAFFLE.perWinnerTokens)} $LUCK. Winners are picked with the
+          blockhash of a future Solana slot: because that slot does not exist yet, nobody (us
+          included) can know the result in advance, and once it does everybody can verify it.
         </li>
       </ul>
 
@@ -440,20 +446,20 @@ export function PresaleTab({ network }: Props) {
           target="_blank"
           rel="noreferrer"
         >
-          Son işlemi Explorer'da görüntüle
+          View the last transaction on Explorer
         </a>
       )}
 
       {history.length > 0 && (
         <div className="luck-presale__history">
           <div className="luck-presale__history-head">
-            <h3>Bu cihazdaki katkı geçmişin</h3>
-            <span className="luck-presale__ticket-total">🎟 Toplam bilet: {totalTickets}</span>
+            <h3>Your contribution history on this device</h3>
+            <span className="luck-presale__ticket-total">🎟 Total tickets: {totalTickets}</span>
           </div>
           <ul>
             {[...history].reverse().map((h) => (
               <li key={h.signature}>
-                <span>{h.mode === 'fixed' ? 'Sabit paket' : 'Serbest katkı'}</span>
+                <span>{h.mode === 'fixed' ? 'Fixed package' : 'Free contribution'}</span>
                 <span>{h.amountSol} SOL</span>
                 <span>🎟 {h.tickets}</span>
                 <a
@@ -461,7 +467,7 @@ export function PresaleTab({ network }: Props) {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  işlem
+                  transaction
                 </a>
               </li>
             ))}

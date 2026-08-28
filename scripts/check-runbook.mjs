@@ -135,7 +135,7 @@ for (const alan of ['PRESALE_START_ISO', 'LUCK_TOKEN', 'CLAIM_CONFIG', 'DEFAULT_
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
       })
-      const m = cikti.match(/^(\d+) kontrolün/m)
+      const m = cikti.match(/^All (\d+) checks passed/m)
       gercek = m ? Number(m[1]) : null
     } catch {
       gercek = null

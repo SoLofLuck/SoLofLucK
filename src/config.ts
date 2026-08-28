@@ -9,22 +9,22 @@ export interface NetworkOption {
   explorerCluster: string
 }
 
-// Solana Vakfı'nın resmi public RPC'leri (clusterApiUrl) tüm dünyadan gelen
-// dapp trafiğiyle dolu ve IP başına sert hız sınırı uyguluyor — özellikle
-// mobil operatör NAT'ı gibi paylaşımlı IP'lerin arkasından "429 Connection
-// rate limits exceeded" sık tetikleniyor. Ankr'ın anahtarsız public devnet
-// RPC'si de denendi ama @solana/web3.js'in RPC yanıt şeması doğrulamasıyla
-// uyumsuz çıktı (kalıcı bir hata, hız sınırıyla ilgisiz). Build sırasında
-// bir Helius API anahtarı sağlanırsa (VITE_HELIUS_API_KEY, GitHub Actions
-// secret'ı HELIUS_API_KEY'den geliyor — bkz. .github/workflows/deploy.yml)
-// onu kullanıyoruz; yoksa resmi public endpoint'e düşüyoruz. Hız sınırına
-// karşı ayrıca lib/luckGame.ts'te retry/backoff var (bkz. withRetry).
+// The Solana Foundation's official public RPCs (clusterApiUrl) are saturated
+// with dapp traffic from all over the world and rate-limit hard per IP —
+// "429 Connection rate limits exceeded" fires often from behind shared IPs such
+// as mobile carrier NAT. Ankr's keyless public devnet RPC was tried too but
+// turned out incompatible with @solana/web3.js's RPC response schema validation
+// (a permanent error, unrelated to rate limits). If a Helius API key is supplied
+// at build time (VITE_HELIUS_API_KEY, sourced from the HELIUS_API_KEY GitHub
+// Actions secret — see .github/workflows/deploy.yml) we use it; otherwise we
+// fall back to the official public endpoint. There is also retry/backoff against
+// rate limits in lib/luckGame.ts (see withRetry).
 const heliusApiKey: string | undefined = import.meta.env.VITE_HELIUS_API_KEY
 
 export const NETWORKS: Record<NetworkId, NetworkOption> = {
   devnet: {
     id: 'devnet',
-    label: 'Devnet (Test Ağı)',
+    label: 'Devnet (Test Network)',
     endpoint: heliusApiKey
       ? `https://devnet.helius-rpc.com/?api-key=${heliusApiKey}`
       : clusterApiUrl('devnet'),
@@ -32,7 +32,7 @@ export const NETWORKS: Record<NetworkId, NetworkOption> = {
   },
   'mainnet-beta': {
     id: 'mainnet-beta',
-    label: 'Mainnet (Gerçek Ağ)',
+    label: 'Mainnet (Live Network)',
     endpoint: heliusApiKey
       ? `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`
       : clusterApiUrl('mainnet-beta'),
@@ -41,220 +41,228 @@ export const NETWORKS: Record<NetworkId, NetworkOption> = {
 }
 
 // ---------------------------------------------------------------------------
-// Hizmet ücreti (opsiyonel)
+// Service fee (optional)
 // ---------------------------------------------------------------------------
-// Bu siteyi kendi ürününüz olarak yayınlarsanız, token oluşturma işleminden
-// küçük bir ücret almak isteyebilirsiniz (smithii.io gibi araçların iş modeli
-// budur). Ücret, kullanıcı cüzdanından SİZİN belirlediğiniz cüzdana, aynı
-// işlem (transaction) içinde şeffaf biçimde gönderilir; kullanıcı cüzdanında
-// alıcı adresini ve tutarı imzalamadan önce görür.
+// If you publish this site as your own product, you may want to take a small fee
+// on token creation (that is the business model of tools like smithii.io). The
+// fee is sent transparently from the user's wallet to the wallet YOU choose,
+// inside the same transaction; the user sees the recipient address and the
+// amount in their wallet before signing.
 //
-// Ücret almak istemiyorsanız FEE_WALLET değerini boş bırakın, otomatik
-// olarak devre dışı kalır.
-export const FEE_WALLET = '' // ör: 'YourSolanaWalletAddressHere...'
+// If you do not want to take a fee, leave FEE_WALLET empty and it is
+// automatically disabled.
+export const FEE_WALLET = '' // e.g. 'YourSolanaWalletAddressHere...'
 export const FEE_AMOUNT_SOL = 0.1
 
 export const DEFAULT_DECIMALS = 9
 export const DEFAULT_NETWORK: NetworkId = 'devnet'
 
 // ---------------------------------------------------------------------------
-// Test aşaması: "Stay Tuned" kapısı
+// Testing phase: the "Stay Tuned" gate
 // ---------------------------------------------------------------------------
-// Site test/geliştirme aşamasındayken solofluck.com kök adresine gelen
-// herkese düz siyah "Stay Tuned" sayfası gösterilir (bkz. src/main.tsx,
-// src/components/StayTuned.tsx). Gerçek uygulamaya yalnızca bu değerle
-// eşleşen gizli yoldan ulaşılır, ör. https://solofluck.com/1 .
+// While the site is in testing/development, everyone arriving at the
+// solofluck.com root is shown a plain black "Stay Tuned" page (see src/main.tsx
+// and src/components/StayTuned.tsx). The real app is reachable only through the
+// hidden path matching this value, e.g. https://solofluck.com/1 .
 //
-// Bu GERÇEK bir güvenlik/erişim kontrolü DEĞİLDİR — site tamamen istemci
-// tarafında (static) çalıştığı için herkes tarayıcı geliştirici araçlarından
-// veya bu genel-kaynaklı (public) repodan gerçek yolu görebilir. Sadece
-// arama motorlarını ve meraklı gündelik ziyaretçileri test aşamasında
-// yavaşlatan bir gizleme (obscurity) katmanıdır. Site yayına hazır olunca
-// bu satırı silip App'i doğrudan render etmek yeterli (bkz. src/main.tsx).
+// This is NOT a real security or access control — the site is fully client-side
+// (static), so anyone can see the real path in the browser dev tools or in this
+// public repository. It is only a layer of obscurity that slows down search
+// engines and curious casual visitors during testing. Once the site is ready to
+// launch, deleting this line and rendering App directly is enough (see
+// src/main.tsx).
 export const PREVIEW_ACCESS_PATH = '/1'
 
 // ---------------------------------------------------------------------------
-// $LUCK / SoLofLuck — bu siteye adanmış coin
+// $LUCK / SoLofLuck — the coin dedicated to this site
 // ---------------------------------------------------------------------------
-// Coin, "Token Oluştur" sekmesinden bu sitenin sahibi tarafından oluşturulup
-// mint adresi aşağıya girildikten sonra presale/tokenomics sekmeleri gerçek
-// zincir verisiyle çalışmaya başlar. Mint adresi boşken sayfa "yakında"
-// bilgisiyle görüntülenir.
+// Once the site owner has created the coin from the "Create Token" tab and
+// entered its mint address below, the presale and tokenomics tabs start working
+// with real chain data. While the mint address is empty the page is shown with a
+// "coming soon" notice.
 export const LUCK_TOKEN = {
   name: 'SoLofLuck',
   symbol: '$LUCK',
-  // Coin oluşturulduktan sonra mint adresini buraya girin.
-  mint: '', // ör: 'ELuCKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-  // "777" temasına uygun toplam arz.
+  // Enter the mint address here once the coin has been created.
+  mint: '', // e.g. 'ELuCKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+  // A total supply that fits the "777" theme.
   totalSupply: 777_000_000,
   decimals: DEFAULT_DECIMALS,
 }
 
-// Presale katkılarının (hem serbest hem sabit paket) toplandığı cüzdan.
-// Boş bırakılırsa presale sekmesi "yapılandırılmadı" uyarısı gösterir ve
-// gönderim butonları devre dışı kalır — yanlışlıkla kimsenin coin'siz SOL
-// göndermesini önlemek için kasıtlı bir güvenlik freni.
+// The wallet that collects presale contributions (both free and fixed package).
+// If left empty, the presale tab shows a "not configured" warning and the send
+// buttons stay disabled — a deliberate safety brake so nobody accidentally sends
+// SOL when there is no coin.
 export const PRESALE_WALLET = 'BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36'
 
 // ---------------------------------------------------------------------------
-// Operasyon (gider) payı
+// Operations (expenses) share
 // ---------------------------------------------------------------------------
-// Token yayınlanana kadar oluşan giderleri (Raydium havuz açma ücreti, token
-// mint + metadata, RPC aboneliği, alan adı, pazarlama) karşılamak için her
-// presale katkısından ayrılan pay: 10.000 / 100.000 = %10. Piyasa normunun
-// içinde, hatta altında: launchpad'ler (PinkSale, DxSale vb.) zaten toplanan
-// fonun %2-5'ini platform ücreti alıyor, üstüne ekipler genelde %10-30'unu
-// pazarlama/operasyona ayırıyor. 777 SOL'lük hedefte tam 77,7 SOL ediyor.
+// The share taken out of every presale contribution to cover the costs incurred
+// until the token goes live (Raydium pool creation fee, token mint + metadata,
+// RPC subscription, domain name, marketing): 10,000 / 100,000 = 10%. That is
+// within — in fact below — the market norm: launchpads (PinkSale, DxSale etc.)
+// already take 2-5% of the raise as a platform fee, on top of which teams
+// typically set aside 10-30% for marketing and operations. At the 777 SOL target
+// it comes to exactly 77.7 SOL.
 //
-// ÖNEMLİ — bu pay PRESALE_WALLET'a HİÇ GİRMEZ: katkının içinden AYNI işlemde
-// ayrı bir transfer olarak doğrudan bu cüzdana gider. Böylece TGE'de likidite
-// havuzuna konacak tutar, presale cüzdanının bakiyesinin ta kendisi olur —
-// elle bir ayıklama/çıkarma yapmak gerekmez ve pay yanlışlıkla havuza
-// karışamaz. Katkıda bulunan kişi, imzalamadan önce cüzdanında her iki
-// alıcıyı ve tutarı da görür.
+// IMPORTANT — this share NEVER ENTERS PRESALE_WALLET: it goes straight to this
+// wallet as a separate transfer inside the SAME transaction. That way the amount
+// to be put into the liquidity pool at TGE is exactly the presale wallet's
+// balance — no manual sorting or subtraction is needed and the share cannot
+// accidentally end up in the pool. The contributor sees both recipients and both
+// amounts in their wallet before signing.
 //
-// Boş bırakılırsa pay hiç alınmaz, katkının %100'ü presale cüzdanına gider.
+// If left empty no share is taken and 100% of the contribution goes to the
+// presale wallet.
 export const PRESALE_OPS_WALLET = '2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9'
 export const PRESALE_OPS_FEE_NUM = 10_000
 export const PRESALE_OPS_FEE_DEN = 100_000
 
 // ---------------------------------------------------------------------------
-// Presale kuralları: sabit fiyat, hedef, taban, süre
+// Presale rules: fixed price, target, floor, duration
 // ---------------------------------------------------------------------------
-// Presale SABİT FİYATLIDIR — katkıda bulunan, parayı gönderirken tam olarak
-// kaç $LUCK alacağını bilir. Fiyat, hedeften türetiliyor ve tam yuvarlak
-// çıkıyor:
+// The presale is FIXED PRICE — a contributor knows exactly how many $LUCK they
+// will get at the moment they send the money. The price is derived from the
+// target and comes out perfectly round:
 //
-//     271.950.000 presale tokeni ÷ 777 SOL = 1 SOL başına 350.000 $LUCK
+//     271,950,000 presale tokens / 777 SOL = 350,000 $LUCK per SOL
 //
-// HEDEFE ULAŞILIRSA presale anında kapanır ve TGE'ye geçilir; 777 SOL'den
-// fazla katkı kabul edilmez (hard cap).
+// IF THE TARGET IS REACHED the presale closes immediately and TGE follows; no
+// contribution above 777 SOL is accepted (hard cap).
 //
-// HEDEFE ULAŞILAMAZSA (7 hafta dolduğunda) yine TGE yapılır — ama arz,
-// toplanan orana göre KÜÇÜLTÜLÜR: hedefin %X'i toplandıysa HER KOVADAN
-// (presale, likidite, topluluk, ekip, pazarlama) yalnızca %X'i basılır,
-// kalan %100−X yakılır. Yüzdelik dağılım (35-20-20-10-15) aynen korunur.
+// IF THE TARGET IS NOT REACHED (when the 7 weeks are up) TGE still happens — but
+// the supply is SCALED DOWN in proportion to the amount raised: if X% of the
+// target was collected, only X% is minted OUT OF EVERY BUCKET (presale,
+// liquidity, community, team, marketing) and the remaining 100-X% is burned. The
+// percentage split (35-20-20-10-15) is preserved exactly.
 //
-// Bu kural kritik: yalnızca satılmayan presale tokenlerini yakıp likidite
-// kovasını sabit bırakırsak, havuza giden SOL azalırken token sabit kalır ve
-// açılış fiyatı presale fiyatının ALTINA düşer — alıcılar daha ilk saniyede
-// zarara geçerdi. Oransal yakma sayesinde açılış fiyatı, toplanan miktardan
-// BAĞIMSIZ olarak her zaman presale fiyatının %34 üstünde açılır.
+// This rule is critical: if we burned only the unsold presale tokens and left
+// the liquidity bucket untouched, less SOL would go into the pool while the
+// token side stayed the same, and the opening price would fall BELOW the presale
+// price — buyers would be underwater in the very first second. Thanks to
+// proportional burning the opening price always opens 34% above the presale
+// price, INDEPENDENT of the amount raised.
 //
-// TABAN (soft cap): 77 SOL'ün altında kalınırsa TGE yapılmaz, katkılar iade
-// edilir. Sebebi ikisi birden: (1) bu tutarın altında operasyon payı lansman
-// giderlerini karşılamıyor, (2) o kadar sığ bir havuzda tek bir küçük alım
-// fiyatı çok oynatır, sağlıklı bir piyasa oluşmaz.
+// FLOOR (soft cap): if the raise stays below 77 SOL there is no TGE and
+// contributions are refunded. Two reasons at once: (1) below that amount the
+// operations share does not cover the launch costs, and (2) in a pool that
+// shallow a single small buy moves the price too much and no healthy market
+// forms.
 export const PRESALE_TARGET_SOL = 777
 export const PRESALE_SOFT_CAP_SOL = 77
 export const PRESALE_TOKENS_PER_SOL = 350_000
 export const PRESALE_DURATION_WEEKS = 7
 
-// Presale başlangıcı — ISO 8601 (ör. '2026-09-01T18:00:00Z'). Boş bırakılırsa
-// site "başlangıç tarihi yakında duyurulacak" der ve geri sayım gösterilmez.
-// Bitiş, başlangıçtan PRESALE_DURATION_WEEKS hafta sonrasıdır.
+// Presale start — ISO 8601 (e.g. '2026-09-01T18:00:00Z'). If left empty, the
+// site says the start date will be announced soon and shows no countdown. The
+// end is PRESALE_DURATION_WEEKS weeks after the start.
 export const PRESALE_START_ISO = ''
 
-// Her 0.5 SOL için 1 çekiliş bileti — HANGİ MODLA gönderildiğinden bağımsız.
+// 1 raffle ticket per 0.5 SOL — regardless of WHICH MODE it was sent with.
 //
-// Eskiden bilet yalnızca "sabit paket" modunda veriliyordu. İki sorunu vardı:
-// (1) modu işleme yazdığımız memo'dan okuyorduk, memo ise gönderenin kendi
-// yazdığı serbest metin — elle işlem oluşturan biri hiç hak etmediği modu
-// yazabilirdi; (2) aynı parayı gönderen iki kişiden birinin bilet alıp
-// diğerinin almaması, açıklaması zor ve gereksiz bir ayrımdı. Artık bilet
-// sayısı YALNIZCA presale cüzdanına ulaşan gerçek tutardan hesaplanıyor —
-// taklit edilemez ve herkes kendi başına doğrulayabilir.
+// Tickets used to be granted only in "fixed package" mode. That had two
+// problems: (1) we read the mode from the memo written into the transaction, and
+// a memo is free text written by the sender — anyone building a transaction by
+// hand could write a mode they had not earned; (2) two people sending the same
+// amount, one getting tickets and the other not, was a distinction that was hard
+// to explain and unnecessary. The ticket count is now computed ONLY from the
+// real amount that reaches the presale wallet — it cannot be faked and anyone
+// can verify it themselves.
 export const PRESALE_TICKET_UNIT_SOL = 0.5
 
-// Sabit paket sekmesindeki hazır tutar seçenekleri (SOL).
+// The preset amount options on the fixed-package tab (SOL).
 export const PRESALE_TIERS = [0.5, 1, 3, 5, 10, 15, 20, 25, 50, 100, 200, 250, 500]
 
-// Tokenomics sekmesinde gösterilen arz dağılımı (yüzdeler toplamı 100 olmalı).
+// The supply distribution shown on the Tokenomics tab (percentages must total 100).
 export const TOKENOMICS = [
   {
     key: 'presale',
     label: 'Presale',
     percent: 35,
     color: '#22d3ee',
-    desc: 'Sabit fiyatlı presale ile topluluğa dağıtılır. TGE\'de %9 açılır, sonra 13 hafta boyunca her 7 günde bir %7 daha; 91. günde (13. hafta) tamamı serbest. Dağıtım claim programı üzerinden yapılır — açılan kısmı alıcı kendi çeker, tokenler o ana kadar kimsenin çekemeyeceği bir programda durur.',
+    desc: 'Distributed to the community through the fixed-price presale. 9% unlocks at TGE, then a further 7% every 7 days for 13 weeks; everything is free on day 91 (week 13). Distribution goes through the claim program — the buyer withdraws the unlocked part themselves, and until then the tokens sit in a program nobody can withdraw from.',
   },
   {
     key: 'liquidity',
-    label: 'Likidite Havuzu',
+    label: 'Liquidity Pool',
     percent: 20,
     color: '#8b5cf6',
-    desc: 'TGE günü Raydium (CPMM) havuzuna konur ve LP token\'ları YAKILIR — likidite kalıcı olarak havuzda kalır, ekip dahil kimse çekemez. Yakma işleminin linki bu sayfada yayınlanır.',
+    desc: 'Put into the Raydium (CPMM) pool on TGE day, and the LP tokens are BURNED — the liquidity stays in the pool permanently and nobody, the team included, can withdraw it. The link to the burn transaction is published on this page.',
   },
   {
     key: 'community',
-    label: 'Topluluk / Çekiliş Ödülleri',
+    label: 'Community / Raffle Rewards',
     percent: 20,
     color: '#facc15',
-    desc: '7. günden itibaren her 7 günde bir çekiliş, toplam 14 çekiliş. Her çekilişte 10 cüzdan kazanır ve her kazanan 1.110.000 $LUCK alır: 7\'si presale biletleri arasından (zincirden hesaplanır, otomatik dağıtılır), 3\'ü Twitter/X kampanyalarından. 14 haftada toplam 140 kazanan.',
+    desc: 'A raffle every 7 days starting on day 7, 14 raffles in total. Each raffle has 10 winning wallets and every winner receives 1,110,000 $LUCK: 7 drawn from the presale tickets (computed from the chain, distributed automatically) and 3 from Twitter/X campaigns. 140 winners across 14 weeks.',
   },
   {
     key: 'team',
-    label: 'Ekip (Kilitli)',
+    label: 'Team (Locked)',
     percent: 10,
     color: '#f87171',
-    desc: 'İlk 7 ay boyunca tam kilitli — hiç açılmaz. Ardından 7 ay boyunca aylık eşit dilimlerle dağıtılır (14. ayda tamamlanır).',
+    desc: 'Fully locked for the first 7 months — nothing unlocks at all. After that it is distributed in equal monthly slices over 7 months (completing in month 14).',
   },
   {
     key: 'marketing',
-    label: 'Pazarlama & CEX',
+    label: 'Marketing & CEX',
     percent: 15,
     color: '#34d399',
-    desc: 'İki bölüm: CEX listeleme rezervi (77.700.000, üç ayrı kasada, adresleri yayınlanır) ve akan kısım (38.850.000; 7 hafta kilit, sonra 7 ay boyunca aylık).',
+    desc: 'Two parts: the CEX listing reserve (77,700,000, in three separate vaults whose addresses are published) and the flowing part (38,850,000; locked for 7 weeks, then monthly over 7 months).',
   },
 ] as const
 
 // ---------------------------------------------------------------------------
-// Claim (dağıtım) programı
+// The claim (distribution) program
 // ---------------------------------------------------------------------------
-// Presale payları ve çekiliş ödülleri, TGE'de bu programa kilitleniyor;
-// alıcı açılan kısmı kendisi çekiyor. Programda "parayı geri çek" diye bir
-// talimat YOK — kilitlenen token yalnızca hak sahibine, yalnızca takvime
-// göre çıkabiliyor (bkz. program/luck-distributor/src/lib.rs).
+// Presale shares and raffle rewards are locked into this program at TGE; the
+// recipient withdraws the unlocked part themselves. The program has NO
+// "withdraw the money back" instruction — a locked token can only leave to the
+// rightful owner, and only on schedule (see
+// program/luck-distributor/src/lib.rs).
 //
-// `programId` boşken Claim sekmesi "henüz yapılandırılmadı" der ve hiçbir
-// buton çalışmaz — presale cüzdanıyla aynı güvenlik freni deseni.
+// While `programId` is empty the Claim tab says "not configured yet" and no
+// button works — the same safety-brake pattern as the presale wallet.
 export const CLAIM_CONFIG = {
   programId: 'G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e',
-  /** Tur kimlikleri: 0 = presale vesting, 1..14 = haftalık çekilişler. */
+  /** Round ids: 0 = presale vesting, 1..14 = the weekly raffles. */
   presaleRoundId: 0,
   /**
-   * Yayınlanan merkle dosyalarının bulunduğu klasör. Her tur için
-   * `round-<id>.json`. Bu dosyalar bilerek herkese açık: alıcı, gördüğü
-   * sayıyı scripts/build-merkle.mjs ile kendi üretip doğrulayabilsin diye.
+   * The folder holding the published merkle files: `round-<id>.json` for each
+   * round. These files are deliberately public, so that a recipient can rebuild
+   * the number they see with scripts/build-merkle.mjs and verify it themselves.
    */
   merkleBasePath: '/merkle',
 } as const
 
 // ---------------------------------------------------------------------------
-// Çekiliş kuralları
+// Raffle rules
 // ---------------------------------------------------------------------------
-// Topluluk kovası (155.400.000 $LUCK) İKİ AYRI çekilişe bölünüyor. Ayrı
-// tutmalarının sebebi, doğrulanabilirliklerinin farklı olması:
+// The community bucket (155,400,000 $LUCK) is split into TWO SEPARATE raffles.
+// They are kept apart because their verifiability differs:
 //
-//   * BİLETLİ ÇEKİLİŞ tamamen zincirden türetilebilir. Presale cüzdanına
-//     gelen her transfer herkese açık olduğu için "kim kaç bilet aldı"
-//     listesini bizden bağımsız olarak herkes üretebilir. Kazananlar da
-//     gelecekteki bir Solana slot'unun blockhash'iyle seçiliyor: o slot
-//     henüz oluşmadığı için sonucu kimse (biz dahil) önceden bilemez,
-//     oluştuktan sonra ise herkes aynı hesabı yapıp doğrulayabilir. Oyunda
-//     kullandığımız rastgelelik kaynağının aynısı.
+//   * THE TICKET RAFFLE can be derived entirely from the chain. Every transfer
+//     into the presale wallet is public, so anyone can build the "who bought how
+//     many tickets" list independently of us. The winners are picked with the
+//     blockhash of a future Solana slot: because that slot does not exist yet,
+//     nobody (us included) can know the result in advance, and once it does
+//     everybody can redo the same computation and verify it. The same source of
+//     randomness we use in the game.
 //
-//   * TWITTER ÇEKİLİŞİ zincirden doğrulanamaz — katılım Twitter/X üzerinde
-//     gerçekleşiyor, kazanan adresleri ekip giriyor. Bu yüzden aynı kovada
-//     karıştırmıyoruz: biletli çekilişin "kimseye güvenmeniz gerekmiyor"
-//     iddiası, yanına elle girilen bir liste konunca zayıflardı.
+//   * THE TWITTER RAFFLE cannot be verified from the chain — participation
+//     happens on Twitter/X and the team enters the winning addresses. That is
+//     why we do not mix them in one bucket: the ticket raffle's claim that "you
+//     do not have to trust anyone" would be weakened by a hand-entered list
+//     sitting next to it.
 //
-// Sayılar: çekiliş başına 11.100.000 ÷ 10 kazanan = kazanan başına tam
-// 1.110.000 $LUCK. 14 çekiliş × 10 = 140 kazanan.
+// The numbers: 11,100,000 per raffle / 10 winners = exactly 1,110,000 $LUCK per
+// winner. 14 raffles x 10 = 140 winners.
 export const RAFFLE = {
   rounds: 14,
   intervalDays: 7,
-  /** İlk çekiliş TGE'den kaç gün sonra. */
+  /** How many days after TGE the first raffle happens. */
   firstRoundDay: 7,
   perRoundTokens: 11_100_000,
   perWinnerTokens: 1_110_000,
@@ -270,150 +278,151 @@ export const RAFFLE = {
   },
 } as const
 
-// Kilit / açılış takvimi — Tokenomics sekmesindeki zaman çizelgesi.
-// Tasarım ilkesi: hiçbir açılış, likidite havuzunun emebileceğinden büyük
-// olmamalı. Bu yüzden her kova kademeli açılıyor ve büyük kilitlerin
-// bitiş günleri birbirinden ayrı.
+// The lock / unlock schedule — the timeline on the Tokenomics tab.
+// Design principle: no unlock should be larger than the liquidity pool can
+// absorb. That is why every bucket unlocks in stages and the end dates of the
+// large locks are spread apart.
 export const VESTING_SCHEDULE = [
   {
     key: 'presale',
     label: 'Presale',
     steps: [
-      { when: 'TGE', what: '%9 açılır', amount: 24_475_500 },
-      { when: '7. – 91. gün', what: 'her 7 günde bir %7 (13 adım)', amount: 19_036_500 },
+      { when: 'TGE', what: '9% unlocks', amount: 24_475_500 },
+      { when: 'day 7 – 91', what: '7% every 7 days (13 steps)', amount: 19_036_500 },
     ],
   },
   {
     key: 'liquidity',
-    label: 'Likidite Havuzu',
-    steps: [{ when: 'TGE', what: 'havuza konur, LP yakılır — hiç açılmaz', amount: 155_400_000 }],
+    label: 'Liquidity Pool',
+    steps: [{ when: 'TGE', what: 'put into the pool, LP burned — never unlocks', amount: 155_400_000 }],
   },
   {
     key: 'community',
-    label: 'Topluluk / Çekiliş',
+    label: 'Community / Raffle',
     steps: [
-      { when: '7. gün', what: 'ilk çekiliş — 7 biletli + 3 Twitter kazanan', amount: 11_100_000 },
-      { when: 'her 7 günde bir', what: '14 çekiliş, çekiliş başına 10 kazanan × 1.110.000', amount: 11_100_000 },
-      { when: '98. gün', what: 'son çekiliş — toplam 140 kazanan', amount: 11_100_000 },
+      { when: 'day 7', what: 'first raffle — 7 ticket + 3 Twitter winners', amount: 11_100_000 },
+      { when: 'every 7 days', what: '14 raffles, 10 winners x 1,110,000 each', amount: 11_100_000 },
+      { when: 'day 98', what: 'last raffle — 140 winners in total', amount: 11_100_000 },
     ],
   },
   {
     key: 'team',
-    label: 'Ekip',
+    label: 'Team',
     steps: [
-      { when: '0 – 7. ay', what: 'tam kilit, hiç açılmaz', amount: 0 },
-      { when: '8. – 14. ay', what: 'aylık eşit dilim (7 ay)', amount: 11_100_000 },
+      { when: 'month 0 – 7', what: 'fully locked, nothing unlocks', amount: 0 },
+      { when: 'month 8 – 14', what: 'equal monthly slices (7 months)', amount: 11_100_000 },
     ],
   },
   {
     key: 'marketing',
-    label: 'Pazarlama akan kısım',
+    label: 'Marketing, flowing part',
     steps: [
-      { when: '0 – 7. hafta', what: 'kilitli', amount: 0 },
-      { when: 'sonraki 7 ay', what: 'aylık eşit dilim', amount: 5_550_000 },
+      { when: 'week 0 – 7', what: 'locked', amount: 0 },
+      { when: 'the following 7 months', what: 'equal monthly slices', amount: 5_550_000 },
     ],
   },
 ] as const
 
-// Pazarlama kovasının (116.550.000) iç kırılımı.
+// The internal breakdown of the marketing bucket (116,550,000).
 export const MARKETING_BREAKDOWN = {
-  // Üç ayrı kasa; her biri bir borsa listelemesi için. Kilitli DEĞİL —
-  // kasıtlı olarak öyle, çünkü hızlı gelen bir listeleme fırsatında
-  // kırmak zorunda kalacağımız bir kilit sözü vermek istemiyoruz.
-  // Kasa adresleri yayınlanır, her kullanım kanıtlanır.
+  // Three separate vaults, each for one exchange listing. NOT locked —
+  // deliberately so, because we do not want to make a lock promise we would have
+  // to break the moment a listing opportunity arrives on short notice. The vault
+  // addresses are published and every use is proven.
   cexReserve: {
     total: 77_700_000,
     wallets: 3,
     perWallet: 25_900_000,
-    // Yayınlanan kasa adresleri — her hareket zincirde izlenebilir.
+    // The published vault addresses — every movement is traceable on chain.
     addresses: [
-      { label: 'CEX kasa 1', address: 'CZ639Mx6MFiZfwpVFLecyMTecGp2Cv6HErdoWqgZG6HS' },
-      { label: 'CEX kasa 2', address: '3cCqgaj4QzKQUFvSNnz1yqrqcPt7xiKsbh29AfVoGM8B' },
-      { label: 'CEX kasa 3', address: 'DmdePMQyuKEX9Hwaytx6tEfPxx5utBVxSJ5bgWrKghmh' },
+      { label: 'CEX vault 1', address: 'CZ639Mx6MFiZfwpVFLecyMTecGp2Cv6HErdoWqgZG6HS' },
+      { label: 'CEX vault 2', address: '3cCqgaj4QzKQUFvSNnz1yqrqcPt7xiKsbh29AfVoGM8B' },
+      { label: 'CEX vault 3', address: 'DmdePMQyuKEX9Hwaytx6tEfPxx5utBVxSJ5bgWrKghmh' },
     ],
   },
-  // 6 birime bölünen akan kısım (1 birim = 6.475.000).
+  // The flowing part, split into 6 units (1 unit = 6,475,000).
   flow: {
     total: 38_850_000,
     unit: 6_475_000,
     items: [
-      { label: 'İşbirliği / influencer / topluluk kampanyası', units: 5, amount: 32_375_000 },
-      { label: 'Rezerv', units: 1, amount: 6_475_000 },
+      { label: 'Partnerships / influencers / community campaigns', units: 5, amount: 32_375_000 },
+      { label: 'Reserve', units: 1, amount: 6_475_000 },
     ],
   },
 } as const
 
 // ---------------------------------------------------------------------------
-// Açık cüzdan listesi
+// The public wallet list
 // ---------------------------------------------------------------------------
-// Tokenomics sekmesinde yayınlanan cüzdanlar. Amaç: kilit/dağıtım sözlerinin
-// zincirde tek tek doğrulanabilmesi — her bakiye ve her hareket bu adresler
-// üzerinden Solscan'de takip edilebilir. Buradaki adreslerin hiçbiri özel
-// anahtar içermez, sadece herkese açık (public) adreslerdir.
+// The wallets published on the Tokenomics tab. The point is that every lock and
+// distribution promise can be verified one by one on chain — every balance and
+// every movement can be followed through these addresses on Solscan. None of the
+// addresses here contains a private key; they are public addresses only.
 export const PUBLIC_WALLETS = [
-  { key: 'presale', label: 'Presale kasası', address: PRESALE_WALLET },
-  { key: 'ops', label: 'Operasyon payı', address: PRESALE_OPS_WALLET },
-  { key: 'team', label: 'Ekip', address: 'AHGDn3qqRyShYURf9qriMpVPHT8W6LwVTKUBXYMzuMxA' },
-  { key: 'community', label: 'Topluluk / çekiliş', address: '3fBhNn8BEoFyQVAXasWj1xcNrcc2FRpLVQexFhZTnw6F' },
-  { key: 'marketing', label: 'Pazarlama (akan kısım)', address: 'BiWqNZzCPCfJtVPNhoCrvEb9s6unpCFXXf38GR3WnPWX' },
+  { key: 'presale', label: 'Presale vault', address: PRESALE_WALLET },
+  { key: 'ops', label: 'Operations share', address: PRESALE_OPS_WALLET },
+  { key: 'team', label: 'Team', address: 'AHGDn3qqRyShYURf9qriMpVPHT8W6LwVTKUBXYMzuMxA' },
+  { key: 'community', label: 'Community / raffle', address: '3fBhNn8BEoFyQVAXasWj1xcNrcc2FRpLVQexFhZTnw6F' },
+  { key: 'marketing', label: 'Marketing (flowing part)', address: 'BiWqNZzCPCfJtVPNhoCrvEb9s6unpCFXXf38GR3WnPWX' },
 ] as const
 
-// Presale'de toplanan SOL'un (operasyon payı düşüldükten sonra kalan
-// %90'ın) nereye gittiği. Token dağılımından (TOKENOMICS) AYRI bir
-// tablodur: biri token, bu ise para.
+// Where the SOL raised in the presale goes (the 90% left after the operations
+// share). A SEPARATE table from the token distribution (TOKENOMICS): one is
+// tokens, this one is money.
 export const PRESALE_SOL_ALLOCATION = [
-  { key: 'liquidity', label: 'Likidite havuzu', percent: 85 },
-  { key: 'marketing', label: 'Pazarlama & CEX', percent: 10 },
-  { key: 'reserve', label: 'Rezerv / operasyon', percent: 5 },
+  { key: 'liquidity', label: 'Liquidity pool', percent: 85 },
+  { key: 'marketing', label: 'Marketing & CEX', percent: 10 },
+  { key: 'reserve', label: 'Reserve / operations', percent: 5 },
 ] as const
 
-// Topluluk sosyal medya linkleri — boş bırakılan bir alan SoLofLuck
-// sayfasının alt kısmında hiç gösterilmez, kırık/placeholder link olmaz.
+// Community social media links — a field left empty is simply not shown at the
+// bottom of the SoLofLuck page, so there are no broken or placeholder links.
 export const SOCIAL_LINKS = {
-  twitter: '', // ör: 'https://twitter.com/soloflucksol'
-  telegram: '', // ör: 'https://t.me/soloflucksol'
-  discord: '', // ör: 'https://discord.gg/xxxxxxx'
+  twitter: '', // e.g. 'https://twitter.com/soloflucksol'
+  telegram: '', // e.g. 'https://t.me/soloflucksol'
+  discord: '', // e.g. 'https://discord.gg/xxxxxxx'
 }
 
 // ---------------------------------------------------------------------------
-// Oyun: 777 Şans Çarkı (program/luck-game)
+// The game: 777 Wheel of Luck (program/luck-game)
 // ---------------------------------------------------------------------------
-// Bu, ayrı bir Solana programı (akıllı kontrat) gerektirir — bkz.
-// program/luck-game/README.md. Program deploy edilip `initialize()`
-// çağrılana kadar `programId` boş kalmalı; Oyun sekmesi bu durumda
-// "yapılandırılmadı" uyarısı gösterir ve oynama butonu devre dışı kalır
-// (PRESALE_WALLET ile aynı güvenlik freni deseni).
+// This requires a separate Solana program (smart contract) — see
+// program/luck-game/README.md. `programId` must stay empty until the program is
+// deployed and `initialize()` has been called; in that state the Game tab shows
+// a "not configured" warning and the play button is disabled (the same
+// safety-brake pattern as PRESALE_WALLET).
 //
-// Buradaki ekonomi değerleri (ücret/ödül/eşik) yalnızca EKRANDA GÖSTERMEK
-// içindir — asıl geçerli/bağlayıcı değerler her zaman zincirdeki GameConfig
-// hesabından okunur (bkz. src/lib/luckGame.ts). `initialize()`'ı
-// çağırırken aynı değerleri kullanmayı unutmayın, aksi halde ekranda
-// gösterilen ile zincirdeki gerçek kurallar birbirini tutmaz.
+// The economic values here (fee / prize / threshold) are only for DISPLAY — the
+// values that actually apply and bind are always read from the on-chain
+// GameConfig account (see src/lib/luckGame.ts). Remember to use the same values
+// when calling `initialize()`, otherwise what the screen shows and the real
+// rules on the chain will not agree.
 export const GAME_CONFIG = {
   // Devnet.
   //
-  // Program ID artık KAYNAK KODDAN geliyor: `declare_id!()` tek doğru
-  // kaynak. Yükseltme için keypair GEREKMİYOR — zincir yalnızca upgrade
-  // authority'nin (deploy cüzdanı) imzasını arıyor. `anchor keys sync`
-  // yalnızca bilerek yeni bir program açarken (first_deploy=true)
-  // çalışıyor. Bkz. .github/workflows/deploy-luck-game.yml.
+  // The program ID now comes FROM THE SOURCE CODE: `declare_id!()` is the single
+  // source of truth. No keypair is NEEDED for an upgrade — the chain only looks
+  // for the upgrade authority's (the deploy wallet's) signature. `anchor keys
+  // sync` runs only when we deliberately open a new program
+  // (first_deploy=true). See .github/workflows/deploy-luck-game.yml.
   //
-  // Buraya eskiden "keypair rust-cache'te taşınıyor, kaybolursa program
-  // güncellenemez, mainnet için secret'a taşınmalı" diye bir not
-  // yazmıştım. O NOT ARTIK YANLIŞ: iş akışı yeniden yazıldığında önbellek
-  // adımları tamamen kaldırıldı. Notu güncellemeyi unutmuşum ve kodu
-  // dışarıdan inceleyen biri, kapanmış bir riski açık sanıp uyardı —
-  // bayat bir yorum, hiç yorum olmamasından daha zararlı.
+  // There used to be a note here saying "the keypair is carried in the
+  // rust-cache; if it is lost the program cannot be updated; it must be moved
+  // into a secret for mainnet". THAT NOTE IS NOW WRONG: when the workflow was
+  // rewritten the cache steps were removed entirely. I forgot to update the
+  // note, and an outside reviewer of the code mistook a closed risk for an open
+  // one and raised it — a stale comment is more harmful than no comment.
   //
-  // Açık kalan tek konu keypair değil, UPGRADE AUTHORITY: programlar
-  // yükseltilebilir ve yetki bizde. Bu bilinçli (hata düzeltebilmek için)
-  // ve GUVENLIK.md'de merkezî nokta olarak yazılı.
+  // The one thing that does stay open is not the keypair but the UPGRADE
+  // AUTHORITY: the programs are upgradeable and we hold the authority. That is
+  // deliberate (so bugs can be fixed) and is written down as a point of
+  // centralisation in SECURITY.md.
   programId: 'H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf',
   freePlays: 3,
-  // Spin-kredisi tarifesi: 3 ücretsiz deneme bitince (+1 bonus spin
-  // hediye), her paket bir defada satın alınıp bakiyeye eklenir. Sırayla
-  // GameConfig.spin_tier_counts / spin_tier_prices ile birebir eşleşmeli
-  // (initialize.mjs'teki SPIN_TIER_COUNTS/SPIN_TIER_PRICES_SOL varsayılanları).
+  // The spin-credit tariff: once the 3 free attempts are used up (plus the +1
+  // bonus spin), each package is bought in one go and added to the balance. In
+  // order, it must match GameConfig.spin_tier_counts / spin_tier_prices exactly
+  // (the SPIN_TIER_COUNTS / SPIN_TIER_PRICES_SOL defaults in initialize.mjs).
   spinTiers: [
     { count: 1, priceSol: 0.1 },
     { count: 5, priceSol: 0.3 },
@@ -422,55 +431,56 @@ export const GAME_CONFIG = {
     { count: 50, priceSol: 1.5 },
     { count: 100, priceSol: 2.5 },
   ],
-  // İki katmanlı ödül: kazanan denemelerin %(bigPrizeBps/100)'i büyük
-  // ödülü (jackpot), geri kalanı küçük ödülü kazanır — hangisi tutacağı
-  // resolve() içinde ikinci, bağımsız bir zarla belirleniyor.
+  // A two-tier prize: (bigPrizeBps/100)% of the winning attempts take the big
+  // prize (the jackpot) and the rest the small prize — which one lands is
+  // decided by a second, independent dice roll inside resolve().
   smallPrizeSol: 0.5,
   bigPrizeSol: 1,
-  bigPrizeBps: 3000, // kazananların %30'u büyük ödül alır
+  bigPrizeBps: 3000, // 30% of winners take the big prize
   vaultEasyThresholdSol: 2,
-  // Tek bir "ev payı" oranı, iki yerde birden uygulanıyor:
-  //   1. Paket satın alımlarında ödenen tutarın %20'si hazineye, %80'i
-  //      oyun kasasına (vault) girer.
-  //   2. Kazanılan turlarda, ödülün %20'si KADAR EK bir tutar kasadan
-  //      hazineye aktarılır — oyuncunun ödülünden kesilmez. 0,5 SOL
-  //      kazanan tam 0,5 SOL alır, hazineye ayrıca 0,1 SOL gider
-  //      (kasadan toplam 0,6 SOL çıkar).
+  // A single "house share" rate, applied in two places at once:
+  //   1. On a package purchase, 20% of the amount paid goes to the treasury and
+  //      80% into the game vault.
+  //   2. On a winning round, an EXTRA amount equal to 20% of the prize is moved
+  //      from the vault to the treasury — it is not deducted from the player's
+  //      prize. Someone winning 0.5 SOL receives the full 0.5 SOL, and a further
+  //      0.1 SOL goes to the treasury (0.6 SOL leaves the vault in total).
   treasuryFeeBps: 2000,
-  normalWinBps: 50, // zor mod: %0.5
-  easyWinBps: 1000, // kolay mod (kasa ≥ eşik): %10
-  // `initialize()`'a verilecek reveal_delay_slots ile aynı olmalı.
+  normalWinBps: 50, // hard mode: 0.5%
+  easyWinBps: 1000, // easy mode (vault >= threshold): 10%
+  // Must match the reveal_delay_slots passed to `initialize()`.
   revealDelaySlots: 5,
-  // Program sabiti MAX_RESOLVE_WINDOW_SLOTS ile aynı olmalı — yalnızca
-  // "sıkışan oyunu ne zaman iptal edebilirsin" mesajı için kullanılıyor.
+  // Must match the program constant MAX_RESOLVE_WINDOW_SLOTS — it is used only
+  // for the "when can you cancel a stuck game" message.
   maxResolveWindowSlots: 300,
-  // Ev payının (hem paket satışlarından hem ödüllerden) gönderildiği
-  // hazine cüzdanı. Oyun gelirleri, presale operasyon payından AYRI
-  // tutuluyor: presale payı operasyon cüzdanına (PRESALE_OPS_WALLET),
-  // oyun gelirleri ise bu ayrı oyun hazinesine gidiyor.
+  // The treasury wallet the house share is sent to (both from package sales and
+  // from prizes). Game revenue is kept SEPARATE from the presale operations
+  // share: the presale share goes to the operations wallet
+  // (PRESALE_OPS_WALLET), while game revenue goes to this separate game
+  // treasury.
   //
-  // ÖNEMLİ: bu değer yalnızca kurulum/dokümantasyon içindir. Oyun
-  // sekmesi hazine adresini HER ZAMAN zincirdeki GameConfig'ten okur
-  // (gameConfig.treasury). Buradaki adresi değiştirmek tek başına
-  // yetmez — zincirdeki değeri de update_config() ile güncellemek
-  // gerekir (bkz. .github/workflows/update-luck-game-config.yml).
+  // IMPORTANT: this value is only for setup and documentation. The Game tab
+  // ALWAYS reads the treasury address from the on-chain GameConfig
+  // (gameConfig.treasury). Changing the address here is not enough on its own —
+  // the on-chain value has to be updated with update_config() as well (see
+  // .github/workflows/update-luck-game-config.yml).
   treasuryWallet: '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
-  // "Oyun cüzdanı" (delegate) etkinleştirilirken oyuncudan yalnızca,
-  // hesabın zincirde var olabilmesi için zorunlu olan kira depozitosu
-  // (~0,00089 SOL) alınır — bu tutar harcanmaz, oyuncunun kendi delege
-  // hesabında durur. HARCANABİLİR gaz bakiyesi ise oyuncudan değil, ilk
-  // register_delegate() çağrısında kasadan (vault) sponsor ediliyor (bkz.
-  // program/luck-game/src/lib.rs DELEGATE_GAS_SPONSOR_LAMPORTS), her
-  // buy_spins() çağrısında da sessizce tazeleniyor
-  // (DELEGATE_GAS_TOPUP_LAMPORTS). Aşağıdaki değer SADECE nadir bir yedek
-  // için: eğer delegate hiç satın alım yapılmadan çok uzun süre oynanıp
-  // gazı biterse, oyuncunun kendi cüzdanından elle doldurabileceği miktar
-  // (bkz. handleTopUpDelegate / topUpDelegateGas).
+  // When the "game wallet" (delegate) is activated, the only thing taken from
+  // the player is the rent deposit the account needs in order to exist on chain
+  // (~0.00089 SOL) — that amount is never spent and stays in the player's own
+  // delegate account. The SPENDABLE gas balance does not come from the player at
+  // all: it is sponsored from the vault on the first register_delegate() call
+  // (see DELEGATE_GAS_SPONSOR_LAMPORTS in program/luck-game/src/lib.rs) and
+  // quietly refreshed on every buy_spins() call
+  // (DELEGATE_GAS_TOPUP_LAMPORTS). The value below is ONLY for a rare fallback:
+  // if the delegate runs out of gas after playing for a very long time without
+  // any purchase, this is the amount the player can top it up with by hand from
+  // their own wallet (see handleTopUpDelegate / topUpDelegateGas).
   delegateTopUpSol: 0.001,
-  // Delegate'in HARCANABİLİR gaz bakiyesi (kira tabanı düşülmüş hali) bunun
-  // altına düşünce "gaz doldur" uyarısı gösterilir. Kasa her satın alımda
-  // delegeyi 0,0002 SOL'lük tam gaz payına geri dolduruyor (bkz. lib.rs
-  // DELEGATE_GAS_SPONSOR_LAMPORTS); bir spin (play + resolve) ~0,000013 SOL
-  // yaktığı için bu eşik "yaklaşık 3-4 spinlik gaz kaldı" demek.
+  // When the delegate's SPENDABLE gas balance (with the rent floor subtracted)
+  // falls below this, the "top up gas" warning is shown. The vault refills the
+  // delegate back to the full 0.0002 SOL gas share on every purchase (see
+  // DELEGATE_GAS_SPONSOR_LAMPORTS in lib.rs); a spin (play + resolve) burns
+  // ~0.000013 SOL, so this threshold means "roughly 3-4 spins of gas left".
   delegateLowBalanceSol: 0.00005,
 }
