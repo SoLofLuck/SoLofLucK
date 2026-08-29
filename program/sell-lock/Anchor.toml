@@ -4,9 +4,9 @@
 resolution = true
 skip-lint = false
 
-# Solana Playground üzerinden Devnet'e deploy edildi (bkz. program/sell-lock/README.md).
-# Mainnet'e henüz deploy edilmedi; oraya deploy edilene kadar aşağıdaki
-# mainnet ID'si yer tutucudur.
+# Deployed to Devnet through Solana Playground (see program/sell-lock/README.md).
+# It has not been deployed to mainnet yet; until it is, the mainnet ID below is a
+# placeholder.
 [programs.devnet]
 sell_lock = "3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5"
 

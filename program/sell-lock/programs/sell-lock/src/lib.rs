@@ -5,32 +5,32 @@ use anchor_spl::token_interface::{Mint, TokenAccount};
 use spl_tlv_account_resolution::{account::ExtraAccountMeta, state::ExtraAccountMetaList};
 use spl_transfer_hook_interface::instruction::{ExecuteInstruction, TransferHookInstruction};
 
-// Solana Playground üzerinden Devnet'e deploy edilen gerçek program ID'si.
+// The real program ID deployed to Devnet through Solana Playground.
 declare_id!("3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5");
 
-// Anti-snipe kilidi için izin verilen süreler: 15 dk / 1 saat / 5 saat / 24 saat.
-// Başka bir süre denemesi reddedilir — bu, "kilit süresi keyfi uzatılabilir/
-// kısaltılabilir" riskini ortadan kaldırır.
+// The durations allowed for the anti-snipe lock: 15 min / 1 hour / 5 hours /
+// 24 hours. Any other duration is rejected — which removes the risk of "the lock
+// period can be extended or shortened arbitrarily".
 const ALLOWED_DURATIONS_SECONDS: [i64; 4] = [900, 3600, 18_000, 86_400];
 
 #[program]
 pub mod sell_lock {
     use super::*;
 
-    /// Token-2022'nin Transfer Hook uzantısının her mint için zorunlu tuttuğu
-    /// "extra account meta list" hesabını oluşturur. Bu hesap, her transferde
-    /// bizim programımıza hangi ek hesapların (bizim durumumuzda: bu mint'in
-    /// LaunchConfig PDA'sı) otomatik olarak iletileceğini tanımlar.
+    /// Creates the "extra account meta list" account that Token-2022's Transfer
+    /// Hook extension requires for every mint. That account defines which extra
+    /// accounts (in our case: this mint's LaunchConfig PDA) are passed to our
+    /// program automatically on every transfer.
     ///
-    /// Token oluşturma akışında, mint Token-2022 + TransferHook uzantısıyla
-    /// oluşturulduktan hemen sonra bir kez çağrılır.
+    /// In the token creation flow it is called once, right after the mint is
+    /// created with the Token-2022 + TransferHook extension.
     pub fn initialize_extra_account_meta_list(
         ctx: Context<InitializeExtraAccountMetaList>,
     ) -> Result<()> {
         let account_metas = vec![
-            // Index 4 = LaunchConfig PDA'nın execute sırasında account listesindeki
-            // sırası (bkz. fallback fonksiyonu: source, mint, destination,
-            // owner, extra_account_meta_list, launch_config).
+            // Index 4 = the LaunchConfig PDA's position in the account list
+            // during execute (see the fallback function: source, mint,
+            // destination, owner, extra_account_meta_list, launch_config).
             ExtraAccountMeta::new_with_seeds(
                 &[
                     spl_tlv_account_resolution::seeds::Seed::Literal {
@@ -77,27 +77,27 @@ pub mod sell_lock {
         Ok(())
     }
 
-    /// Havuz oluşturulduktan hemen sonra, aynı akışın bir parçası olarak bir
-    /// kez çağrılır. Bu mint için satış kilidini fiilen etkinleştirir:
-    /// havuzun iki kasa adresini ve seçilen süreyi zincire yazar.
+    /// Called once right after the pool is created, as part of the same flow. It
+    /// is what actually switches the sell lock on for this mint: it writes the
+    /// pool's two vault addresses and the chosen duration to the chain.
     ///
-    /// `duration_seconds` yalnızca ALLOWED_DURATIONS_SECONDS içindeki
-    /// değerlerden biri olabilir. `unlock_timestamp` şu andan (zincirdeki
-    /// Clock'tan) hesaplanır, istemci tarafından gönderilmez — böylece hiç
-    /// kimse (biz dahil) manipüle edemez.
+    /// `duration_seconds` can only be one of the values in
+    /// ALLOWED_DURATIONS_SECONDS. `unlock_timestamp` is computed from the current
+    /// time (from the on-chain Clock) and is not sent by the client — so nobody
+    /// (us included) can manipulate it.
     ///
-    /// Bu hesap `init` kısıtıyla oluşturulur: aynı mint için ikinci bir
-    /// çağrı "account already in use" hatasıyla başarısız olur — yani bir
-    /// kez ayarlandıktan sonra süre bir daha değiştirilemez.
+    /// This account is created with the `init` constraint: a second call for the
+    /// same mint fails with "account already in use" — that is, once set, the
+    /// duration can never be changed again.
     pub fn register_launch(ctx: Context<RegisterLaunch>, duration_seconds: i64) -> Result<()> {
         require!(
             ALLOWED_DURATIONS_SECONDS.contains(&duration_seconds),
             SellLockError::InvalidDuration
         );
 
-        // Kasaların gerçekten bu mint'e ait ve Token-2022/Token programına
-        // ait olduğunu doğrula — sahte/rastgele bir "kasa" adresi verilip
-        // kilidin fiilen hiçbir işlemi engellemez hale getirilmesini önler.
+        // Verify that the vaults really belong to this mint and to the
+        // Token-2022/Token program — this stops a fake or random "vault" address
+        // being passed in and leaving the lock blocking nothing at all.
         require_keys_eq!(
             ctx.accounts.pool_vault_a.mint,
             ctx.accounts.mint.key(),
@@ -115,33 +115,33 @@ pub mod sell_lock {
         Ok(())
     }
 
-    /// Token-2022 programı, bu mint'i ilgilendiren HER transferde bu
-    /// fonksiyonu (`fallback` üzerinden) CPI ile çağırır. Mantık:
+    /// The Token-2022 program calls this function (through `fallback`) by CPI on
+    /// EVERY transfer involving this mint. The logic:
     ///
-    /// - Hedef hesap, LaunchConfig'te kayıtlı havuz kasalarından biriyse
-    ///   (yani bu bir "satış" / havuza para yatırma işlemiyse) VE süre
-    ///   dolmadıysa → işlemi reddet.
-    /// - Aksi halde (alım, ya da cüzdandan cüzdana transfer) → izin ver.
+    /// - If the destination account is one of the pool vaults recorded in
+    ///   LaunchConfig (that is, this is a "sale" / a deposit into the pool) AND
+    ///   the period has not elapsed -> reject the transaction.
+    /// - Otherwise (a purchase, or a wallet-to-wallet transfer) -> allow it.
     ///
-    /// LaunchConfig hesabı henüz oluşturulmamışsa (havuz henüz kurulmadıysa)
-    /// bu fonksiyon hiç çağrılmaz çünkü extra_account_meta_list çözümlemesi
-    /// başarısız olur; bu durumda transfer normal şekilde (kısıtlamasız)
-    /// devam eder — bu, havuz kurulmadan önceki sıradan token transferlerini
-    /// (ör. cüzdanlar arası hediye) etkilemez.
+    /// If the LaunchConfig account has not been created yet (the pool has not
+    /// been set up), this function is never called at all, because the
+    /// extra_account_meta_list resolution fails; in that case the transfer
+    /// proceeds normally (unrestricted) — so this does not affect ordinary token
+    /// transfers made before the pool exists (a gift between wallets, say).
     ///
-    /// Token-2022'nin transfer hook arayüzü, Anchor'ın standart 8-byte
-    /// sighash discriminator'ı yerine kendi ham discriminator formatını
-    /// kullanır. Bu yüzden çağrılar önce `fallback`'e düşer.
+    /// Token-2022's transfer hook interface uses its own raw discriminator format
+    /// rather than Anchor's standard 8-byte sighash discriminator. That is why
+    /// calls land in `fallback` first.
     ///
-    /// Anchor, `#[program]` bloğu içinde tam "fallback" isminde ve bu
-    /// imzada bir fonksiyon gördüğünde onu otomatik olarak özel işleyici
-    /// kabul eder — ekstra bir attribute gerekmez.
+    /// When Anchor sees a function named exactly "fallback" with this signature
+    /// inside a `#[program]` block, it automatically treats it as the custom
+    /// handler — no extra attribute is needed.
     ///
-    /// Mantığı, Anchor'ın normalde gizli tuttuğu dahili
-    /// (`__private::__global::...`) çağrı yoluna güvenmek yerine burada
-    /// doğrudan (hesapları elle okuyarak) uyguluyoruz — o dahili yol,
-    /// Solana Playground'un kullandığı Anchor sürümüyle uyuşmadığı için
-    /// derlemeyi bozuyordu.
+    /// We implement the logic directly here (reading the accounts by hand)
+    /// instead of relying on Anchor's normally hidden internal
+    /// (`__private::__global::...`) call path — that internal path broke the
+    /// build because it did not match the Anchor version Solana Playground
+    /// uses.
     pub fn fallback<'info>(
         _program_id: &Pubkey,
         accounts: &'info [AccountInfo<'info>],
@@ -152,10 +152,10 @@ pub mod sell_lock {
 
         match instruction {
             TransferHookInstruction::Execute { .. } => {
-                // Token-2022'nin CPI ile ilettiği hesap sırası:
+                // The account order Token-2022 passes through the CPI:
                 // [0] source_token, [1] mint, [2] destination_token,
                 // [3] owner, [4] extra_account_meta_list, [5] launch_config
-                // (bizim tek "extra" hesabımız).
+                // (our single "extra" account).
                 let destination_token_info = accounts
                     .get(2)
                     .ok_or_else(|| error!(SellLockError::InvalidInstruction))?;
@@ -202,8 +202,8 @@ pub struct InitializeExtraAccountMetaList<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: Token-2022 spesifikasyonunun beklediği, seed'lerle türetilen
-    /// PDA; içeriği yalnızca bu program tarafından yazılır.
+    /// CHECK: the seed-derived PDA the Token-2022 specification expects; its
+    /// contents are written only by this program.
     #[account(
         mut,
         seeds = [b"extra-account-metas", mint.key().as_ref()],
@@ -232,8 +232,8 @@ pub struct RegisterLaunch<'info> {
     pub mint: InterfaceAccount<'info, Mint>,
 
     pub pool_vault_a: InterfaceAccount<'info, TokenAccount>,
-    /// CHECK: yalnızca adres olarak saklanıyor, B tarafı genelde SOL/WSOL
-    /// kasası olduğu için ayrı tipte olabilir.
+    /// CHECK: stored only as an address; because the B side is usually a
+    /// SOL/WSOL vault it can be of a different type.
     pub pool_vault_b: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -241,14 +241,14 @@ pub struct RegisterLaunch<'info> {
 
 #[error_code]
 pub enum SellLockError {
-    #[msg("Kilit süresi yalnızca 15 dakika, 1 saat, 5 saat veya 24 saat olabilir.")]
+    #[msg("The lock duration can only be 15 minutes, 1 hour, 5 hours or 24 hours.")]
     InvalidDuration,
-    #[msg("Havuz kasası bu token mint'ine ait değil.")]
+    #[msg("The pool vault does not belong to this token mint.")]
     VaultMintMismatch,
-    #[msg("Satış kilidi süresi henüz dolmadı — bu havuza satış yapılamaz.")]
+    #[msg("The sell lock has not expired yet — you cannot sell into this pool.")]
     SellLocked,
-    #[msg("Extra account meta listesi oluşturulamadı.")]
+    #[msg("The extra account meta list could not be created.")]
     ExtraAccountMetaError,
-    #[msg("Geçersiz transfer hook instruction'ı.")]
+    #[msg("Invalid transfer hook instruction.")]
     InvalidInstruction,
 }

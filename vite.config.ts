@@ -4,13 +4,12 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
-// GitHub Pages statik bir hosting olduğu için gerçek olmayan bir yola
-// (ör. /1, "Stay Tuned" kapısının arkasındaki gizli önizleme yolu) doğrudan
-// gidildiğinde normalde kendi 404 sayfasını döner. Bunun yerine index.html'i
-// dist/404.html olarak da kopyalıyoruz — GitHub Pages, eşleşmeyen her yol
-// için bu dosyayı sunar, böylece uygulamamızın JS'i her yolda yüklenir ve
-// src/main.tsx'teki yönlendirme kararını (Stay Tuned mı, gerçek uygulama mı)
-// tarayıcıda kendisi verir.
+// Because GitHub Pages is static hosting, going directly to a path that does not
+// really exist (/1, say — the hidden preview path behind the "Stay Tuned" gate)
+// normally returns its own 404 page. Instead we also copy index.html to
+// dist/404.html — GitHub Pages serves that file for every unmatched path, so our
+// app's JS loads on every path and makes the routing decision in src/main.tsx
+// (Stay Tuned or the real app) in the browser itself.
 function copyIndexTo404(): Plugin {
   return {
     name: 'copy-index-to-404',
@@ -21,18 +20,18 @@ function copyIndexTo404(): Plugin {
   }
 }
 
-// Bu site kendi alan adında (solofluck.xyz vb.) kök (/) dizininde
-// yayınlanacak. GitHub Pages'te özel alan adı kullanılacaksa public/CNAME
-// dosyasına o alan adını yazın; repo adı altında (ör. /SoLofLuck/) yayınlamak
-// isterseniz base değerini o şekilde güncelleyin.
+// This site will be published at the root (/) of its own domain (solofluck.xyz
+// or similar). If a custom domain is used on GitHub Pages, write that domain
+// into public/CNAME; if you want to publish it under the repository name
+// (/SoLofLuck/, say), update the base value accordingly.
 export default defineConfig({
   base: '/',
   plugins: [
     react(),
     copyIndexTo404(),
-    // Irys/Solana kütüphaneleri tarayıcıda Node'un crypto/stream/buffer gibi
-    // yerleşik modüllerini bekliyor; bunlar olmadan görsel yükleme (Irys)
-    // sırasında runtime hatası oluşur.
+    // The Irys/Solana libraries expect Node's built-in modules (crypto, stream,
+    // buffer and so on) in the browser; without them, image uploads (Irys) fail
+    // with a runtime error.
     nodePolyfills({
       include: ['crypto', 'stream', 'buffer', 'util', 'process'],
       globals: {
@@ -43,11 +42,10 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
-    // @solana/zk-sdk, wasm-bindgen'in "bundler" hedefiyle derlenmiş bir WASM
-    // modülü içeriyor; dev sunucusunun bağımlılık ön-derlemesi (optimizeDeps)
-    // bu WASM'ı yeniden sarmalayınca `__wbindgen_export_2` hatasıyla
-    // çöküyor. Üretim build'inde (vite build) sorun yok; dev'de düzgün
-    // çalışması için ön-derlemeden hariç tutuyoruz.
+    // @solana/zk-sdk contains a WASM module built with wasm-bindgen's "bundler"
+    // target; when the dev server's dependency pre-bundling (optimizeDeps)
+    // re-wraps that WASM, it crashes with `__wbindgen_export_2`. The production
+    // build (vite build) is fine; we exclude it from pre-bundling so dev works.
     exclude: ['@solana/zk-sdk'],
   },
 })

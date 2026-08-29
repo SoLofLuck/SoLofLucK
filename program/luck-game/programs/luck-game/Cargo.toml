@@ -1,14 +1,13 @@
 [package]
 name = "luck-game"
 version = "0.1.0"
-description = "777 temalı zincir üstü şans çarkı: cüzdan başına 3 ücretsiz deneme, sonrası 0.1 SOL; commit-reveal (SlotHashes tabanlı) rastgelelik; kasa (vault) belirli bir eşiği geçince kazanma ihtimali artıyor."
+description = "A 777-themed on-chain wheel of fortune: 3 free spins per wallet, 0.1 SOL after that; commit-reveal randomness (based on SlotHashes); the chance of winning goes up once the vault passes a given threshold."
 edition = "2021"
-# anchor-cli 0.30.1'in build sırasında indirdiği Solana v1.18.17 aracı,
-# rustc 1.75.0 bundle ediyor. Bu alan olmadan modern host cargo,
-# transitive bağımlılıkları (ör. block-buffer) rustc 1.75.0'ın
-# desteklemediği edition2024 gerektiren en yeni sürümlere kilitleyebiliyor.
-# rust-version bildirmek, cargo'nun lockfile üretirken MSRV'ye uygun
-# (daha eski) sürümleri tercih etmesini sağlıyor.
+# The Solana v1.18.17 tool anchor-cli 0.30.1 downloads during the build bundles
+# rustc 1.75.0. Without this field, a modern host cargo can lock transitive
+# dependencies (block-buffer, say) to their newest versions, which require the
+# edition2024 rustc 1.75.0 does not support. Declaring rust-version makes cargo
+# prefer the (older) versions that fit the MSRV when generating the lockfile.
 rust-version = "1.75.0"
 
 [lib]
@@ -24,57 +23,53 @@ idl-build = ["anchor-lang/idl-build"]
 default = []
 
 [dependencies]
-# NOT: sell-lock/locked-pool'daki gibi, bu sürüm numaraları bu ortamda
-# derlenip doğrulanamadı. `anchor build` ilk çalıştığında sürüm
-# uyumsuzluğu çıkarsa `cargo update -p <paket>` ile düzeltilebilir.
+# NOTE: as in sell-lock/locked-pool, these version numbers could not be built
+# and verified in this environment. If a version incompatibility turns up the
+# first time `anchor build` runs, it can be fixed with `cargo update -p <pkg>`.
 anchor-lang = { version = "0.30", features = ["init-if-needed"] }
-# solana-program'ı (transitive olarak zaten anchor-lang'den geliyor)
-# =1.18.17'ye tam sabitlemek denendi ama solana-program'ın o patch'teki
-# kendi zeroize/curve25519-dalek sürüm çakışmasını geri getirdi (bu
-# muhtemelen sonraki patch'lerde ayrıca düzeltilmiş). Onun yerine asıl
-# suçluyu doğrudan sabitliyoruz: solana-program'ın sınırsız `blake3`
-# bağımlılığı cargo'nun en yeni blake3'ü (1.8.6) seçmesine yol açıyordu,
-# o da edition2024 gerektiren en yeni constant_time_eq/cpufeatures'ı
-# istiyordu — bunlar anchor-cli'nin build sırasında kullandığı eski
-# (rustc 1.75.0 bundle eden) Solana v1.18.17 araç zinciriyle
-# derlenemiyor. blake3'ü 1.5.x serisine (2024 başı, edition2021) sabitlemek
-# bu zinciri kesiyor.
+# Pinning solana-program (which already arrives transitively through
+# anchor-lang) exactly to =1.18.17 was tried, but it brought back
+# solana-program's own zeroize/curve25519-dalek version clash in that patch
+# (probably fixed separately in a later patch). Instead we pin the real culprit
+# directly: solana-program's unconstrained `blake3` dependency was making cargo
+# pick the newest blake3 (1.8.6), which in turn wanted the newest
+# constant_time_eq/cpufeatures, which require edition2024 — and those cannot be
+# built with the old Solana v1.18.17 toolchain anchor-cli uses during the build
+# (the one bundling rustc 1.75.0). Pinning blake3 to the 1.5.x series (early
+# 2024, edition2021) cuts that chain.
 blake3 = "~1.5"
-# blake3 1.5.0'ın çektiği arrayref 0.3.10, crates.io'da artık bulunmayan
-# ("no matching package") çok eski bir "proc-macro1" paketine ihtiyaç
-# duyuyor gibi görünüyor — bu blake3/edition2024 sorunuyla ilgisiz, ayrı
-# bir bozuk kayıt. Tek bir sürüme sabitlemek yerine 0.3.10'u dışlayan bir
-# aralık veriyoruz ki cargo yayından kaldırılmamış (yanked) bir sürüm
-# seçebilsin (=0.3.7 denendi ama o da yanked çıktı).
+# arrayref 0.3.10, pulled in by blake3 1.5.0, appears to need a very old
+# "proc-macro1" package that no longer exists on crates.io ("no matching
+# package") — a separate broken record, unrelated to the blake3/edition2024
+# problem. Rather than pinning a single version we give a range that excludes
+# 0.3.10, so cargo can pick a version that has not been yanked (=0.3.7 was tried
+# but turned out to be yanked too).
 arrayref = ">=0.3.5, <0.3.10"
-# Anchor'ın IDL üretim adımı (host toolchain ile, SBF build'inden ayrı
-# çalışıyor) anchor-syn 0.30.1'i derliyor; o da
-# proc_macro2::Span::call_site().source_file() çağırıyor. Bu metod
-# proc-macro2'nin en yeni sürümlerinde kaldırılmış/değişmiş —
-# anchor-syn 0.30.1'in yayınlandığı (Nisan 2024) döneme ait eski bir
-# proc-macro2 sürümüne sabitliyoruz.
+# Anchor's IDL generation step (which runs with the host toolchain, separately
+# from the SBF build) compiles anchor-syn 0.30.1, which calls
+# proc_macro2::Span::call_site().source_file(). That method has been
+# removed/changed in the newest proc-macro2 versions — so we pin an older
+# proc-macro2 from around when anchor-syn 0.30.1 was published (April 2024).
 proc-macro2 = "=1.0.81"
-# proc-macro2'yi eski sürüme sabitlemek, ona bağlı syn'i de eski tutuyor —
-# ama borsh-derive 1.5.2 (anchor-lang'in sınırsız borsh bağımlılığı
-# üzerinden gelen, unconstrained en yeni sürüm), syn'in yalnızca yeni
-# sürümlerinde eklenen TypeParamBound::PreciseCapture varyantını
-# kullanıyor ("no variant ... PreciseCapture found"). borsh'u
-# proc-macro2/syn ikilisinin bu sürümüyle uyumlu daha eski bir borsh-derive
-# sürümüne sabitliyoruz.
+# Pinning proc-macro2 to an older version keeps syn, which depends on it, old
+# too — but borsh-derive 1.5.2 (the unconstrained newest version arriving
+# through anchor-lang's unconstrained borsh dependency) uses syn's
+# TypeParamBound::PreciseCapture variant, which was only added in newer versions
+# ("no variant ... PreciseCapture found"). We pin borsh to an older borsh-derive
+# version compatible with this proc-macro2/syn pair.
 borsh = "=1.5.1"
-# borsh = "=1.5.1" pini yalnızca borsh crate'ini sabitliyor; borsh-derive
-# ayrı bir paket olduğundan cargo onu yine de en yeni 1.5.2'ye
-# çözümlemeye devam ediyordu (aynı PreciseCapture hatası). borsh-derive'ı
-# da doğrudan sabitliyoruz.
+# The borsh = "=1.5.1" pin only fixes the borsh crate; because borsh-derive is a
+# separate package, cargo went on resolving it to the newest 1.5.2 anyway (the
+# same PreciseCapture error). So we pin borsh-derive directly as well.
 borsh-derive = "=1.5.1"
 
-# Testler ZİNCİRE HİÇ BAĞLANMADAN, süreç içinde koşuyor: solana-program-test
-# tüm çalışma zamanını (BanksClient) belleğe kuruyor. luck-distributor'da
-# olduğu gibi buradaki asıl kazanç, zincirin durumunu (slot, SlotHashes
-# sysvar'ı, kasa bakiyesi) İSTEDİĞİMİZ gibi kurabilmek: devnet'te ancak
-# şansa bağlı olarak karşılaşılan durumlar — atlanan bir hedef slot, kasanın
-# jackpot'u karşılayamayacak kadar boş olması, resolve penceresinin
-# kapanması — burada doğrudan kurulup her koşuda sınanabiliyor.
+# The tests run in-process, WITHOUT EVER CONNECTING TO A CHAIN:
+# solana-program-test builds the whole runtime (BanksClient) in memory. As in
+# luck-distributor, the real gain here is being able to set the chain's state
+# (the slot, the SlotHashes sysvar, the vault balance) up EXACTLY AS WE WANT:
+# situations that on devnet only come up by chance — a skipped target slot, a
+# vault too empty to cover the jackpot, the resolve window closing — can be set
+# up directly here and exercised on every run.
 [dev-dependencies]
 solana-program-test = "~1.18"
 solana-sdk = "~1.18"

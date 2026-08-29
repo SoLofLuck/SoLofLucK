@@ -4,9 +4,9 @@
 resolution = true
 skip-lint = false
 
-# Solana Playground üzerinden Devnet'e deploy edilecek (bkz. program/locked-pool/README.md).
-# Mainnet'e henüz deploy edilmedi; oraya deploy edilene kadar aşağıdaki
-# mainnet ID'si yer tutucudur.
+# To be deployed to Devnet through Solana Playground (see
+# program/locked-pool/README.md). It has not been deployed to mainnet yet; until
+# it is, the mainnet ID below is a placeholder.
 [programs.devnet]
 locked_pool = "11111111111111111111111111111111111111112"
 

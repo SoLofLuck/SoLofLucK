@@ -1,43 +1,44 @@
 # ---------------------------------------------------------------------------
-# cargo-deny — tedarik zinciri kapısı
+# cargo-deny — the supply-chain gate
 # ---------------------------------------------------------------------------
-# Bu program para tutuyor. Zincire yüklenen bytecode'un içine giren HER
-# bağımlılık, kodumuz kadar güvenilir olmak zorunda — ve bağımlılıklar kimse
-# bir şey değiştirmeden değişebiliyor.
+# This program holds money. EVERY dependency that goes into the bytecode
+# uploaded to the chain has to be as trustworthy as our own code — and
+# dependencies can change without anybody changing anything.
 #
-# Nitekim luck-distributor'ın ilk deploy'u tam olarak böyle düştü:
-# zeroize_derive 1.5.0 yayınlandı, edition2024 istedi, derleme kırıldı.
-# O bir uyumluluk sorunuydu; aynı kanaldan bir GÜVENLİK açığı da gelebilir
-# ve o zaman kimse hiçbir şey fark etmez.
+# luck-distributor's first deploy failed exactly like that: zeroize_derive 1.5.0
+# was published, it wanted edition2024, and the build broke. That was a
+# compatibility problem; a SECURITY hole can arrive through the same channel, and
+# then nobody would notice a thing.
 
-# NOT: `advisories` kontrolü CI'da BİLGİ AMAÇLI koşuyor, sert kapı değil.
-# Sebebi: cargo-deny (cargo-audit gibi) tüm Cargo.lock'a bakıyor ve
-# Cargo.lock testler için gelen Solana validator/TLS yığınını içeriyor.
-# Oradaki bir bulgu zincire yüklenen programı ilgilendirmiyor.
+# NOTE: the `advisories` check runs in CI FOR INFORMATION, not as a hard gate.
+# The reason: cargo-deny (like cargo-audit) looks at the whole Cargo.lock, and
+# Cargo.lock contains the Solana validator/TLS stack pulled in for the tests. A
+# finding in there does not concern the program uploaded to the chain.
 #
-# Açık kararını `npm run check:onchain-deps` veriyor: SBF derlemesine
-# GERÇEKTEN giren paket kümesini hesaplayıp açıkları ona karşı kontrol
-# ediyor. Sert kapı orası.
+# The decision about vulnerabilities is made by `npm run check:onchain-deps`: it
+# computes the set of packages that REALLY go into the SBF build and checks the
+# advisories against that. That is the hard gate.
 #
-# `sources` ise sert kapı olarak kalıyor — aşağıdaki açıklamaya bakınız.
+# `sources`, on the other hand, stays a hard gate — see the explanation below.
 [advisories]
 version = 2
-# Geri çekilmiş (yanked) bir sürüm, yayıncısının "bunu kullanmayın" dediği
-# sürümdür. Kilit dosyamızda böyle bir sürüm varsa bilmemiz gerekir.
+# A yanked version is one its publisher has said "do not use this" about. If our
+# lockfile contains such a version, we need to know.
 yanked = "deny"
-# Bilerek görmezden gelinen bildirim yok. Buraya bir şey eklenirse, YANINDA
-# NEDEN'İ de yazılmalı — "geçici olarak" eklenmiş sessiz bir istisna,
-# denetimin tamamını işe yaramaz hale getirir.
+# No advisory is deliberately ignored. If anything is added here, the REASON has
+# to be written down NEXT TO IT — a silent exception added "temporarily" makes
+# the whole audit worthless.
 ignore = []
 
 [sources]
-# Tüm bağımlılıklar crates.io'dan gelmeli.
+# Every dependency has to come from crates.io.
 #
-# Bugün durum zaten bu (kilit dosyalarındaki git kaynaklı paket sayısı: 0).
-# Kuralı yazmamızın sebebi geleceği bağlamak: bir git bağımlılığı, işaret
-# ettiği dal ya da commit değiştiğinde derlemeye giren kodu da sessizce
-# değiştirebilir. Kilit dosyası bunu bir dereceye kadar tutar ama kaynağın
-# kendisi (bir kişinin deposu) crates.io'nun yayın disiplininden yoksundur.
+# That is already the case today (the number of git-sourced packages in the
+# lockfiles is 0). The reason we write the rule down is to bind the future: a git
+# dependency can silently change the code that goes into the build whenever the
+# branch or commit it points at moves. A lockfile holds that in check to a
+# degree, but the source itself (one person's repository) lacks crates.io's
+# publishing discipline.
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-git = []
