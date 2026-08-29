@@ -46,9 +46,9 @@ export interface TokenFormData {
   revokeMint: boolean
   revokeFreeze: boolean
   immutable: boolean
-  // true ise mint, Token-2022 + Confidential Transfer uzantısıyla oluşturulur
-  // (bkz. src/lib/confidentialTransfer.ts) — transfer miktarı zincirde şifreli
-  // tutulur. 0 = normal SPL Token.
+  // When true the mint is created with Token-2022 + the Confidential Transfer
+  // extension (see src/lib/confidentialTransfer.ts) — the transfer amount is
+  // kept encrypted on chain. 0 = an ordinary SPL Token.
   confidentialTransferEnabled: boolean
 }
 
@@ -68,9 +68,9 @@ function findMetadataPda(mint: PublicKey): PublicKey {
 }
 
 /**
- * Metadata JSON URI kullanıcı tarafından sağlanmazsa, on-chain metadata'yı
- * yine de name/symbol ile oluşturuyoruz (uri boş string olabilir); cüzdanlar
- * ve explorer'lar name/symbol'ü göstermeye devam eder.
+ * If the user supplies no metadata JSON URI we still create the on-chain
+ * metadata with the name and symbol (uri may be an empty string); wallets and
+ * explorers keep showing the name and symbol.
  */
 export async function createToken(
   connection: Connection,
@@ -79,7 +79,7 @@ export async function createToken(
   onStatus?: (status: string) => void,
 ): Promise<CreateTokenResult> {
   if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error('Cüzdan bağlı değil.')
+    throw new Error('The wallet is not connected.')
   }
 
   const payer = wallet.publicKey
@@ -89,13 +89,13 @@ export async function createToken(
   const decimals = data.decimals
   const supplyRaw = BigInt(data.supply) * BigInt(10) ** BigInt(decimals)
 
-  // Confidential Transfer seçilmişse mint, Token-2022 + o uzantıyla
-  // oluşturulur (bkz. src/lib/confidentialTransfer.ts); aksi halde normal
-  // (legacy) SPL Token programı kullanılır.
+  // If Confidential Transfer was chosen the mint is created with Token-2022 plus
+  // that extension (see src/lib/confidentialTransfer.ts); otherwise the ordinary
+  // (legacy) SPL Token program is used.
   const confidentialTransferEnabled = data.confidentialTransferEnabled
   const tokenProgramId = confidentialTransferEnabled ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
 
-  onStatus?.('Kira (rent) hesaplanıyor...')
+  onStatus?.('Calculating the rent...')
   let mintSpace: number
   let rentLamports: number
   if (confidentialTransferEnabled) {
@@ -117,7 +117,7 @@ export async function createToken(
 
   const tx = new Transaction()
 
-  // 1) Mint hesabını oluştur
+  // 1) Create the mint account
   tx.add(
     SystemProgram.createAccount({
       fromPubkey: payer,
@@ -128,15 +128,15 @@ export async function createToken(
     }),
   )
 
-  // Confidential Transfer uzantısı, mint'in kendisi initialize edilmeden
-  // ÖNCE ayarlanmalıdır (Token-2022 uzantı kuralı).
+  // The Confidential Transfer extension must be set BEFORE the mint itself is
+  // initialized (a Token-2022 extension rule).
   if (confidentialTransferEnabled) {
     tx.add(buildInitializeConfidentialTransferMintIx(mint, payer))
   }
 
   tx.add(createInitializeMintInstruction(mint, decimals, payer, payer, tokenProgramId))
 
-  // 2) Cüzdan için ilişkili token hesabı (ATA) oluştur
+  // 2) Create the associated token account (ATA) for the wallet
   tx.add(
     createAssociatedTokenAccountInstruction(
       payer,
@@ -148,18 +148,18 @@ export async function createToken(
     ),
   )
 
-  // 3) Toplam arzı bastır (mint) ve cüzdana gönder
+  // 3) Mint the total supply and send it to the wallet
   tx.add(createMintToInstruction(mint, associatedTokenAccount, payer, supplyRaw, [], tokenProgramId))
 
-  // 4) Metaplex Token Metadata hesabı (isim/sembol/logo/açıklama on-chain referansı)
+  // 4) The Metaplex Token Metadata account (the on-chain reference for the
+  //    name, symbol, logo and description)
   //
-  // Token-2022 mint'ler (özellikle Confidential Transfer gibi "kısıtlayıcı"
-  // uzantıları olanlar) için eski CreateMetadataAccountV3 talimatı, mint'i
-  // otomatik olarak "Programmable NFT" sanıp reddediyor (0x99 hatası).
-  // Bunun yerine, token programını açıkça belirtebildiğimiz ve token
-  // standardını "Fungible" olarak işaretleyebildiğimiz daha yeni, birleşik
-  // "Create" talimatını kullanıyoruz — bu, hem legacy SPL Token hem
-  // Token-2022 mint'lerle doğru çalışıyor.
+  // For Token-2022 mints — especially those with "restrictive" extensions such as
+  // Confidential Transfer — the old CreateMetadataAccountV3 instruction assumes
+  // the mint is a "Programmable NFT" and rejects it (error 0x99). Instead we use
+  // the newer, unified "Create" instruction, where we can name the token program
+  // explicitly and mark the token standard as "Fungible" — that works correctly
+  // with both legacy SPL Token and Token-2022 mints.
   if (confidentialTransferEnabled) {
     tx.add(
       createCreateInstruction(
@@ -225,19 +225,20 @@ export async function createToken(
     )
   }
 
-  // 5) Opsiyonel: mint yetkisini kaldır (arz sabitlenir, artık yeni token basılamaz)
+  // 5) Optional: revoke the mint authority (the supply is fixed and no new
+  //    tokens can be minted)
   if (data.revokeMint) {
     tx.add(createSetAuthorityInstruction(mint, payer, AuthorityType.MintTokens, null, [], tokenProgramId))
   }
 
-  // 6) Opsiyonel: freeze yetkisini kaldır
+  // 6) Optional: revoke the freeze authority
   if (data.revokeFreeze) {
     tx.add(
       createSetAuthorityInstruction(mint, payer, AuthorityType.FreezeAccount, null, [], tokenProgramId),
     )
   }
 
-  // 7) Opsiyonel hizmet ücreti (yalnızca site sahibi FEE_WALLET tanımladıysa eklenir)
+  // 7) The optional service fee (added only if the site owner has set FEE_WALLET)
   if (FEE_WALLET && FEE_AMOUNT_SOL > 0) {
     tx.add(
       SystemProgram.transfer({
@@ -248,17 +249,17 @@ export async function createToken(
     )
   }
 
-  // Ortak, sertleştirilmiş gönderim yolu (bkz. sendTx.ts). Burada özellikle
-  // kritik: token oluşturma tek seferlik ve GERİ ALINAMAZ bir işlem.
-  // Eskiden düz `sendRawTransaction + confirmTransaction` kullanılıyordu ve
-  // confirmTransaction'ın websocket aboneliği mobilde cüzdan onayı sırasında
-  // sessizce kopabiliyor. İşlem zincire yazılmış olsa bile hata görünüyor,
-  // kullanıcı tekrar deniyor — ve her deneme YENİ bir mint keypair'i
-  // ürettiği için ortaya İKİNCİ BİR TOKEN çıkıyor. Yanlış mint adresini
-  // yayınlamak, $LUCK gibi bir proje için düzeltilmesi çok pahalı bir hata.
+  // The shared, hardened send path (see sendTx.ts). It matters especially here:
+  // creating a token is a one-off and IRREVERSIBLE operation. A plain
+  // `sendRawTransaction + confirmTransaction` was used before, and
+  // confirmTransaction's websocket subscription can silently drop on mobile
+  // during wallet approval. An error is shown even though the transaction landed,
+  // the user retries — and because every attempt generated a NEW mint keypair, A
+  // SECOND TOKEN appeared. Publishing the wrong mint address is a very expensive
+  // mistake to correct for a project like $LUCK.
   //
-  // extraSigners ile mint keypair'i yeniden deneme turlarında da AYNI
-  // kalıyor, yani tekrar denemek yeni bir token doğurmuyor.
+  // With extraSigners the mint keypair stays THE SAME across retry cycles, so
+  // retrying does not give birth to a new token.
   const signature = await sendInstructions(
     connection,
     { publicKey: payer, signTransaction: wallet.signTransaction },

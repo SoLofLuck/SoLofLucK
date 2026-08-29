@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// İşlem gönderme yolu denetimi
+// Transaction send-path check
 // ---------------------------------------------------------------------------
-// Sitedeki her zincir işlemi ortak, sertleştirilmiş yoldan (sendTx.ts →
-// sendInstructions) geçmeli. Düz bir
-// `getLatestBlockhash → sign → sendRawTransaction → confirmTransaction`
-// dizisi mobil cüzdan + paylaşımlı RPC koşullarında güvenilir değil ve en
-// kötü sonucu para kaybı değil ÇİFT ÖDEME:
+// Every on-chain transaction on the site must go through the shared, hardened
+// path (sendTx.ts -> sendInstructions). A plain
+// `getLatestBlockhash -> sign -> sendRawTransaction -> confirmTransaction`
+// sequence is not reliable under mobile-wallet + shared-RPC conditions, and its
+// worst outcome is not lost money but a DOUBLE PAYMENT:
 //
-//   confirmTransaction bir websocket aboneliği açıyor. Mobilde cüzdan onayı
-//   için uygulama değiştirilince tarayıcı sayfayı arka plana alıyor ve
-//   abonelik sessizce kopuyor. Bildirim hiç gelmediği için işlem ZİNCİRE
-//   YAZILMIŞ olsa bile hata görünüyor. Kullanıcının yapacağı ilk şey tekrar
-//   göndermek.
+//   confirmTransaction opens a websocket subscription. On mobile, switching
+//   apps to approve in the wallet backgrounds the page and the subscription
+//   silently drops. Because the notification never arrives, an error is shown
+//   even when the transaction HAS LANDED. The first thing the user will do is
+//   send it again.
 //
-// Bu tam olarak yaşandı (önce yakma akışında, sonra presale'de). sendTx.ts
-// o yüzden yazıldı — ama yazılmış olması, sonradan eklenen bir akışın onu
-// kullanacağını garanti etmiyor. Bu denetim garantiyi veriyor.
+// This happened exactly like that (first in the burn flow, then in the
+// presale). That is why sendTx.ts was written — but its existence does not
+// guarantee that a flow added later will use it. This check provides that
+// guarantee.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -24,81 +25,82 @@ import { fileURLToPath } from 'node:url'
 
 const src = fileURLToPath(new URL('../src', import.meta.url))
 
-// Ortak yolu KURAN dosya ve gerekçeli istisnalar.
-const MUAF = new Map([
-  ['lib/sendTx.ts', 'ortak yolun kendisi'],
+// The file that DEFINES the shared path, plus justified exceptions.
+const EXEMPT = new Map([
+  ['lib/sendTx.ts', 'the shared path itself'],
   [
     'lib/localTestWallet.ts',
-    'yalnızca devnet airdrop onayı — kullanıcı parası taşımıyor ve airdrop ' +
-      'tekrarlanırsa çift ödeme oluşmuyor',
+    'only the devnet airdrop confirmation — it carries no user money, and a ' +
+      'repeated airdrop cannot cause a double payment',
   ],
 ])
 
-const YASAK = [
-  { desen: /\.sendRawTransaction\s*\(/, ad: 'sendRawTransaction' },
-  { desen: /\.confirmTransaction\s*\(/, ad: 'confirmTransaction' },
+const FORBIDDEN = [
+  { pattern: /\.sendRawTransaction\s*\(/, name: 'sendRawTransaction' },
+  { pattern: /\.confirmTransaction\s*\(/, name: 'confirmTransaction' },
 ]
 
-function* dosyalar(dizin) {
-  for (const ad of readdirSync(dizin)) {
-    const yol = join(dizin, ad)
-    if (statSync(yol).isDirectory()) yield* dosyalar(yol)
-    else if (/\.(ts|tsx)$/.test(ad)) yield yol
+function* files(dir) {
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name)
+    if (statSync(path).isDirectory()) yield* files(path)
+    else if (/\.(ts|tsx)$/.test(name)) yield path
   }
 }
 
-const bulgular = []
-const satirMuafiyetleri = []
-let taranan = 0
+const findings = []
+const lineExemptions = []
+let scanned = 0
 
-for (const yol of dosyalar(src)) {
-  const goreli = yol.slice(src.length + 1)
-  if (MUAF.has(goreli)) continue
-  taranan++
-  const satirlar = readFileSync(yol, 'utf8').split('\n')
-  for (let i = 0; i < satirlar.length; i++) {
-    const satir = satirlar[i]
-    // Yorum satırlarını atlıyoruz: bu dosyalarda düzeltmenin GEREKÇESİ
-    // yorumlarda anlatılıyor ve o yorumlar yasak isimleri içeriyor.
-    if (/^\s*(\/\/|\*|\/\*)/.test(satir)) continue
-    for (const { desen, ad } of YASAK) {
-      if (!desen.test(satir)) continue
-      // Satır düzeyinde, GEREKÇELİ istisna. Dosyanın tamamını muaf tutmak
-      // yerine tek satırı muaf tutuyoruz ki aynı dosyaya sonradan eklenen
-      // bir akış yine yakalansın.
+for (const path of files(src)) {
+  const rel = path.slice(src.length + 1)
+  if (EXEMPT.has(rel)) continue
+  scanned++
+  const lines = readFileSync(path, 'utf8').split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    // Comment lines are skipped: in these files the REASON for the fix is
+    // explained in comments, and those comments contain the forbidden names.
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue
+    for (const { pattern, name } of FORBIDDEN) {
+      if (!pattern.test(line)) continue
+      // A line-level, JUSTIFIED exception. Rather than exempting the whole
+      // file we exempt the single line, so that a flow added to the same file
+      // later is still caught.
       //
-      // İşaret, hemen ÖNCEKİ kesintisiz yorum bloğunda aranıyor: gerekçe
-      // genelde birkaç satır sürüyor ve sabit bir pencere onu kaçırırdı.
-      let bas = i
-      while (bas > 0 && /^\s*(\/\/|\*|\/\*)/.test(satirlar[bas - 1])) bas--
-      const oncekiler = satirlar.slice(bas, i).join('\n')
-      const muafiyet = oncekiler.match(/tx-path-muaf:\s*(.+)/)
-      if (muafiyet) {
-        satirMuafiyetleri.push({ dosya: goreli, satir: i + 1, ad, gerekce: muafiyet[1].trim() })
+      // The marker is looked for in the uninterrupted comment block
+      // immediately ABOVE: the justification usually runs to several lines and
+      // a fixed window would miss it.
+      let start = i
+      while (start > 0 && /^\s*(\/\/|\*|\/\*)/.test(lines[start - 1])) start--
+      const preceding = lines.slice(start, i).join('\n')
+      const exemption = preceding.match(/tx-path-exempt:\s*(.+)/)
+      if (exemption) {
+        lineExemptions.push({ file: rel, line: i + 1, name, reason: exemption[1].trim() })
         continue
       }
-      bulgular.push({ dosya: goreli, satir: i + 1, ad, metin: satir.trim() })
+      findings.push({ file: rel, line: i + 1, name, text: line.trim() })
     }
   }
 }
 
-console.log(`${taranan} dosya tarandı, ${MUAF.size} dosya muaf.`)
-for (const [dosya, gerekce] of MUAF) console.log(`  muaf: ${dosya} — ${gerekce}`)
-for (const m of satirMuafiyetleri) {
-  console.log(`  muaf: ${m.dosya}:${m.satir} (${m.ad}) — ${m.gerekce}`)
+console.log(`${scanned} file(s) scanned, ${EXEMPT.size} file(s) exempt.`)
+for (const [file, reason] of EXEMPT) console.log(`  exempt: ${file} — ${reason}`)
+for (const e of lineExemptions) {
+  console.log(`  exempt: ${e.file}:${e.line} (${e.name}) — ${e.reason}`)
 }
 
-if (bulgular.length > 0) {
-  console.error('\nOrtak gönderim yolunu atlayan kod bulundu:')
-  for (const b of bulgular) {
-    console.error(`  ${b.dosya}:${b.satir}  ${b.ad}\n      ${b.metin}`)
+if (findings.length > 0) {
+  console.error('\nFound code that bypasses the shared send path:')
+  for (const f of findings) {
+    console.error(`  ${f.file}:${f.line}  ${f.name}\n      ${f.text}`)
   }
   console.error(
-    '\nBu akışlar sendTx.ts\'teki sendInstructions üzerinden gitmeli. Aksi halde\n' +
-      'mobilde zincire yazılmış bir işlem "başarısız" görünür ve kullanıcı\n' +
-      'tekrar ödeme yapar. Gerçekten istisna gerekiyorsa MUAF listesine\n' +
-      'GEREKÇESİYLE eklenmeli.',
+    '\nThese flows must go through sendInstructions in sendTx.ts. Otherwise a\n' +
+      'transaction that landed on chain looks "failed" on mobile and the user\n' +
+      'pays again. If an exception is genuinely needed, it has to be added to\n' +
+      'the EXEMPT list WITH ITS REASON.',
   )
   process.exit(1)
 }
-console.log('\nTüm zincir işlemleri ortak, sertleştirilmiş yoldan geçiyor.')
+console.log('\nEvery on-chain transaction goes through the shared, hardened path.')

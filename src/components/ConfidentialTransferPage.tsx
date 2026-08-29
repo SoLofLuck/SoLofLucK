@@ -33,9 +33,9 @@ interface Props {
   network: NetworkId
 }
 
-// Bir hesap yapılandırıldıktan sonra, `ApplyPendingBalance` çağrılmadan önce
-// kabul edilebilecek azami bekleyen (pending) yatırım/transfer sayısı.
-// Yüksek bir sabit seçiyoruz; asıl sınır zincirde protokol tarafından kontrol ediliyor.
+// The maximum number of pending deposits/transfers that can be accepted after an
+// account is configured and before `ApplyPendingBalance` is called. We pick a
+// high constant; the real limit is enforced on chain by the protocol.
 const MAX_PENDING_BALANCE_CREDIT_COUNTER = 65536n
 
 function fmtAmount(raw: bigint, decimals: number): string {
@@ -48,9 +48,9 @@ async function sendTx(
   tx: Transaction,
   extraSigners: Keypair[] = [],
 ): Promise<string> {
-  if (!wallet.publicKey || !wallet.signTransaction) throw new Error('Cüzdan bağlı değil.')
-  // Ortak, sertleştirilmiş yol (bkz. lib/sendTx.ts): öncelik ücreti,
-  // periyodik yeniden yayın, HTTP yoklamasıyla onay ve zaman aşımları.
+  if (!wallet.publicKey || !wallet.signTransaction) throw new Error('The wallet is not connected.')
+  // The shared, hardened path (see lib/sendTx.ts): a priority fee, periodic
+  // rebroadcast, confirmation by HTTP polling, and timeouts.
   return sendInstructions(
     connection,
     { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction },
@@ -61,15 +61,15 @@ async function sendTx(
 }
 
 /**
- * Gizli transfer planındaki (birden çok transaction) tüm adımları gönderir.
- * Cüzdan `signAllTransactions` destekliyorsa (Phantom dahil çoğu cüzdan),
- * TÜM transaction'lar TEK bir cüzdan onayında imzalanır — kullanıcı art
- * arda birden çok kez onay vermek zorunda kalmaz. Desteklemeyen cüzdanlarda
- * (nadir), her adım için ayrı ayrı imza istenir.
+ * Sends every step of the confidential-transfer plan (several transactions).
+ * If the wallet supports `signAllTransactions` (most wallets do, Phantom
+ * included), ALL the transactions are signed under ONE wallet approval — the
+ * user does not have to approve several times in a row. On wallets that do not
+ * support it (rare), a signature is requested for each step separately.
  *
- * Transaction'lar aynı blockhash'i paylaşır ve sırayla (bir öncekinin
- * onaylanmasını bekleyerek) gönderilir — çünkü sonraki adımlar bir öncekinin
- * zincirde oluşturduğu hesaplara (proof context hesapları) referans verir.
+ * The transactions share the same blockhash and are sent in order (waiting for
+ * the previous one to confirm), because later steps reference accounts the
+ * earlier ones created on chain (the proof context accounts).
  */
 async function sendConfidentialTransferPlan(
   connection: Connection,
@@ -77,7 +77,7 @@ async function sendConfidentialTransferPlan(
   plan: ConfidentialTransferPlan,
   onStatus: (msg: string) => void,
 ): Promise<string> {
-  if (!wallet.publicKey) throw new Error('Cüzdan bağlı değil.')
+  if (!wallet.publicKey) throw new Error('The wallet is not connected.')
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
 
   const txs = plan.steps.map((step) => {
@@ -90,57 +90,58 @@ async function sendConfidentialTransferPlan(
 
   let signedTxs: Transaction[]
   if (wallet.signAllTransactions) {
-    onStatus('Cüzdanınızda onay bekleniyor...')
+    onStatus('Waiting for approval in your wallet...')
     signedTxs = await wallet.signAllTransactions(txs)
   } else {
-    if (!wallet.signTransaction) throw new Error('Cüzdan işlem imzalamayı desteklemiyor.')
+    if (!wallet.signTransaction) throw new Error('The wallet does not support signing transactions.')
     signedTxs = []
     for (let i = 0; i < txs.length; i++) {
-      onStatus(`Adım ${i + 1}/${txs.length}: cüzdan onayı bekleniyor...`)
+      onStatus(`Step ${i + 1}/${txs.length}: waiting for wallet approval...`)
       signedTxs.push(await wallet.signTransaction(txs[i]))
     }
   }
 
   let lastSig = ''
   for (let i = 0; i < signedTxs.length; i++) {
-    onStatus(`Adım ${i + 1}/${signedTxs.length}: ${plan.steps[i].label}...`)
+    onStatus(`Step ${i + 1}/${signedTxs.length}: ${plan.steps[i].label}...`)
     const raw = signedTxs[i].serialize()
-    // tx-path-muaf: adımların tamamı TEK cüzdan onayında (signAllTransactions)
-    // imzalanıp ortak blockhash paylaşıyor; sendInstructions tek işlem modeli
-    // olduğu için her adım ayrı onay isterdi. Onay yine ortak HTTP
-    // yoklamasından (confirmBySignature) geçiyor — asıl mobil riski olan
-    // websocket aboneliği burada da kullanılmıyor.
+    // tx-path-exempt: every step is signed under ONE wallet approval
+    // (signAllTransactions) and shares a common blockhash; because
+    // sendInstructions is a single-transaction model, it would ask for a
+    // separate approval per step. Confirmation still goes through the shared
+    // HTTP polling (confirmBySignature) — the websocket subscription, which is
+    // the real mobile risk, is not used here either.
     const signature = await connection.sendRawTransaction(raw, {
       skipPreflight: true,
       maxRetries: 5,
     })
-    // Onay için `confirmTransaction` DEĞİL, ortak HTTP yoklaması
-    // kullanılıyor (bkz. lib/sendTx.ts). confirmTransaction bir websocket
-    // aboneliği açıyor ve mobilde cüzdan onayı için uygulama
-    // değiştirildiğinde bu abonelik sessizce kopuyor — işlem zincire
-    // yazılmış olsa bile hata görünüyordu. Yoklama ayrıca işlemi periyodik
-    // olarak yeniden yayınlıyor.
+    // Confirmation uses the shared HTTP polling, NOT `confirmTransaction`
+    // (see lib/sendTx.ts). confirmTransaction opens a websocket subscription,
+    // and on mobile, when the user switches apps to approve in the wallet,
+    // that subscription silently drops — an error was shown even when the
+    // transaction had landed. The polling also rebroadcasts the transaction
+    // periodically.
     //
-    // Bu akış sendInstructions'a tümüyle taşınamıyor: adımların tamamı
-    // TEK cüzdan onayında (signAllTransactions) imzalanıyor ve ortak bir
-    // blockhash paylaşıyor. sendInstructions tek işlem modeli olduğu için
-    // her adım ayrı bir onay isterdi.
+    // This flow cannot be moved to sendInstructions wholesale: every step is
+    // signed under ONE wallet approval (signAllTransactions) and shares a
+    // common blockhash. Because sendInstructions is a single-transaction
+    // model, it would ask for a separate approval per step.
     const outcome = await confirmBySignature(
       connection,
       signature,
       raw,
       lastValidBlockHeight,
-      (s) => onStatus(`Adım ${i + 1}/${signedTxs.length}: ${s}`),
+      (s) => onStatus(`Step ${i + 1}/${signedTxs.length}: ${s}`),
     )
     if (outcome.kind === 'failed') {
       throw new Error(
-        `Adım ${i + 1} zincirde başarısız oldu: ${JSON.stringify(outcome.err)}`,
+        `Step ${i + 1} failed on chain: ${JSON.stringify(outcome.err)}`,
       )
     }
     if (outcome.kind === 'expired') {
       throw new Error(
-        `Adım ${i + 1} zamanında zincire yazılmadı. Önceki adımlar tamamlandıysa ` +
-          'işlemi baştan başlatmadan önce bakiyenizi kontrol edin.',
+        `Step ${i + 1} did not land in time. If the earlier steps completed, check ` +
+          'your balance before starting the operation over.',
       )
     }
     lastSig = signature
@@ -149,12 +150,12 @@ async function sendConfidentialTransferPlan(
 }
 
 /**
- * Alıcı tarafı için bağımsız bir bölüm: birinden gizlice token almaya
- * hazırlanan biri, KENDİ cüzdanıyla bu bölümden hesabını hazırlar. Aşağıdaki
- * "Gönderici" akışından kasıtlı olarak ayrı tutuluyor — daha önce ikisi aynı
- * state'i paylaştığı için (Coin Seç → Coin'i Kullan → koşullu Hesabı
- * Yapılandır → hemen ardından bir "Gönder" formu) yalnızca almak isteyen
- * kullanıcılar için kafa karıştırıcıydı.
+ * A standalone section for the receiving side: someone preparing to receive
+ * tokens confidentially sets up their account here with THEIR OWN wallet. It is
+ * deliberately kept apart from the "Sender" flow below — the two used to share
+ * the same state (Select Coin -> Use Coin -> a conditional Configure Account ->
+ * immediately followed by a "Send" form), which was confusing for users who only
+ * wanted to receive.
  */
 function RecipientAccountSetup({ network }: { network: NetworkId }) {
   const { connection } = useConnection()
@@ -194,12 +195,12 @@ function RecipientAccountSetup({ network }: { network: NetworkId }) {
 
   async function handleSetup() {
     if (!wallet.connected || !wallet.publicKey) {
-      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      setError('Connect your wallet first to continue.')
       return
     }
     const addr = mintAddr.trim()
     if (!addr) {
-      setError('Bir coin seçin ya da mint adresi girin.')
+      setError('Select a coin or enter a mint address.')
       return
     }
     setBusy(true)
@@ -208,7 +209,7 @@ function RecipientAccountSetup({ network }: { network: NetworkId }) {
       const mintInfo = await getMintInfo(connection, addr)
       if (mintInfo.programId !== TOKEN_2022_PROGRAM_ID.toBase58()) {
         throw new Error(
-          'Bu mint Token-2022 değil. Gizli miktar transferi yalnızca "Gizli Miktar Transferi" seçeneğiyle oluşturulmuş token\'larda çalışır.',
+          'This mint is not Token-2022. Confidential amount transfers only work with tokens created using the "Confidential Amount Transfer" option.',
         )
       }
       const mint = new PublicKey(addr)
@@ -253,7 +254,7 @@ function RecipientAccountSetup({ network }: { network: NetworkId }) {
       setConfigured(true)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Hesap yapılandırılırken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while configuring the account.')
     } finally {
       setBusy(false)
     }
@@ -261,18 +262,18 @@ function RecipientAccountSetup({ network }: { network: NetworkId }) {
 
   return (
     <div className="pool-manage__section" style={{ marginTop: 20 }}>
-      <div className="pool-manage__section-title">Alıcı: Hesap Yapılandırma</div>
+      <div className="pool-manage__section-title">Receiver: Configure Account</div>
       <p className="subtab-desc">
-        Birinden gizlice token almaya hazırlanıyorsanız, önce KENDİ cüzdanınızla bu token için
-        hesabınızı hazırlamanız gerekir. Alacağınız token'ı seçip "Hesabı Yapılandır"a basmanız
-        yeterli — miktar belirtmenize ya da bu token'dan sahip olmanıza gerek yok.
+        If you are preparing to receive tokens confidentially, you first have to set up your
+        account for that token with YOUR OWN wallet. Just select the token you will receive and
+        press "Configure Account" — you do not need to enter an amount or already hold the token.
       </p>
       <CoinPicker token2022Only explorerCluster={NETWORKS[network].explorerCluster} onSelect={selectMint} />
       {mintAddr && (
         <div className="selected-coin" style={{ marginBottom: 12 }}>
           <TokenIcon image={meta?.image} symbol={meta?.symbol} size={28} />
           <div className="selected-coin__info">
-            <span className="selected-coin__symbol">{meta ? `${meta.name} (${meta.symbol})` : 'Seçili Coin'}</span>
+            <span className="selected-coin__symbol">{meta ? `${meta.name} (${meta.symbol})` : 'Selected Coin'}</span>
             <code className="selected-coin__addr">{mintAddr}</code>
           </div>
         </div>
@@ -280,12 +281,12 @@ function RecipientAccountSetup({ network }: { network: NetworkId }) {
       {error && <div className="alert alert--error">{error}</div>}
       {configured ? (
         <div className="alert alert--info">
-          ✅ Hesabınız gizli transfer almaya hazır.{txSig && <> İşlem: <code>{txSig}</code></>}
+          ✅ Your account is ready to receive confidential transfers.{txSig && <> Transaction: <code>{txSig}</code></>}
         </div>
       ) : (
         mintAddr && (
           <button type="button" className="btn btn--primary" onClick={handleSetup} disabled={busy}>
-            {busy ? 'Yapılandırılıyor...' : 'Hesabı Yapılandır'}
+            {busy ? 'Configuring...' : 'Configure Account'}
           </button>
         )
       )}
@@ -300,7 +301,7 @@ export function ConfidentialTransferPage({ network }: Props) {
   const [mintAddr, setMintAddr] = useState('')
   const [selectedMeta, setSelectedMeta] = useState<TokenMeta | null>(null)
 
-  // Seçilen coin için hesap durumu
+  // The account status for the selected coin
   const [decimals, setDecimals] = useState<number | null>(null)
   const [tokenAccount, setTokenAccount] = useState<PublicKey | null>(null)
   const [keys, setKeys] = useState<DerivedConfidentialKeys | null>(null)
@@ -381,12 +382,12 @@ export function ConfidentialTransferPage({ network }: Props) {
     e.preventDefault()
     setError('')
     if (!wallet.connected || !wallet.publicKey) {
-      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      setError('Connect your wallet first to continue.')
       return
     }
     const addr = mintAddr.trim()
     if (!addr) {
-      setError('Bir coin seçin ya da mint adresi girin.')
+      setError('Select a coin or enter a mint address.')
       return
     }
     setCheckingAccount(true)
@@ -394,7 +395,7 @@ export function ConfidentialTransferPage({ network }: Props) {
       const mintInfo = await getMintInfo(connection, addr)
       if (mintInfo.programId !== TOKEN_2022_PROGRAM_ID.toBase58()) {
         throw new Error(
-          'Bu mint Token-2022 değil. Gizli miktar transferi yalnızca "Gizli Miktar Transferi" seçeneğiyle oluşturulmuş token\'larda çalışır.',
+          'This mint is not Token-2022. Confidential amount transfers only work with tokens created using the "Confidential Amount Transfer" option.',
         )
       }
       setDecimals(mintInfo.decimals)
@@ -409,7 +410,7 @@ export function ConfidentialTransferPage({ network }: Props) {
       await refreshBalance(ata, derivedKeys)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Hesap kontrol edilirken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while checking the account.')
     } finally {
       setCheckingAccount(false)
     }
@@ -421,9 +422,9 @@ export function ConfidentialTransferPage({ network }: Props) {
     setConfigureBusy(true)
     try {
       const mint = new PublicKey(mintAddr.trim())
-      // "idempotent" versiyon: hesap zaten varsa hiçbir şey yapmaz, hata
-      // vermez — bu token'dan daha önce hiç sahip olmamış biri (ör. sadece
-      // gizlice almaya hazırlanan bir alıcı) için de hesabı burada oluşturur.
+      // The "idempotent" version: if the account already exists it does nothing
+      // and does not error — and for someone who has never held this token (e.g.
+      // a receiver only preparing to receive) it creates the account here.
       const createAtaIx = createAssociatedTokenAccountIdempotentInstruction(
         wallet.publicKey,
         tokenAccount,
@@ -443,7 +444,7 @@ export function ConfidentialTransferPage({ network }: Props) {
         decryptableZeroBalance,
         MAX_PENDING_BALANCE_CREDIT_COUNTER,
       )
-      // Sıra önemli: proofIx, configureIx'ten hemen önce olmalı.
+      // The order matters: proofIx must come immediately before configureIx.
       const tx = new Transaction().add(createAtaIx, reallocIx, proofIx, configureIx)
       const sig = await sendTx(connection, wallet, tx)
       setConfigureTx(sig)
@@ -451,7 +452,7 @@ export function ConfidentialTransferPage({ network }: Props) {
       setCurrentBalance(0n)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Hesap yapılandırılırken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while configuring the account.')
     } finally {
       setConfigureBusy(false)
     }
@@ -461,7 +462,7 @@ export function ConfidentialTransferPage({ network }: Props) {
     if (!keys || !tokenAccount || decimals === null || !wallet.publicKey) return
     setError('')
     if (!depositAmount || Number(depositAmount) <= 0) {
-      setError('Geçerli bir miktar girin.')
+      setError('Enter a valid amount.')
       return
     }
     setDepositBusy(true)
@@ -474,7 +475,7 @@ export function ConfidentialTransferPage({ network }: Props) {
       setDepositTx(sig)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Yatırma işlemi başarısız oldu.')
+      setError(err instanceof Error ? err.message : 'The deposit failed.')
     } finally {
       setDepositBusy(false)
     }
@@ -503,7 +504,7 @@ export function ConfidentialTransferPage({ network }: Props) {
       setCurrentBalance(newBalance)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Bekleyen bakiye uygulanırken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while applying the pending balance.')
     } finally {
       setApplyBusy(false)
     }
@@ -514,14 +515,14 @@ export function ConfidentialTransferPage({ network }: Props) {
     if (!keys || !tokenAccount || decimals === null || !wallet.publicKey) return
     setError('')
     if (!sendAmount || Number(sendAmount) <= 0) {
-      setError('Geçerli bir miktar girin.')
+      setError('Enter a valid amount.')
       return
     }
     let recipientPubkey: PublicKey
     try {
       recipientPubkey = new PublicKey(recipientAddr.trim())
     } catch {
-      setError('Geçersiz alıcı cüzdan adresi.')
+      setError('Invalid recipient wallet address.')
       return
     }
     setSendBusy(true)
@@ -534,17 +535,17 @@ export function ConfidentialTransferPage({ network }: Props) {
         recipientState = await getConfidentialAccountState(connection, recipientAta)
       } catch {
         throw new Error(
-          'Alıcının bu token için hesabı yok ya da gizli transfere yapılandırılmamış. Alıcının önce kendi cüzdanıyla bu mint adresi için "Coin\'i Kullan" + "Hesabı Yapılandır" adımlarını çalıştırması gerekiyor.',
+          'The recipient has no account for this token, or it is not configured for confidential transfers. They first have to run the "Use Coin" + "Configure Account" steps for this mint address with their own wallet.',
         )
       }
       if (!recipientState.approved) {
-        throw new Error('Alıcının hesabı henüz onaylanmamış.')
+        throw new Error('The recipient\'s account has not been approved yet.')
       }
 
       const sourceState = await getConfidentialAccountState(connection, tokenAccount)
       const amountRaw = BigInt(Math.round(Number(sendAmount) * 10 ** decimals))
 
-      setSendStatus('Gizli transfer ispatları hazırlanıyor...')
+      setSendStatus('Preparing the confidential-transfer proofs...')
       const plan = await planConfidentialTransfer(
         connection,
         tokenAccount,
@@ -558,9 +559,9 @@ export function ConfidentialTransferPage({ network }: Props) {
         amountRaw,
       )
 
-      // Her ispat kendi transaction'ında doğrulanıyor (bkz. planConfidentialTransfer'daki
-      // açıklama — hepsi tek transaction'a sığmıyor) — ama hepsi TEK bir cüzdan
-      // onayında imzalanıyor (bkz. sendConfidentialTransferPlan).
+      // Each proof is verified in its own transaction (see the note in
+      // planConfidentialTransfer — they do not all fit in one) — but they are all
+      // signed under ONE wallet approval (see sendConfidentialTransferPlan).
       const lastSig = await sendConfidentialTransferPlan(connection, wallet, plan, setSendStatus)
 
       setSendTxSig(lastSig)
@@ -569,7 +570,7 @@ export function ConfidentialTransferPage({ network }: Props) {
       setSendStatus('')
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Gizli transfer başarısız oldu.')
+      setError(err instanceof Error ? err.message : 'The confidential transfer failed.')
       setSendStatus('')
     } finally {
       setSendBusy(false)
@@ -580,15 +581,15 @@ export function ConfidentialTransferPage({ network }: Props) {
     <div className="token-form">
       <h2>Gizli Miktar Transferi (Confidential Transfer)</h2>
       <p className="subtab-desc">
-        Token-2022'nin resmi <strong>Confidential Transfer</strong> uzantısını kullanır: transfer
-        edilen MİKTAR zincirde şifreli tutulur, Solscan gibi gezginlerde görünmez.{' '}
-        <strong>Gönderen/alıcı adresleri her zaman açıktır</strong> — bu, kimlik gizleyen bir mixer
-        değildir, sadece tutarı gizler.
+        Uses Token-2022's official <strong>Confidential Transfer</strong> extension: the AMOUNT
+        transferred is kept encrypted on chain and is not visible on explorers such as Solscan.{' '}
+        <strong>The sender and recipient addresses are always public</strong> — this is not an
+        identity-hiding mixer, it only hides the amount.
       </p>
       <div className="alert alert--warning">
-        ⚠️ Yalnızca <strong>Devnet</strong>'te, "Gizli Miktar Transferi" seçeneğiyle oluşturulmuş bir
-        token ile test edin. Gizli göndermek istediğiniz alıcının da, aynı token için önceden bu
-        sayfadan kendi hesabını yapılandırmış olması gerekir.
+        ⚠️ Test only on <strong>Devnet</strong>, with a token created using the "Confidential Amount
+        Transfer" option. The recipient you want to send to confidentially must also have configured
+        their own account for the same token from this page beforehand.
       </div>
 
       <RecipientAccountSetup network={network} />
@@ -597,10 +598,10 @@ export function ConfidentialTransferPage({ network }: Props) {
 
       {!mintAddr && (
         <div className="pool-manage__section" style={{ marginTop: 20 }}>
-          <div className="pool-manage__section-title">Gönderici: Coin Seç</div>
+          <div className="pool-manage__section-title">Sender: Select Coin</div>
           <p className="subtab-desc">
-            Göndermek istediğiniz coin'i seçin — bu, halihazırda bu token'dan sahip olduğunuz ve
-            gizlice birine göndermek istediğiniz durumdur.
+            Select the coin you want to send — this is the case where you already hold the token and
+            want to send it to someone confidentially.
           </p>
           <CoinPicker
             token2022Only
@@ -616,7 +617,7 @@ export function ConfidentialTransferPage({ network }: Props) {
             <TokenIcon image={selectedMeta?.image} symbol={selectedMeta?.symbol} size={28} />
             <div className="selected-coin__info">
               <span className="selected-coin__symbol">
-                {selectedMeta ? `${selectedMeta.name} (${selectedMeta.symbol})` : 'Seçili Coin'}
+                {selectedMeta ? `${selectedMeta.name} (${selectedMeta.symbol})` : 'Selected Coin'}
               </span>
               <code className="selected-coin__addr">{mintAddr}</code>
             </div>
@@ -628,14 +629,14 @@ export function ConfidentialTransferPage({ network }: Props) {
                 setMintAddr('')
               }}
             >
-              Değiştir
+              Change
             </button>
           </div>
 
           {!keys && (
             <form onSubmit={handleCheckAccount} style={{ marginTop: 12 }}>
               <button type="submit" className="btn btn--primary" disabled={checkingAccount}>
-                {checkingAccount ? 'Kontrol Ediliyor...' : "Coin'i Kullan"}
+                {checkingAccount ? 'Checking...' : 'Use Coin'}
               </button>
             </form>
           )}
@@ -650,15 +651,15 @@ export function ConfidentialTransferPage({ network }: Props) {
 
       {keys && tokenAccount && accountConfigured === false && (
         <div className="pool-manage__section" style={{ marginTop: 20 }}>
-          <div className="pool-manage__section-title">Hesabı Yapılandır</div>
+          <div className="pool-manage__section-title">Configure Account</div>
           <p className="subtab-desc">
-            Bu token hesabınız henüz gizli transfer için yapılandırılmamış. Devam etmeden önce bir
-            kerelik yapılandırma gerekiyor.
+            Your account for this token is not configured for confidential transfers yet. A one-off
+            configuration is needed before you can continue.
           </p>
           <button type="button" className="btn btn--primary" onClick={handleConfigure} disabled={configureBusy}>
-            {configureBusy ? 'Yapılandırılıyor...' : 'Hesabı Yapılandır'}
+            {configureBusy ? 'Configuring...' : 'Configure Account'}
           </button>
-          {configureTx && <div className="alert alert--info">Yapılandırıldı ✓ İşlem: {configureTx}</div>}
+          {configureTx && <div className="alert alert--info">Configured ✓ Transaction: {configureTx}</div>}
         </div>
       )}
 
@@ -675,15 +676,15 @@ export function ConfidentialTransferPage({ network }: Props) {
           </div>
 
           <form onSubmit={handleSend} className="pool-manage__section" style={{ marginTop: 20 }}>
-            <div className="pool-manage__section-title">Gizlice Gönder</div>
+            <div className="pool-manage__section-title">Send Confidentially</div>
             <p className="subtab-desc">
-              Alıcının, bu token için hesabını daha önce bu sayfadan yapılandırmış olması gerekir.
+              The recipient must have configured their account for this token from this page beforehand.
             </p>
             <label className="field">
-              <span>Alıcı Cüzdan Adresi</span>
+              <span>Recipient Wallet Address</span>
               <input
                 type="text"
-                placeholder="Alıcının Solana cüzdan adresi"
+                placeholder="The recipient's Solana wallet address"
                 value={recipientAddr}
                 onChange={(e) => setRecipientAddr(e.target.value)}
               />
@@ -692,36 +693,37 @@ export function ConfidentialTransferPage({ network }: Props) {
               <input
                 type="text"
                 inputMode="decimal"
-                placeholder="Gönderilecek miktar"
+                placeholder="The amount to send"
                 value={sendAmount}
                 onChange={(e) => setSendAmount(e.target.value.replace(/[^\d.]/g, ''))}
               />
             </div>
             <p className="subtab-desc">
-              Bu işlem, Solana'nın işlem boyutu sınırı nedeniyle arka planda birkaç ayrı
-              transaction'dan oluşur — çoğu cüzdanda (Phantom dahil) tek bir onay yeterlidir.
+              Because of Solana's transaction size limit this operation consists of several separate
+              transactions behind the scenes — on most wallets (Phantom included) a single approval is
+              enough.
             </p>
             <button type="submit" className="btn btn--primary pool-manage__action-btn" disabled={sendBusy}>
-              {sendBusy ? 'Gönderiliyor...' : 'Gizlice Gönder'}
+              {sendBusy ? 'Sending...' : 'Send Confidentially'}
             </button>
             {sendStatus && <div className="alert alert--info" style={{ marginTop: 12 }}>{sendStatus}</div>}
             {sendTxSig && (
               <div className="alert alert--info" style={{ marginTop: 12 }}>
-                🔒 Gönderildi. İşlem: <code>{sendTxSig}</code>
+                🔒 Sent. Transaction: <code>{sendTxSig}</code>
               </div>
             )}
           </form>
 
           <div className="pool-manage__section" style={{ marginTop: 20 }}>
-            <div className="pool-manage__section-title">Herkese Açık Bakiyeden Yatır</div>
+            <div className="pool-manage__section-title">Deposit From Your Public Balance</div>
             <p className="subtab-desc">
-              Normal (herkese açık) bakiyenizden gizli bakiyeye ek yatırım yapmak isterseniz.
+              If you want to move more from your ordinary (public) balance into your confidential balance.
             </p>
             <div className="pool-manage__amount-row">
               <input
                 type="text"
                 inputMode="decimal"
-                placeholder="ör. 100"
+                placeholder="e.g. 100"
                 value={depositAmount}
                 onChange={(e) => setDepositAmount(e.target.value.replace(/[^\d.]/g, ''))}
               />
@@ -732,7 +734,7 @@ export function ConfidentialTransferPage({ network }: Props) {
               onClick={handleDeposit}
               disabled={depositBusy || !!depositTx}
             >
-              {depositBusy ? 'Yatırılıyor...' : depositTx ? 'Yatırıldı ✓' : 'Yatır'}
+              {depositBusy ? 'Depositing...' : depositTx ? 'Deposited ✓' : 'Deposit'}
             </button>
             {depositTx && (
               <button
@@ -742,7 +744,7 @@ export function ConfidentialTransferPage({ network }: Props) {
                 disabled={applyBusy || !!applyTx}
                 style={{ marginTop: 8 }}
               >
-                {applyBusy ? 'Uygulanıyor...' : applyTx ? 'Bekleyen Bakiye Uygulandı ✓' : 'Bekleyen Bakiyeyi Uygula'}
+                {applyBusy ? 'Applying...' : applyTx ? 'Pending Balance Applied ✓' : 'Apply Pending Balance'}
               </button>
             )}
           </div>

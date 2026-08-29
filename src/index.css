@@ -46,10 +46,10 @@ body {
   min-width: 0;
 }
 
-/* Metin/adres/rakam gibi içerikler taşan uzun string'ler mobilde yatay
-   taşmaya (overflow) yol açmasın diye; ayrıca flex/grid içindeki metin
-   ağırlıklı elemanların içeriklerine göre büyüyüp konteynerini
-   genişletmesini (min-width:auto varsayılanı) engelliyoruz. */
+/* So that long strings such as text, addresses or numbers do not cause
+   horizontal overflow on mobile; and so that text-heavy elements inside a
+   flex/grid do not grow to their content and widen their container (the
+   min-width:auto default). */
 input,
 select,
 textarea,
@@ -626,8 +626,8 @@ button {
   background: rgba(248, 113, 113, 0.1);
   border: 1px solid rgba(248, 113, 113, 0.35);
   color: var(--danger);
-  /* Zincirden gelen program logları çok satırlı geliyor; satır sonlarını
-     koruyup uzun satırları kırıyoruz ki hata okunabilir olsun. */
+  /* Program logs from the chain arrive multi-line; we preserve the line breaks
+     and wrap the long lines so the error stays readable. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1102,7 +1102,7 @@ button {
 }
 
 /* ===========================================================================
-   SoLofLuck ($LUCK) — matrix arka plan + presale/tokenomics/hakkında sekmesi
+   SoLofLuck ($LUCK) — matrix backdrop + the presale/tokenomics/about tabs
    =========================================================================== */
 
 .page-tab--luck {
@@ -1206,7 +1206,7 @@ button {
   line-height: 1.6;
 }
 
-/* Hakkında */
+/* About */
 .luck-about__lead {
   color: var(--text);
   line-height: 1.7;
@@ -1449,7 +1449,7 @@ button {
   color: var(--accent-b);
 }
 
-/* Copy button (genel amaçlı) */
+/* Copy button (general purpose) */
 .copy-btn {
   background: var(--bg-elevated);
   border: 1px solid var(--panel-border);
@@ -1467,7 +1467,7 @@ button {
   border-color: var(--accent-a);
 }
 
-/* Kontrat Adresi (CA) bloğu */
+/* The contract address (CA) block */
 .luck-ca {
   background: var(--bg-elevated);
   border: 1px solid var(--panel-border);
@@ -1512,7 +1512,7 @@ button {
   line-height: 1.5;
 }
 
-/* Bölüm başlıkları (Yol Haritası, SSS) */
+/* Section headings (Roadmap, FAQ) */
 .luck-section-title {
   font-size: 1.05rem;
   font-weight: 700;
@@ -1520,7 +1520,7 @@ button {
   color: var(--text);
 }
 
-/* Yol haritası */
+/* Roadmap */
 .luck-roadmap {
   list-style: none;
   margin: 0 0 8px;
@@ -1670,7 +1670,7 @@ button {
   color: var(--accent-b);
 }
 
-/* Presale tier butonlarındaki USD karşılığı */
+/* The USD equivalent on the presale tier buttons */
 .luck-tier-btn__usd {
   font-size: 0.68rem;
   color: var(--text-muted);
@@ -1682,8 +1682,8 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
-/* Oyun sekmesi — kullanıcının kendi ürettiği gerçekçi altın slot makinesi
-   görseli (src/assets/slot-machine.png), duruma göre animasyonlanıyor. */
+/* The Game tab — the realistic gold slot-machine image the user produced
+   themselves (src/assets/slot-machine.png), animated by state. */
 .luck-slot {
   display: flex;
   justify-content: center;
@@ -1711,18 +1711,18 @@ button {
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
 }
 
-/* Dönerken: makara sembollerini gerçekten değiştiremeyeceğimiz için (tek
-   parça görsel), hafif titreşim + parlaklık nabzıyla "hareket halinde"
+/* While spinning: since we cannot actually change the reel symbols (it is a
+   single image), a slight shake plus a brightness pulse convey "in motion"
    hissi veriyoruz. */
 .luck-slot--spinning .luck-slot__img {
   animation: luck-slot-spin-shake 0.15s linear infinite, luck-slot-spin-glow 0.6s ease-in-out infinite;
 }
 
-/* Görselin üstündeki 3 sahte makara şeridi — resimdeki makara penceresinin
-   YAKLAŞIK konumuna hizalı (görsel 640x640, pencere kabaca %20-%80 x,
-   %34-%62 y). Sadece "spinning" durumunda görünür; boştayken/sonuçta
-   opaklık 0'a düşüyor ki altındaki gerçek "7 7 7" görüntüsü bozulmadan
-   görünsün. */
+/* The 3 fake reel strips on top of the image — aligned to the APPROXIMATE
+   position of the reel window in the picture (the image is 640x640 and the
+   window is roughly 20-80% x, 34-62% y). Visible only while "spinning"; when
+   idle or landed the opacity drops to 0 so the real "7 7 7" underneath shows
+   through undisturbed. */
 .luck-slot__reels {
   position: absolute;
   left: 20.5%;
@@ -1741,16 +1741,16 @@ button {
   opacity: 1;
 }
 
-/* Beklemede (sonuç henüz gelmedi ama başlangıç dönüşü bitti): makaralar
-   dönmeyi durdurup yavaşça parıldıyor — "sonsuza dek dönüyor" hissini
+/* Held (the result has not arrived but the opening spin is over): the reels
+   stop spinning and shimmer slowly — this is where the "it spins forever"
    kesen, gerilim yaratan bir bekleme karesi. */
 .luck-slot__reels--held {
   animation: luck-reels-held-pulse 1.6s ease-in-out infinite;
 }
 
-/* İndikten sonra (landed): net, bulanıklıksız, hafif bir "pop" ile beliriyor.
-   Makaralar TEK TEK durduğu için "pop" da makara başına (--stopped)
-   veriliyor — üçü aynı anda değil, sırayla. */
+/* After landing: sharp, unblurred, appearing with a slight "pop". Because the
+   reels stop ONE BY ONE, the "pop" is applied per reel (--stopped) too — in
+   sequence rather than all three at once. */
 .luck-slot__reel--stopped {
   animation: luck-reel-landed-pop 0.35s ease-out;
 }
@@ -1763,8 +1763,8 @@ button {
   box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.35);
 }
 
-/* Bulanıklık makara BAŞINA: duran makara anında netleşiyor, hâlâ
-   dönenler bulanık kalıyor (gerçek slotlarda olduğu gibi). */
+/* The blur is PER reel: a reel that has stopped sharpens instantly while the
+   ones still spinning stay blurred (as on a real slot machine). */
 .luck-slot__reel--spinning {
   filter: blur(1.2px);
 }
@@ -1804,11 +1804,11 @@ button {
   animation-duration: 0.58s;
 }
 
-/* .luck-slot__sym: hem kayan şeritteki her kare, hem "held" bekleme
-   sembolü (❔), hem de "landed" son sembol için AYNI kutu modeli —
-   height:100%, flex ile dikey ortalanmış. Böylece 3 makara, gösterilen
-   glif ne olursa olsun (emoji ile stilize "7" glifinin yazı tipi
-   metrikleri farklı olabiliyor) tam olarak aynı yatay çizgide durur. */
+/* .luck-slot__sym: THE SAME box model for every cell of the scrolling strip,
+   for the "held" waiting symbol (❔) and for the final "landed" symbol —
+   height:100%, vertically centred with flex. That way all 3 reels sit on
+   exactly the same horizontal line whatever glyph is shown (font metrics can
+   differ between an emoji and the stylised "7" glyph). */
 .luck-slot__sym {
   height: 100%;
   min-height: 100%;
@@ -1897,9 +1897,9 @@ button {
   }
 }
 
-/* Kaybedildiğinde: görsel her zaman "BIG WIN" yazdığı için, çelişkiyi
-   azaltmak adına soldurup griye çekip kısa bir sallanmayla "bu sefer
-   olmadı" hissi veriyoruz — gerçek sonuç zaten alttaki metin banner'ında. */
+/* On a loss: because the image always reads "BIG WIN", we fade it, pull it
+   towards grey and add a short shake to convey "not this time" and reduce the
+   contradiction — the real result is in the text banner below anyway. */
 .luck-slot--lose .luck-slot__img {
   filter: grayscale(0.75) brightness(0.6);
   animation: luck-slot-lose-shake 0.4s ease;
@@ -2159,14 +2159,14 @@ button {
   color: #4ade80;
 }
 
-/* Presale operasyon payı açıklaması — gizlenmemesi gereken bir bilgi
-   olduğu için normal metin boyutunda, uyarı kutusu gibi değil ama
-   göz ardı edilemeyecek bir kontrastla gösteriliyor. */
-/* Presale hedef göstergesi: canlı doluluk çubuğu, sabit fiyat ve kalan süre.
-   Doluluk, presale cüzdanının zincirdeki bakiyesinden okunuyor (bkz.
-   usePresaleProgress) — ayrı bir backend/indexer yok. */
-/* Metin içinde geçen, buton gibi davranmayan küçük eylem bağlantısı
-   (ör. "tamamını yak"). */
+/* The presale operations-share note — this is information that must not be
+   hidden, so it is shown at normal text size, not as a warning box, but with
+   enough contrast that it cannot be overlooked. */
+/* The presale target meter: a live fill bar, the fixed price and the time
+   left. The fill is read from the presale wallet's on-chain balance (see
+   usePresaleProgress) — there is no separate backend or indexer. */
+/* A small inline action link that does not behave like a button
+   (e.g. "burn all of it"). */
 .link-btn {
   padding: 0;
   border: 0;
@@ -2229,7 +2229,7 @@ button {
   transition: width 0.6s ease;
 }
 
-/* Taban (soft cap) çizgisi — bu noktanın altında TGE yapılmıyor. */
+/* The floor (soft cap) line — below this point there is no TGE. */
 .luck-presale__bar-softcap {
   position: absolute;
   top: 0;
@@ -2279,7 +2279,7 @@ button {
   color: #e2e8f0;
 }
 
-/* Tokenomics: SOL dağılımı ve lansman taahhütleri */
+/* Tokenomics: the SOL allocation and the launch commitments */
 .luck-tokenomics__subhead {
   margin: 2rem 0 0.6rem;
   font-size: 1.05rem;
@@ -2338,8 +2338,9 @@ button {
   min-width: 9rem;
 }
 
-/* Adres kısaltılmıyor — doğrulama için tamamı gerekli. Dar ekranda kutunun
-   içinde yatay kayıyor, sayfanın kendisini taşırmıyor. */
+/* The address is never shortened — the whole string is needed to verify it. On
+   a narrow screen it scrolls horizontally inside its box rather than
+   overflowing the page itself. */
 .luck-tokenomics__wallet-addr {
   flex: 1 1 12rem;
   min-width: 0;
@@ -2376,7 +2377,7 @@ button {
   color: var(--text);
 }
 
-/* Tokenomics: kilit / açılış zaman çizelgesi */
+/* Tokenomics: the lock / unlock timeline */
 .luck-tokenomics__timeline {
   display: flex;
   flex-direction: column;
@@ -2436,15 +2437,16 @@ button {
   white-space: nowrap;
 }
 
-/* Presale'deki borsa uyarısı — form kartlarının hemen üstünde, gözden
-   kaçmayacak kadar belirgin ama sayfayı ezmeyecek kadar sade. */
+/* The exchange warning on the presale — directly above the form cards,
+   prominent enough not to be missed but plain enough not to overwhelm the
+   page. */
 .luck-presale__exchange-warning {
   margin-bottom: 1rem;
   line-height: 1.55;
 }
 
-/* Claim ("Payım") sekmesi — her tur kendi kartında, çekilebilir tutar öne
-   çıkacak şekilde. */
+/* The claim ("My Share") tab — each round in its own card, with the claimable
+   amount brought to the front. */
 .luck-claim__round {
   margin-bottom: 1.25rem;
 }
@@ -2458,8 +2460,8 @@ button {
   color: #4ade80;
 }
 
-/* Oyunun oran/kural paneli — varsayılan kapalı, ama başlığı her zaman
-   görünür: oyuncunun "şansım ne?" sorusunun cevabı tek dokunuş uzakta. */
+/* The game's odds/rules panel — closed by default, but its heading is always
+   visible: the answer to the player's "what are my odds?" is one tap away. */
 .luck-game__rules {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -2489,7 +2491,7 @@ button {
   margin: 0.75rem 0 0;
 }
 
-/* Kalan kontenjan bilgisi — gönderme formlarının hemen üstünde. */
+/* The remaining-quota note — directly above the send forms. */
 .luck-presale__quota {
   margin-bottom: 0.75rem;
 }

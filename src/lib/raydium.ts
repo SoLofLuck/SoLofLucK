@@ -32,14 +32,14 @@ export interface MintRef {
   programId: string
 }
 
-// Raydium'un kendi token listesi çoğunlukla Raydium'a kayıtlı (bilinen)
-// mint'leri tanır; yeni oluşturulmuş bir token için bu genelde boş döner.
-// Bu yüzden decimals/program bilgisini doğrudan zincirden okuyoruz — bu,
-// bu siteyle az önce oluşturulmuş bir token için de sorunsuz çalışır.
+// Raydium's own token list mostly recognises mints registered with (known to)
+// Raydium; for a freshly created token it usually comes back empty. So we read
+// the decimals and program directly from the chain — which also works fine for
+// a token created with this site moments ago.
 export async function getMintInfo(connection: Connection, mintAddress: string): Promise<MintRef> {
   const mintPubkey = new PublicKey(mintAddress)
   const accountInfo = await connection.getAccountInfo(mintPubkey)
-  if (!accountInfo) throw new Error('Mint adresi bulunamadı. Adresi kontrol edin.')
+  if (!accountInfo) throw new Error('The mint address was not found. Check the address.')
 
   const programId = accountInfo.owner.equals(TOKEN_2022_PROGRAM_ID)
     ? TOKEN_2022_PROGRAM_ID
@@ -53,9 +53,9 @@ export async function getMintInfo(connection: Connection, mintAddress: string): 
   }
 }
 
-// Cüzdanın bir token'dan (ör. LP token'ı ya da havuzun A tarafı) ne kadar
-// tuttuğunu okur. Hesap hiç oluşmamışsa (yani bakiye "0" ise) hata
-// fırlatmak yerine 0 döner.
+// Reads how much of a token (e.g. the LP token, or the pool's A side) the
+// wallet holds. If the account was never created (i.e. the balance is "0") it
+// returns 0 rather than throwing.
 export async function getWalletTokenBalance(
   connection: Connection,
   owner: PublicKey,
@@ -80,12 +80,12 @@ function toApiToken(mint: MintRef): Pick<ApiV3Token, 'address' | 'decimals' | 'p
   return { address: mint.address, decimals: mint.decimals, programId: mint.programId }
 }
 
-// Raydium SDK'sının `execute({ sendAndConfirm: true })` çağrısı, işlem
-// zincirde BAŞARISIZ olsa bile (ör. programın kendisi bir hata
-// döndürdüğünde) hata fırlatmadan bir txId dönebiliyor — "confirm" burada
-// yalnızca işlemin zincire işlendiğini garanti ediyor, instruction'ların
-// başarılı olduğunu değil. Bu yüzden her execute() sonrası işlemi zincirden
-// tekrar okuyup gerçekten başarılı mı diye kontrol ediyoruz.
+// The Raydium SDK's `execute({ sendAndConfirm: true })` can return a txId
+// without throwing even when the transaction FAILED on chain (e.g. when the
+// program itself returned an error) — "confirm" here only guarantees that the
+// transaction was processed by the chain, not that the instructions succeeded.
+// So after every execute() we read the transaction back from the chain and check
+// whether it really succeeded.
 async function verifyTxSuccess(connection: Connection, txId: string): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const tx = await connection.getTransaction(txId, {
@@ -95,7 +95,7 @@ async function verifyTxSuccess(connection: Connection, txId: string): Promise<vo
     if (tx) {
       if (tx.meta?.err) {
         throw new Error(
-          `İşlem zincirde başarısız oldu: ${JSON.stringify(tx.meta.err)}. İşlem imzası: ${txId}`,
+          `The transaction failed on chain: ${JSON.stringify(tx.meta.err)}. Transaction signature: ${txId}`,
         )
       }
       return
@@ -104,9 +104,9 @@ async function verifyTxSuccess(connection: Connection, txId: string): Promise<vo
   }
 }
 
-// Havuz arama/görüntüleme gibi salt okunur işlemler cüzdan gerektirmez;
-// yalnızca işlem imzalayan fonksiyonlar (oluşturma, likidite ekleme/çekme)
-// bağlı bir cüzdan ister.
+// Read-only operations such as searching or viewing pools need no wallet; only
+// the functions that sign transactions (creating a pool, adding or removing
+// liquidity) require a connected wallet.
 export async function loadRaydium(
   connection: Connection,
   wallet: WalletContextState,
@@ -159,7 +159,7 @@ function toSummary(pool: {
   }
 }
 
-// Raydium'un havuz arama/listeleme API'si yalnızca Mainnet verisini indeksler.
+// Raydium's pool search/listing API indexes Mainnet data only.
 export async function searchPoolsByMint(
   raydium: Raydium,
   mint1: string,
@@ -181,7 +181,7 @@ export async function getPoolById(
   if (network === 'mainnet-beta') {
     const data = await raydium.api.fetchPoolById({ ids: poolId })
     const poolInfo = data[0] as ApiV3PoolInfoStandardItemCpmm
-    if (!poolInfo) throw new Error('Havuz bulunamadı.')
+    if (!poolInfo) throw new Error('The pool was not found.')
     return { poolInfo }
   }
   const data = await raydium.cpmm.getPoolInfoFromRpc(poolId)
@@ -217,7 +217,7 @@ export async function createCpmmPool(
   uiAmountB: string,
   onStatus?: (status: string) => void,
 ): Promise<CreatePoolResult> {
-  onStatus?.('Ücret ayarları alınıyor...')
+  onStatus?.('Fetching the fee settings...')
   const feeConfig = await getCpmmFeeConfig(raydium, network)
 
   const programId =
@@ -228,7 +228,7 @@ export async function createCpmmPool(
   const mintAAmount = new BN(new Decimal(uiAmountA).mul(10 ** mintA.decimals).toFixed(0))
   const mintBAmount = new BN(new Decimal(uiAmountB).mul(10 ** mintB.decimals).toFixed(0))
 
-  onStatus?.('Havuz işlemi hazırlanıyor...')
+  onStatus?.('Preparing the pool transaction...')
   const { execute } = await raydium.cpmm.createPool({
     programId,
     poolFeeAccount,
@@ -244,18 +244,18 @@ export async function createCpmmPool(
     txVersion: TxVersion.V0,
   })
 
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
+  onStatus?.('Waiting for approval in your wallet...')
   const { txId } = await execute({ sendAndConfirm: true })
 
-  onStatus?.('İşlem sonucu doğrulanıyor...')
+  onStatus?.('Verifying the transaction result...')
   await verifyTxSuccess(raydium.connection, txId)
 
-  // `extInfo.address`, SDK'nın işlem çalıştırılmadan önce döndürdüğü bir
-  // nesne — pratikte bazı alanları (ör. gerçek havuz adresi yerine işlem
-  // içinde açılıp kapatılan geçici bir hesap) güvenilmez çıktı. Bunun
-  // yerine, havuzun kendi programının kullandığı AYNI deterministik PDA
-  // türetme mantığını (getCreatePoolKeys) kendimiz çalıştırıp gerçek
-  // adresleri buluyoruz.
+  // `extInfo.address` is an object the SDK returns before the transaction is
+  // executed — in practice some of its fields turned out unreliable (e.g. a
+  // temporary account opened and closed inside the transaction instead of the
+  // real pool address). Instead we run THE SAME deterministic PDA derivation the
+  // pool's own program uses (getCreatePoolKeys) ourselves and find the real
+  // addresses.
   const poolKeys = getCreatePoolKeys({
     programId,
     configId: new PublicKey(feeConfig.id),
@@ -282,7 +282,7 @@ export async function addCpmmLiquidity(
   const decimals = baseIn ? poolInfo.mintA.decimals : poolInfo.mintB.decimals
   const inputAmount = new BN(new Decimal(uiAmount).mul(10 ** decimals).toFixed(0))
 
-  onStatus?.('Likidite ekleme işlemi hazırlanıyor...')
+  onStatus?.('Preparing the add-liquidity transaction...')
   const { execute } = await raydium.cpmm.addLiquidity({
     poolInfo,
     poolKeys,
@@ -292,9 +292,9 @@ export async function addCpmmLiquidity(
     txVersion: TxVersion.V0,
   })
 
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
+  onStatus?.('Waiting for approval in your wallet...')
   const { txId } = await execute({ sendAndConfirm: true })
-  onStatus?.('İşlem sonucu doğrulanıyor...')
+  onStatus?.('Verifying the transaction result...')
   await verifyTxSuccess(raydium.connection, txId)
   return txId
 }
@@ -308,7 +308,7 @@ export async function withdrawCpmmLiquidity(
 ): Promise<string> {
   const lpAmount = new BN(new Decimal(lpUiAmount).mul(10 ** poolInfo.lpMint.decimals).toFixed(0))
 
-  onStatus?.('Likidite çekme işlemi hazırlanıyor...')
+  onStatus?.('Preparing the remove-liquidity transaction...')
   const { execute } = await raydium.cpmm.withdrawLiquidity({
     poolInfo,
     poolKeys,
@@ -317,9 +317,9 @@ export async function withdrawCpmmLiquidity(
     txVersion: TxVersion.V0,
   })
 
-  onStatus?.('Cüzdanınızda onay bekleniyor...')
+  onStatus?.('Waiting for approval in your wallet...')
   const { txId } = await execute({ sendAndConfirm: true })
-  onStatus?.('İşlem sonucu doğrulanıyor...')
+  onStatus?.('Verifying the transaction result...')
   await verifyTxSuccess(raydium.connection, txId)
   return txId
 }

@@ -1,28 +1,27 @@
-// Kullanıcının seçtiği görsel (bir telefon fotoğrafı gibi) birkaç MB
-// olabilir. Token logoları küçük olmalı — bu yüzden yüklemeden önce
-// tarayıcıda küçük bir kareye indirip yeniden sıkıştırıyoruz. Bu, hem
-// Irys'e ödenecek depolama ücretini hem de yükleme süresini (ve
-// dolayısıyla ağ zaman aşımı riskini) belirgin şekilde azaltır.
+// The image a user picks (a phone photo, say) can be several MB. Token logos
+// should be small — so before uploading we scale it down to a small square in
+// the browser and recompress it. That noticeably reduces both the storage fee
+// paid to Irys and the upload time (and with it the risk of a network timeout).
 //
-// Mobilde bu iş göründüğünden zor: Android'de galeriden seçilen dosya bir
-// `content://` URI'sine dayanıyor ve `createImageBitmap()` bu dosyalarda
-// düzensiz şekilde başarısız olabiliyor (ilerlemeli JPEG, EXIF döndürme,
-// bazı WebView sürümleri). Kullanıcının gördüğü belirti tam olarak buydu:
-// üç denemenin ikisinde önizleme kırık çıkıyor ve token oluştururken
-// "görsel işlenemedi" hatası alınıyordu.
+// On mobile this is harder than it looks: on Android a file chosen from the
+// gallery is backed by a `content://` URI, and `createImageBitmap()` can fail
+// erratically on those files (progressive JPEG, EXIF rotation, certain WebView
+// versions). That was exactly the symptom the user saw: on two out of three
+// attempts the preview came out broken and creating the token gave an "the image
+// could not be processed" error.
 //
-// Bu yüzden burada TEK bir yola güvenmiyoruz:
-//   1. Dosyanın baytları HEMEN belleğe alınıyor (content:// URI'si sonradan
-//      okunamaz hale gelse bile elimizde veri kalsın diye).
-//   2. Çözümleme için önce createImageBitmap, olmazsa klasik <img>
-//      elemanı deneniyor — ikincisi tarayıcının normal görsel çözücüsünü
-//      kullandığı için SVG ve EXIF'li JPEG dahil çok daha geniş bir
-//      yelpazeyi kaldırıyor.
-//   3. Sıkıştırmada canvas.toBlob yoksa/boş dönerse toDataURL'e düşülüyor.
+// So we do not rely on a SINGLE path here:
+//   1. The file's bytes are read into memory IMMEDIATELY (so we still hold the
+//      data even if the content:// URI becomes unreadable later).
+//   2. For decoding we try createImageBitmap first and fall back to a classic
+//      <img> element — the latter uses the browser's normal image decoder and
+//      therefore handles a far wider range, SVG and EXIF-bearing JPEG included.
+//   3. For compression, if canvas.toBlob is missing or returns empty we fall
+//      back to toDataURL.
 const MAX_DIMENSION = 256
 const JPEG_QUALITY = 0.85
 
-/** Çözümlenmiş görsel — kaynağı ImageBitmap da olabilir <img> de. */
+/** A decoded image — its source may be either an ImageBitmap or an <img>. */
 interface DecodedImage {
   width: number
   height: number
@@ -50,12 +49,12 @@ async function decodeWithImgElement(blob: Blob): Promise<DecodedImage> {
     img.decoding = 'async'
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve()
-      img.onerror = () => reject(new Error('Görsel çözümlenemedi.'))
+      img.onerror = () => reject(new Error('The image could not be decoded.'))
       img.src = url
     })
-    // Bazı tarayıcılarda onload, görselin çizime hazır olduğunu garanti
-    // etmiyor; decode() varsa onu da bekliyoruz. Desteklenmiyorsa onload
-    // zaten yeterli.
+    // In some browsers onload does not guarantee the image is ready to be
+    // drawn; if decode() exists we await that too. Where it is unsupported,
+    // onload is enough on its own.
     if (typeof img.decode === 'function') {
       try {
         await img.decode()
@@ -63,16 +62,16 @@ async function decodeWithImgElement(blob: Blob): Promise<DecodedImage> {
         /* onload yeterli */
       }
     }
-    // SVG gibi içsel boyutu olmayan görsellerde 0 dönebiliyor — makul bir
-    // varsayılana çekiyoruz ki bölme/ölçek hesabı bozulmasın.
+    // For images with no intrinsic size, such as SVG, this can return 0 — we
+    // pull it to a sensible default so the division and scaling do not break.
     const width = img.naturalWidth || img.width || MAX_DIMENSION
     const height = img.naturalHeight || img.height || MAX_DIMENSION
     return {
       width,
       height,
       drawTo: (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h),
-      // URL'i çizim bittikten SONRA iptal ediyoruz: erken iptal, bazı
-      // tarayıcılarda drawImage'ı sessizce boş bırakıyor.
+      // We revoke the URL AFTER the drawing is done: revoking early leaves
+      // drawImage silently blank in some browsers.
       release: () => URL.revokeObjectURL(url),
     }
   } catch (err) {
@@ -94,11 +93,11 @@ async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality))
     if (blob) return blob
   }
-  // toBlob yok ya da null döndü (bazı Android WebView sürümleri) — veri
-  // URL'i üzerinden elle Blob'a çeviriyoruz.
+  // toBlob is missing or returned null (some Android WebView versions) — we
+  // convert to a Blob by hand via the data URL.
   const dataUrl = canvas.toDataURL(mimeType, quality)
   const base64 = dataUrl.split(',')[1]
-  if (!base64) throw new Error('Görsel sıkıştırılamadı.')
+  if (!base64) throw new Error('The image could not be compressed.')
   const binary = atob(base64)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
@@ -106,13 +105,13 @@ async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality
 }
 
 export async function resizeImageFile(file: File): Promise<File> {
-  // Baytları hemen belleğe al. Android'de galeriden gelen File nesnesi bir
-  // content:// URI'sine bakıyor ve bu URI kısa süre sonra okunamaz hale
-  // gelebiliyor — o noktada hem önizleme kırılıyor hem de yükleme
-  // başarısız oluyordu. Buffer'ı erken almak bu sınıf hatayı bitiriyor.
+  // Read the bytes into memory immediately. On Android a File object coming
+  // from the gallery points at a content:// URI, and that URI can become
+  // unreadable shortly afterwards — at which point both the preview broke and
+  // the upload failed. Taking the buffer early ends that whole class of bug.
   const buffer = await file.arrayBuffer()
   if (buffer.byteLength === 0) {
-    throw new Error('Seçilen dosya okunamadı (boş geldi).')
+    throw new Error('The selected file could not be read (it came back empty).')
   }
   const sourceBlob = new Blob([buffer], { type: file.type || 'image/jpeg' })
 
@@ -126,16 +125,16 @@ export async function resizeImageFile(file: File): Promise<File> {
     canvas.width = width
     canvas.height = height
     const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('Tarayıcınız görsel işlemeyi desteklemiyor.')
+    if (!ctx) throw new Error('Your browser does not support image processing.')
     decoded.drawTo(ctx, width, height)
 
-    // PNG'yi PNG olarak koruyoruz (şeffaflık kaybolmasın); SVG dahil geri
-    // kalan her şey JPEG'e çevriliyor — logo için fazlasıyla yeterli ve
-    // yüklenen boyutu küçük tutuyor.
+    // PNG is kept as PNG (so transparency is not lost); everything else, SVG
+    // included, is converted to JPEG — more than good enough for a logo and it
+    // keeps the uploaded size small.
     const keepPng = file.type === 'image/png'
     const mimeType = keepPng ? 'image/png' : 'image/jpeg'
     const blob = await canvasToBlob(canvas, mimeType, keepPng ? undefined : JPEG_QUALITY)
-    if (blob.size === 0) throw new Error('Görsel sıkıştırılamadı.')
+    if (blob.size === 0) throw new Error('The image could not be compressed.')
 
     const baseName = file.name.replace(/\.[^./]+$/, '') || 'logo'
     return new File([blob], `${baseName}.${keepPng ? 'png' : 'jpg'}`, { type: mimeType })

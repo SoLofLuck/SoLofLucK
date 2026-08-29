@@ -41,12 +41,12 @@ function fmtUsd(n: number): string {
   return n.toLocaleString('tr-TR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
 }
 
-/** "X SOL (~$Y)" satırı — SOL/USD fiyatı henüz gelmediyse yalnızca SOL kısmını gösterir. */
+/** An "X SOL (~$Y)" row — shows only the SOL part if the SOL/USD price has not arrived yet. */
 function PoolValueRow({ sol }: { sol: number }) {
   const solUsd = useSolUsdPrice()
   return (
     <div className="pool-card__row">
-      <span>Havuz Değeri</span>
+      <span>Pool Value</span>
       <span>
         {fmtNum(sol, 4)} SOL{solUsd !== null && <span className="pool-card__usd"> (~{fmtUsd(sol * solUsd)})</span>}
       </span>
@@ -55,11 +55,11 @@ function PoolValueRow({ sol }: { sol: number }) {
 }
 
 /**
- * Havuzun toplam değerini SOL cinsinden hesaplar — yalnızca havuzun bir
- * tarafı SOL ise mümkün (sabit-çarpım havuzlarda iki taraf her zaman eşit
- * değerdedir, o yüzden SOL tarafının 2 katı toplam değeri verir). Havuz
- * SOL içermiyorsa (ör. iki farklı token eşleşmesi), fiyat verisi olmadan
- * SOL karşılığı hesaplanamaz.
+ * Computes the pool's total value in SOL — only possible when one side of the
+ * pool is SOL (in a constant-product pool the two sides are always equal in
+ * value, so twice the SOL side gives the total). If the pool contains no SOL
+ * (e.g. a pairing of two different tokens), the SOL equivalent cannot be
+ * computed without price data.
  */
 function poolValueInSol(poolInfo: {
   mintA: { address: string }
@@ -75,10 +75,10 @@ function poolValueInSol(poolInfo: {
 export function LiquidityPage({ network }: Props) {
   const { connection } = useConnection()
   const wallet = useWallet()
-  // Sekme sırası, kullanıcının havuzla yapacağı işin doğal sırasını
-  // izliyor: önce havuzu kur, sonra likidite ekle/çıkar, sonra kilitle.
-  // Salt okunur "Havuz Ara" en sona alındı — bir işlem değil, sorgulama
-  // aracı olduğu için sayfanın ilk karşılayan sekmesi olmamalı.
+  // The tab order follows the natural order of what a user does with a pool:
+  // create the pool first, then add or remove liquidity, then lock it. The
+  // read-only "Find Pool" moved to the end — it is a lookup tool rather than an
+  // operation, so it should not be the first tab that greets the page.
   const [subTab, setSubTab] = useState<SubTab>('create')
 
   return (
@@ -89,35 +89,35 @@ export function LiquidityPage({ network }: Props) {
           className={`subtab ${subTab === 'create' ? 'subtab--active' : ''}`}
           onClick={() => setSubTab('create')}
         >
-          Havuz Oluştur
+          Create Pool
         </button>
         <button
           type="button"
           className={`subtab ${subTab === 'manage' ? 'subtab--active' : ''}`}
           onClick={() => setSubTab('manage')}
         >
-          Likidite Ekle / Çıkar
+          Add / Remove Liquidity
         </button>
         <button
           type="button"
           className={`subtab ${subTab === 'lock' ? 'subtab--active' : ''}`}
           onClick={() => setSubTab('lock')}
         >
-          Likidite Kilitle
+          Lock Liquidity
         </button>
         <button
           type="button"
           className={`subtab ${subTab === 'burn' ? 'subtab--active' : ''}`}
           onClick={() => setSubTab('burn')}
         >
-          Likidite Yakma
+          Burn Liquidity
         </button>
         <button
           type="button"
           className={`subtab ${subTab === 'search' ? 'subtab--active' : ''}`}
           onClick={() => setSubTab('search')}
         >
-          Havuz Ara
+          Find Pool
         </button>
       </div>
 
@@ -146,7 +146,7 @@ function PoolSearch({ network }: { network: NetworkId }) {
 
     if (network === 'devnet') {
       setError(
-        'Havuz arama, Raydium\'un herkese açık indeksleme servisi üzerinden çalışır ve yalnızca Mainnet verisini kapsar. Devnet\'te havuz aramak için lütfen ağ seçiciden Mainnet\'e geçin.',
+        'Pool search runs through Raydium\'s public indexing service and covers Mainnet data only. To search for pools on Devnet, switch to Mainnet from the network selector.',
       )
       return
     }
@@ -160,10 +160,10 @@ function PoolSearch({ network }: { network: NetworkId }) {
       const raydium = await loadRaydium(connection, wallet, network)
       const results = await searchPoolsByMint(raydium, mint1.trim(), mint2.trim() || undefined)
       setPools(results)
-      if (results.length === 0) setError('Bu token(lar) için havuz bulunamadı.')
+      if (results.length === 0) setError('No pool was found for this token (or these tokens).')
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Havuzlar aranırken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while searching for pools.')
     } finally {
       setLoading(false)
     }
@@ -171,39 +171,39 @@ function PoolSearch({ network }: { network: NetworkId }) {
 
   return (
     <div className="token-form">
-      <h2>Havuz Ara / Kontrol Et</h2>
+      <h2>Find / Inspect A Pool</h2>
       <p className="subtab-desc">
-        Bir token'ın mevcut Raydium havuzlarını, fiyatını ve likiditesini görüntüleyin. Bu bölüm
-        salt okunurdur — hiçbir işlem yapmaz, cüzdan bağlamanıza gerek yoktur.
+        View a token's existing Raydium pools, its price and its liquidity. This section is
+        read-only — it performs no transaction and you do not need to connect a wallet.
       </p>
 
       <form onSubmit={handleSearch}>
         <div className="form-grid">
           <label className="field">
-            <span>Token Mint Adresi *</span>
+            <span>Token Mint Address *</span>
             <input
               type="text"
-              placeholder="ör. token mint adresiniz"
+              placeholder="e.g. your token's mint address"
               value={mint1}
               onChange={(e) => setMint1(e.target.value)}
             />
           </label>
           <label className="field">
-            <span>Eşleşecek 2. Token (opsiyonel)</span>
+            <span>Second Token To Pair (optional)</span>
             <input
               type="text"
-              placeholder="boş bırakılırsa tüm havuzlar"
+              placeholder="leave empty for all pools"
               value={mint2}
               onChange={(e) => setMint2(e.target.value)}
             />
           </label>
         </div>
         <button type="button" className="btn btn--secondary" style={{ marginBottom: 16 }} onClick={() => setMint2(NATIVE_SOL_MINT)}>
-          2. token olarak SOL kullan
+          Use SOL as the second token
         </button>
         {error && <div className="alert alert--error">{error}</div>}
         <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
-          {loading ? 'Aranıyor...' : 'Ara'}
+          {loading ? 'Searching...' : 'Search'}
         </button>
       </form>
 
@@ -224,11 +224,11 @@ function PoolSearch({ network }: { network: NetworkId }) {
                 </span>
               </div>
               <div className="pool-card__row">
-                <span>Toplam Likidite (TVL)</span>
+                <span>Total Liquidity (TVL)</span>
                 <span>${fmtNum(p.tvl, 2)}</span>
               </div>
               <div className="pool-card__row">
-                <span>Rezervler</span>
+                <span>Reserves</span>
                 <span>
                   {fmtNum(p.mintAmountA, 4)} {p.mintA.symbol} / {fmtNum(p.mintAmountB, 4)}{' '}
                   {p.mintB.symbol}
@@ -236,11 +236,11 @@ function PoolSearch({ network }: { network: NetworkId }) {
               </div>
               {poolValueInSol(p) !== null && <PoolValueRow sol={poolValueInSol(p)!} />}
               <div className="pool-card__row">
-                <span>İşlem Ücreti</span>
+                <span>Trading Fee</span>
                 <span>%{fmtNum(p.feeRatePct, 3)}</span>
               </div>
               <div className="pool-card__row">
-                <span>Havuz ID</span>
+                <span>Pool ID</span>
                 <code className="pool-card__id">{p.id}</code>
               </div>
               <a
@@ -249,7 +249,7 @@ function PoolSearch({ network }: { network: NetworkId }) {
                 target="_blank"
                 rel="noreferrer"
               >
-                Raydium'da Görüntüle
+                View on Raydium
               </a>
             </div>
           ))}
@@ -325,17 +325,17 @@ function PoolCreate({
     setResult(null)
 
     if (!wallet.connected || !wallet.publicKey) {
-      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      setError('Connect your wallet first to continue.')
       return
     }
     if (!mintAAddr.trim() || !mintBAddr.trim()) {
-      setError('İki token mint adresini de girin.')
+      setError('Enter both token mint addresses.')
       return
     }
     const amtA = Number(amountA)
     const amtB = Number(amountB)
     if (!amountA || !amountB || amtA <= 0 || amtB <= 0) {
-      setError('Her iki token için de sıfırdan büyük bir başlangıç miktarı girin.')
+      setError('Enter an initial amount greater than zero for both tokens.')
       return
     }
 
@@ -347,12 +347,12 @@ function PoolCreate({
       try {
         mintA = await getMintInfo(connection, mintAAddr.trim())
       } catch {
-        throw new Error('A token mint adresi geçersiz ya da bulunamadı.')
+        throw new Error('The token A mint address is invalid or was not found.')
       }
       try {
         mintB = await getMintInfo(connection, mintBAddr.trim())
       } catch {
-        throw new Error('B token mint adresi geçersiz ya da bulunamadı.')
+        throw new Error('The token B mint address is invalid or was not found.')
       }
 
       const raydium = await loadRaydium(connection, wallet, network)
@@ -361,7 +361,7 @@ function PoolCreate({
       setStatus('')
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Havuz oluşturulurken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while creating the pool.')
       setStatus('')
     } finally {
       setLoading(false)
@@ -373,14 +373,14 @@ function PoolCreate({
     return (
       <div className="result-card">
         <div className="result-card__icon">✅</div>
-        <h2>Havuz Oluşturuldu!</h2>
-        <p>Likidite havuzunuz zincir üzerinde oluşturuldu ve belirttiğiniz miktarlar yatırıldı.</p>
+        <h2>Pool Created!</h2>
+        <p>Your liquidity pool was created on chain and the amounts you entered were deposited.</p>
         <div className="result-card__row">
-          <span>Havuz ID</span>
+          <span>Pool ID</span>
           <code>{result.poolId}</code>
         </div>
         <div className="result-card__row">
-          <span>İşlem İmzası</span>
+          <span>Transaction Signature</span>
           <code>{result.txId}</code>
         </div>
         <div className="result-card__links">
@@ -390,7 +390,7 @@ function PoolCreate({
             target="_blank"
             rel="noreferrer"
           >
-            Explorer'da Görüntüle
+            View on Explorer
           </a>
         </div>
 
@@ -404,7 +404,7 @@ function PoolCreate({
             setAmountB('')
           }}
         >
-          Yeni Havuz Oluştur
+          Create Another Pool
         </button>
       </div>
     )
@@ -412,29 +412,29 @@ function PoolCreate({
 
   return (
     <form className="token-form" onSubmit={handleCreate}>
-      <h2>Yeni Likidite Havuzu Oluştur</h2>
+      <h2>Create A New Liquidity Pool</h2>
       <p className="subtab-desc">
-        İki token için sabit-çarpım (CPMM) havuzu oluşturur. Girdiğiniz miktarlar havuzun
-        başlangıç fiyatını belirler ve cüzdanınızdan bu havuza yatırılır.
+        Creates a constant-product (CPMM) pool for two tokens. The amounts you enter set the
+        pool's opening price and are deposited into it from your wallet.
       </p>
 
       <div className="alert alert--warning">
-        ⚠️ Bu işlem geri alınamaz ve gerçek token/SOL yatırmanızı gerektirir. Yanlış miktar
-        girmek, havuzun başlangıç fiyatını yanlış ayarlayabilir.
+        ⚠️ This operation is irreversible and requires depositing real tokens and SOL. Entering
+        the wrong amount can set the pool's opening price incorrectly.
       </div>
 
       <div className="token-pair-picker">
         <div className="field">
-          <span>Havuz Oluşturmak İstediğiniz Token'i Seçin *</span>
+          <span>Select The Token You Want A Pool For *</span>
           {mintAAddr ? (
             <div className="selected-coin" style={{ marginTop: 4 }}>
               <TokenIcon image={mintAMeta?.image} symbol={mintAMeta?.symbol} size={28} />
               <div className="selected-coin__info">
-                <span className="selected-coin__symbol">{mintAMeta ? mintAMeta.symbol : 'Seçili'}</span>
+                <span className="selected-coin__symbol">{mintAMeta ? mintAMeta.symbol : 'Selected'}</span>
                 {mintAAddr !== NATIVE_SOL_MINT && <code className="selected-coin__addr">{mintAAddr}</code>}
               </div>
               <button type="button" className="btn btn--secondary" onClick={() => setMintAAddr('')}>
-                Değiştir
+                Change
               </button>
             </div>
           ) : (
@@ -445,16 +445,16 @@ function PoolCreate({
         <div className="token-pair-picker__plus">+</div>
 
         <div className="field">
-          <span>Likidite Coin'ini Seçin (ör. SOL) *</span>
+          <span>Select The Liquidity Coin (e.g. SOL) *</span>
           {mintBAddr ? (
             <div className="selected-coin" style={{ marginTop: 4 }}>
               <TokenIcon image={mintBMeta?.image} symbol={mintBMeta?.symbol} size={28} />
               <div className="selected-coin__info">
-                <span className="selected-coin__symbol">{mintBMeta ? mintBMeta.symbol : 'Seçili'}</span>
+                <span className="selected-coin__symbol">{mintBMeta ? mintBMeta.symbol : 'Selected'}</span>
                 {mintBAddr !== NATIVE_SOL_MINT && <code className="selected-coin__addr">{mintBAddr}</code>}
               </div>
               <button type="button" className="btn btn--secondary" onClick={() => setMintBAddr('')}>
-                Değiştir
+                Change
               </button>
             </div>
           ) : (
@@ -465,21 +465,21 @@ function PoolCreate({
 
       <div className="form-grid">
         <label className="field">
-          <span>Havuza Yatırılacak Token Miktarı *</span>
+          <span>Token Amount To Deposit Into The Pool *</span>
           <input
             type="text"
             inputMode="decimal"
-            placeholder="ör. 1000000"
+            placeholder="e.g. 1000000"
             value={amountA}
             onChange={(e) => setAmountA(e.target.value.replace(/[^\d.]/g, ''))}
           />
         </label>
         <label className="field">
-          <span>Likidite Coin Miktarı *</span>
+          <span>Liquidity Coin Amount *</span>
           <input
             type="text"
             inputMode="decimal"
-            placeholder="ör. 10"
+            placeholder="e.g. 10"
             value={amountB}
             onChange={(e) => setAmountB(e.target.value.replace(/[^\d.]/g, ''))}
           />
@@ -490,7 +490,7 @@ function PoolCreate({
       {status && !error && <div className="alert alert--info">{status}</div>}
 
       <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
-        {loading ? 'Oluşturuluyor...' : wallet.connected ? 'Havuz Oluştur' : 'Önce Cüzdan Bağlayın'}
+        {loading ? 'Creating...' : wallet.connected ? 'Create Pool' : 'Connect A Wallet First'}
       </button>
     </form>
   )
@@ -535,7 +535,7 @@ function PoolManage({
     setPoolInfo(null)
     setWithdrawPercent(0)
     if (!poolId.trim()) {
-      setError('Havuz ID girin.')
+      setError('Enter a pool ID.')
       return
     }
     setLoadingPool(true)
@@ -547,7 +547,7 @@ function PoolManage({
       await refreshBalances(poolInfo)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Havuz bulunamadı.')
+      setError(err instanceof Error ? err.message : 'The pool was not found.')
     } finally {
       setLoadingPool(false)
     }
@@ -558,11 +558,11 @@ function PoolManage({
     setError('')
     setTxResult('')
     if (!wallet.connected) {
-      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      setError('Connect your wallet first to continue.')
       return
     }
     if (!addAmount || Number(addAmount) <= 0) {
-      setError('Geçerli bir miktar girin.')
+      setError('Enter a valid amount.')
       return
     }
     setBusy(true)
@@ -575,7 +575,7 @@ function PoolManage({
       await refreshBalances(poolInfo)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Likidite eklenirken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while adding liquidity.')
       setStatus('')
     } finally {
       setBusy(false)
@@ -595,11 +595,11 @@ function PoolManage({
     setError('')
     setTxResult('')
     if (!wallet.connected) {
-      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      setError('Connect your wallet first to continue.')
       return
     }
     if (withdrawLpAmount <= 0) {
-      setError('Çekmek için yüzde belirleyin (bakiyeniz 0 olabilir).')
+      setError('Set a percentage to withdraw (your balance may be 0).')
       return
     }
     setBusy(true)
@@ -618,7 +618,7 @@ function PoolManage({
       await refreshBalances(poolInfo)
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Likidite çekilirken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while removing liquidity.')
       setStatus('')
     } finally {
       setBusy(false)
@@ -627,23 +627,23 @@ function PoolManage({
 
   return (
     <div className="token-form">
-      <h2>Likidite Ekle / Çıkar</h2>
+      <h2>Add / Remove Liquidity</h2>
       <p className="subtab-desc">
-        Bildiğiniz bir havuz ID'sine likidite ekleyin ya da LP token'ınızı geri çekin.
+        Add liquidity to a pool ID you know, or withdraw your LP tokens.
       </p>
 
       <form onSubmit={handleLoadPool}>
         <label className="field">
-          <span>Havuz ID *</span>
+          <span>Pool ID *</span>
           <input
             type="text"
-            placeholder="ör. havuz oluşturunca aldığınız Pool ID"
+            placeholder="e.g. the Pool ID you got when creating the pool"
             value={poolId}
             onChange={(e) => setPoolId(e.target.value)}
           />
         </label>
         <button type="submit" className="btn btn--secondary" disabled={loadingPool}>
-          {loadingPool ? 'Getiriliyor...' : 'Havuzu Getir'}
+          {loadingPool ? 'Fetching...' : 'Fetch Pool'}
         </button>
       </form>
 
@@ -663,7 +663,7 @@ function PoolManage({
             </span>
           </div>
           <div className="pool-card__row">
-            <span>Rezervler</span>
+            <span>Reserves</span>
             <span>
               {fmtNum(poolInfo.mintAmountA, 4)} {poolInfo.mintA.symbol} /{' '}
               {fmtNum(poolInfo.mintAmountB, 4)} {poolInfo.mintB.symbol}
@@ -674,10 +674,10 @@ function PoolManage({
           <hr className="pool-manage__divider" />
 
           <div className="pool-manage__section">
-            <div className="pool-manage__section-title">Likidite Ekle</div>
+            <div className="pool-manage__section-title">Add Liquidity</div>
             <label className="field">
               <span>
-                Eklenecek {poolInfo.mintA.symbol} Miktarı
+                {poolInfo.mintA.symbol} Amount To Add
                 <small className="pool-manage__balance-hint">
                   {' '}
                   (bakiyeniz: {fmtNum(tokenABalance, 6)} {poolInfo.mintA.symbol})
@@ -702,8 +702,8 @@ function PoolManage({
             </label>
             {addAmount && Number(addAmount) > 0 && (
               <small className="pool-manage__preview">
-                ≈ {fmtNum(Number(addAmount) * poolInfo.price)} {poolInfo.mintB.symbol} eşleşecek
-                (kesin miktar işlem sırasında hesaplanır)
+                ≈ {fmtNum(Number(addAmount) * poolInfo.price)} {poolInfo.mintB.symbol} will be paired
+                (the exact amount is computed during the transaction)
               </small>
             )}
             <button
@@ -712,7 +712,7 @@ function PoolManage({
               onClick={handleAdd}
               disabled={busy}
             >
-              {busy ? 'İşleniyor...' : 'Likidite Ekle'}
+              {busy ? 'Processing...' : 'Add Liquidity'}
             </button>
           </div>
 
@@ -720,7 +720,7 @@ function PoolManage({
 
           <div className="pool-manage__section">
             <div className="pool-manage__section-title">
-              Likidite Çek
+              Remove Liquidity
               <small className="pool-manage__balance-hint">
                 {' '}
                 (LP bakiyeniz: {fmtNum(lpBalance, 6)})
@@ -754,7 +754,7 @@ function PoolManage({
 
             {withdrawPercent > 0 && (
               <small className="pool-manage__preview">
-                Çekilecek: {fmtNum(withdrawLpAmount, 6)} LP ≈ {fmtNum(withdrawEstimatedA, 4)}{' '}
+                To withdraw: {fmtNum(withdrawLpAmount, 6)} LP ≈ {fmtNum(withdrawEstimatedA, 4)}{' '}
                 {poolInfo.mintA.symbol} + {fmtNum(withdrawEstimatedB, 4)} {poolInfo.mintB.symbol}
               </small>
             )}
@@ -765,14 +765,14 @@ function PoolManage({
               onClick={handleWithdraw}
               disabled={busy || lpBalance <= 0}
             >
-              {busy ? 'İşleniyor...' : 'Likidite Çek'}
+              {busy ? 'Processing...' : 'Remove Liquidity'}
             </button>
           </div>
 
           {status && <div className="alert alert--info">{status}</div>}
           {txResult && (
             <div className="alert alert--info">
-              İşlem başarılı: <code>{txResult}</code>
+              Transaction succeeded: <code>{txResult}</code>
             </div>
           )}
         </div>
@@ -807,7 +807,7 @@ function PoolLock({
     setLockResult(null)
     setPoolInfo(null)
     if (!poolId.trim()) {
-      setError('Havuz ID girin.')
+      setError('Enter a pool ID.')
       return
     }
     setLoadingPool(true)
@@ -827,7 +827,7 @@ function PoolLock({
       }
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Havuz bulunamadı.')
+      setError(err instanceof Error ? err.message : 'The pool was not found.')
     } finally {
       setLoadingPool(false)
     }
@@ -838,15 +838,15 @@ function PoolLock({
     setError('')
     setLockResult(null)
     if (!wallet.connected || !wallet.publicKey) {
-      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      setError('Connect your wallet first to continue.')
       return
     }
     if (!lockAmount || Number(lockAmount) <= 0) {
-      setError('Kilitlenecek geçerli bir LP miktarı girin.')
+      setError('Enter a valid LP amount to lock.')
       return
     }
     if (Number(lockAmount) > lpBalance) {
-      setError('Kilitlemek istediğiniz miktar LP bakiyenizden fazla.')
+      setError('The amount you want to lock exceeds your LP balance.')
       return
     }
     setBusy(true)
@@ -866,7 +866,7 @@ function PoolLock({
       setStatus('')
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Likidite kilitlenirken bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong while locking the liquidity.')
       setStatus('')
     } finally {
       setBusy(false)
@@ -877,32 +877,32 @@ function PoolLock({
 
   return (
     <div className="token-form">
-      <h2>Likidite Kilitle</h2>
+      <h2>Lock Liquidity</h2>
       <p className="subtab-desc">
-        LP token'ınızı, belirlediğiniz süre boyunca kimsenin (siz dahil) çekemeyeceği şekilde
-        kilitleyin — alıcılara likiditeyi aniden çekmeyeceğinizi zincir üzerinde ispatlamanın bir
+        Lock your LP tokens for a period you choose, so that nobody, you included, can withdraw
+        them — a way of proving on chain to buyers that you will not pull the liquidity
         yolu.
       </p>
 
       <div className="alert alert--warning">
-        ⚠️ Bu kilit yalnızca <strong>likiditenin çekilmesini</strong> engeller —{' '}
-        <strong>alım/satım işlemlerini engellemez</strong>, havuzda normal şekilde alım-satım
-        devam eder. Süre dolmadan siz dahil hiç kimse kilidi erken açamaz veya iptal edemez; bu,
-        kilidin güven değerinin kaynağıdır — geri dönüşü yoktur.
+        ⚠️ This lock only prevents <strong>withdrawing the liquidity</strong> —{' '}
+        <strong>it does not block trading</strong>; buying and selling continue normally in the
+        pool. Nobody, you included, can open or cancel the lock early before it expires; that is
+        where the lock's value as a trust signal comes from — there is no way back.
       </div>
 
       <form onSubmit={handleLoadPool}>
         <label className="field">
-          <span>Havuz ID *</span>
+          <span>Pool ID *</span>
           <input
             type="text"
-            placeholder="ör. havuz oluşturunca aldığınız Pool ID"
+            placeholder="e.g. the Pool ID you got when creating the pool"
             value={poolId}
             onChange={(e) => setPoolId(e.target.value)}
           />
         </label>
         <button type="submit" className="btn btn--secondary" disabled={loadingPool}>
-          {loadingPool ? 'Getiriliyor...' : 'Havuzu Getir'}
+          {loadingPool ? 'Fetching...' : 'Fetch Pool'}
         </button>
       </form>
 
@@ -921,14 +921,14 @@ function PoolLock({
           </div>
           {poolValueInSol(poolInfo) !== null && <PoolValueRow sol={poolValueInSol(poolInfo)!} />}
           <div className="pool-card__row">
-            <span>LP Bakiyeniz</span>
+            <span>Your LP Balance</span>
             <span>{fmtNum(lpBalance, 6)}</span>
           </div>
 
           <hr className="pool-manage__divider" />
 
           <label className="field">
-            <span>Kilitlenecek LP Miktarı</span>
+            <span>LP Amount To Lock</span>
             <div className="pool-manage__amount-row">
               <input
                 type="text"
@@ -948,7 +948,7 @@ function PoolLock({
           </label>
 
           <div className="field">
-            <span>Kilit Süresi</span>
+            <span>Lock Duration</span>
             <div className="pool-manage__percent-buttons">
               {LOCK_DURATION_OPTIONS.map((opt) => (
                 <button
@@ -966,8 +966,8 @@ function PoolLock({
           </div>
 
           <small className="pool-manage__preview">
-            {fmtNum(Number(lockAmount) || 0, 6)} LP, yaklaşık{' '}
-            {new Date(Date.now() + durationSeconds * 1000).toLocaleString('tr-TR')} tarihine kadar
+            {fmtNum(Number(lockAmount) || 0, 6)} LP, until roughly{' '}
+            {new Date(Date.now() + durationSeconds * 1000).toLocaleString('en-US')}
             kilitlenecek.
           </small>
 
@@ -979,7 +979,7 @@ function PoolLock({
             onClick={handleLock}
             disabled={busy || lpBalance <= 0}
           >
-            {busy ? 'İşleniyor...' : 'Likiditeyi Kilitle'}
+            {busy ? 'Processing...' : 'Lock The Liquidity'}
           </button>
         </div>
       )}
@@ -987,22 +987,22 @@ function PoolLock({
       {lockResult && (
         <div className="result-card" style={{ marginTop: 20 }}>
           <div className="result-card__icon">🔒</div>
-          <h2>Likidite Kilitlendi!</h2>
+          <h2>Liquidity Locked!</h2>
           <p>
-            {fmtNum(Number(lockAmount), 6)} LP, {lockResult.unlockDate.toLocaleString('tr-TR')}{' '}
-            tarihine kadar kilitli. Bu tarihten önce (siz dahil) kimse çekemez.
+            {fmtNum(Number(lockAmount), 6)} LP, {lockResult.unlockDate.toLocaleString('en-US')}{' '}
+            . Before that date nobody, you included, can withdraw it.
           </p>
           <div className="result-card__row">
-            <span>Kilit (Kontrat) ID</span>
+            <span>Lock (Contract) ID</span>
             <code>{lockResult.contractId}</code>
           </div>
           <div className="result-card__row">
-            <span>İşlem İmzası</span>
+            <span>Transaction Signature</span>
             <code>{lockResult.txId}</code>
           </div>
           <div className="result-card__row">
-            <span>Açılış Tarihi</span>
-            <code>{lockResult.unlockDate.toLocaleString('tr-TR')}</code>
+            <span>Unlock Date</span>
+            <code>{lockResult.unlockDate.toLocaleString('en-US')}</code>
           </div>
           <div className="result-card__links">
             <a
@@ -1011,13 +1011,13 @@ function PoolLock({
               target="_blank"
               rel="noreferrer"
             >
-              Explorer'da Görüntüle
+              View on Explorer
             </a>
           </div>
           <p className="subtab-desc">
-            Bu bilgiyi (Kilit ID + açılış tarihi) token açıklamanıza veya duyurunuza ekleyerek,
-            alıcıların likiditenin kilitli olduğunu Solana Explorer üzerinden bağımsız şekilde
-            doğrulayabilmesini sağlayabilirsiniz.
+            Add this information (the lock ID plus the unlock date) to your token description or
+            announcement, so buyers can verify independently on Solana Explorer that the liquidity is
+            locked.
           </p>
         </div>
       )}
@@ -1026,17 +1026,16 @@ function PoolLock({
 }
 
 // ---------------------------------------------------------------------------
-// Likidite Yakma
+// Burning liquidity
 // ---------------------------------------------------------------------------
-// Kilitlemenin bir adım ötesi: yakılan LP token'ı geri gelmez, dolayısıyla
-// havuzdaki likidite SÜRESİZ olarak kilitlenmiş olur. Kilidin aksine bir
-// bitiş tarihi yok — yani alıcıların "şu tarihte kilit açılacak" diye
-// beklediği bir geri sayım da oluşmuyor.
+// One step beyond locking: a burned LP token never comes back, so the pool's
+// liquidity is locked INDEFINITELY. Unlike a lock there is no end date — so no
+// countdown forms that buyers wait on, thinking "it unlocks on that date".
 //
-// Araç bilerek LP'ye özel DEĞİL: cüzdandaki herhangi bir SPL/Token-2022
-// token'ı yakılabiliyor. Presale hedefi tutmazsa basılmayacak $LUCK'ın
-// oransal olarak yakılması da buradan yapılacak (bkz. config.ts presale
-// kuralları).
+// The tool is deliberately NOT LP-specific: any SPL/Token-2022 token in the
+// wallet can be burned. The proportional burn of the $LUCK that will not be
+// minted if the presale target is missed will also be done from here (see the
+// presale rules in config.ts).
 function TokenBurn({
   network,
   connection,
@@ -1058,9 +1057,9 @@ function TokenBurn({
 
   const owner = wallet.publicKey
 
-  // Token seçimi CoinPicker ile yapılıyor (havuz oluşturma sekmesiyle aynı
-  // bileşen); bu liste yalnızca seçilen token'ın BAKİYESİNİ göstermek ve
-  // "tamamını yak" kısayolunu doldurmak için tutuluyor.
+  // The token is chosen with CoinPicker (the same component as the create-pool
+  // tab); this list is kept only to show the selected token's BALANCE and to fill
+  // in the "burn all of it" shortcut.
   useEffect(() => {
     if (!owner) {
       setTokens([])
@@ -1075,8 +1074,8 @@ function TokenBurn({
     }
   }, [connection, owner])
 
-  // Seçilen token'ın adı/sembolü/logosu — havuz oluşturmadaki "selected-coin"
-  // görünümünün aynısını kullanabilmek için.
+  // The selected token's name, symbol and logo — so we can reuse exactly the
+  // "selected-coin" presentation from the create-pool tab.
   useEffect(() => {
     if (!mint) {
       setMintMeta(null)
@@ -1095,9 +1094,9 @@ function TokenBurn({
 
   const selected = tokens.find((t) => t.mint === mint) ?? null
   const balance = selected ? selected.uiAmount : null
-  // Onay kutusu: yanlışlıkla yakmayı engelleyen son bariyer. Butonun
-  // "disabled" olması yetmez — kullanıcının bilerek yazması gerekiyor.
-  const confirmed = confirmText.trim().toUpperCase() === 'YAK'
+  // The confirmation box: the last barrier against burning by accident. A
+  // "disabled" button is not enough — the user has to type it deliberately.
+  const confirmed = confirmText.trim().toUpperCase() === 'BURN'
   const canBurn =
     wallet.connected && Boolean(mint) && Number(amount) > 0 && confirmed && !busy
 
@@ -1105,7 +1104,7 @@ function TokenBurn({
     setError('')
     setResult(null)
     if (!wallet.connected) {
-      setError('Devam etmek için önce cüzdanınızı bağlayın.')
+      setError('Connect your wallet first to continue.')
       return
     }
     setBusy(true)
@@ -1115,13 +1114,13 @@ function TokenBurn({
       setStatus('')
       setAmount('')
       setConfirmText('')
-      // Bakiyeler değişti — listeyi tazele.
+      // The balances changed — refresh the list.
       if (owner) {
         setTokens(await listAllWalletTokens(connection, owner))
       }
     } catch (err) {
       console.error(err)
-      setError(err instanceof Error ? err.message : 'Yakma işlemi sırasında bir hata oluştu.')
+      setError(err instanceof Error ? err.message : 'Something went wrong during the burn.')
       setStatus('')
     } finally {
       setBusy(false)
@@ -1132,24 +1131,24 @@ function TokenBurn({
 
   if (result) {
     return (
-      // Havuz oluşturma sonucuyla aynı kart deseni (result-card):
-      // etiket/değer alt alta, uzun adresler satır sonunda bölünüyor.
-      // Önce burada tanımlı olmayan sınıflar kullanılmıştı, o yüzden
-      // etiketle değer birbirine yapışıyor ve mint adresi ekrandan
-      // taşıyordu.
+      // The same card pattern as the create-pool result (result-card): label
+      // above value, with long addresses breaking at the end of a line.
+      // Classes that were not defined here were used at first, which made the
+      // label and value run into each other and pushed the mint address off
+      // the screen.
       <div className="result-card">
         <div className="result-card__icon">🔥</div>
-        <h2>Yakma Tamamlandı</h2>
+        <h2>Burn Complete</h2>
         <p>
-          <strong>{result.amount}</strong> token kalıcı olarak yakıldı. Toplam arz zincirde
-          düştü — aşağıdaki değer işlemden sonra doğrudan mint hesabından okundu.
+          <strong>{result.amount}</strong> tokens were burned permanently. The total supply dropped
+          on chain — the value below was read directly from the mint account after the transaction.
         </p>
         <div className="result-card__row">
-          <span>Yakılan miktar</span>
+          <span>Amount burned</span>
           <code>{result.amount}</code>
         </div>
         <div className="result-card__row">
-          <span>Kalan toplam arz</span>
+          <span>Remaining total supply</span>
           <code>{result.remainingSupply}</code>
         </div>
         <div className="result-card__row">
@@ -1163,14 +1162,14 @@ function TokenBurn({
             target="_blank"
             rel="noreferrer"
           >
-            İşlemi Explorer'da görüntüle
+            View the transaction on Explorer
           </a>
           <button type="button" className="btn btn--secondary" onClick={() => setResult(null)}>
-            Yeni Yakma İşlemi
+            Burn Something Else
           </button>
         </div>
         <p className="subtab-desc">
-          Bu işlem linkini topluluğunuzla paylaşın — yakma taahhüdünüzün kanıtı budur.
+          Share this transaction link with your community — it is the proof of your burn commitment.
         </p>
       </div>
     )
@@ -1178,49 +1177,50 @@ function TokenBurn({
 
   return (
     <div className="token-form">
-      <h2>Likidite Yakma</h2>
+      <h2>Burn Liquidity</h2>
       <p className="subtab-desc">
-        LP token'ınızı yakarak havuzdaki likiditeyi <strong>süresiz</strong> kilitleyin. Yakılan
-        LP geri gelmediği için havuzdaki parayı siz dahil hiç kimse bir daha çekemez.
+        Burn your LP tokens to lock the pool's liquidity <strong>indefinitely</strong>. A burned LP
+        token never comes back, so nobody, you included, can ever withdraw the money in the pool.
       </p>
 
       <div className="alert alert--warning">
-        ⚠️ <strong>Bu işlem geri alınamaz.</strong> Yakılan token yeniden basılamaz; kilidin
-        aksine bir süre sonunda geri alma imkânı yoktur. Doğru mint'i ve miktarı seçtiğinizden
-        emin olun.
+        ⚠️ <strong>This operation is irreversible.</strong> A burned token cannot be re-minted;
+        unlike a lock there is no way to get it back after a period. Make sure you have chosen the
+        correct mint and amount.
       </div>
 
       <p className="subtab-desc">
-        <strong>Hangi token'ı seçmeliyim?</strong> Havuzun İÇİNDEKİ tokenlar yakılmaz — onlar
-        artık havuzun malıdır, üzerlerinde kimsenin yetkisi yoktur ve yakılsalar havuzun
-        dengesi bozulurdu. Yakılan şey <strong>LP token'ıdır</strong>: havuzu açtığınızda
-        cüzdanınıza gelen "makbuz". Havuzdaki parayı ancak bu makbuzu elinde tutan çekebilir;
-        makbuz yakılınca çekecek kimse kalmaz. Havuzdaki tokenlar yerinde durmaya ve alım-satımda
-        kullanılmaya devam eder.
+        <strong>Which token should I choose?</strong> The tokens INSIDE the pool are not burned —
+        they belong to the pool now, nobody has authority over them, and burning them would break
+        the pool's balance. What gets burned is the <strong>LP token</strong>: the "receipt" that
+        arrives in your wallet when you open the pool. Only whoever holds that receipt can
+        withdraw the money in the pool; once the receipt is burned there is nobody left to
+        withdraw it. The tokens in the pool stay where they are and keep being traded.
       </p>
       <p className="subtab-desc">
-        Yani havuz için: listeden <strong>LP token'ını</strong> seçin (havuz oluşturduktan sonra
-        cüzdanınızda belirir), kendi projenizin token'ını değil. Aynı araçla satılmayan/kullanılmayan
-        kendi tokenlarınızı da yakabilirsiniz — o zaman doğrudan kendi token'ınızı seçin.
+        So for a pool: choose the <strong>LP token</strong> from the list (it appears in your
+        wallet after you create the pool), not your own project's token. You can also burn your
+        own unsold or unused tokens with the same tool — in that case select your own token
+        directly.
       </p>
       <p className="subtab-desc">
-        <strong>Kilit mi, yakma mı?</strong> Kilitte bir bitiş tarihi vardır — o tarih
-        yaklaştıkça alıcılar için bir geri sayıma dönüşür ve satış baskısı yaratır. Yakmada böyle
-        bir tarih yoktur, ama likidite kalıcı olarak havuzda kalır: havuzdaki payınızı ileride
-        çekmeniz de mümkün olmaz.
+        <strong>Lock or burn?</strong> A lock has an end date — as it approaches it turns into a
+        countdown for buyers and creates selling pressure. A burn has no such date, but the
+        liquidity stays in the pool permanently: you will not be able to withdraw your share of
+        the pool later either.
       </p>
 
       {!wallet.connected && (
-        <div className="alert alert--info">Yakma yapmak için önce cüzdanınızı bağlayın.</div>
+        <div className="alert alert--info">Connect your wallet first to burn anything.</div>
       )}
 
       <div className="field">
-        <span>Yakılacak Token *</span>
+        <span>Token To Burn *</span>
         {mint ? (
           <div className="selected-coin" style={{ marginTop: 4 }}>
             <TokenIcon image={mintMeta?.image} symbol={mintMeta?.symbol} size={28} />
             <div className="selected-coin__info">
-              <span className="selected-coin__symbol">{mintMeta ? mintMeta.symbol : 'Seçili'}</span>
+              <span className="selected-coin__symbol">{mintMeta ? mintMeta.symbol : 'Selected'}</span>
               <code className="selected-coin__addr">{mint}</code>
             </div>
             <button
@@ -1234,12 +1234,12 @@ function TokenBurn({
               }}
               disabled={busy}
             >
-              Değiştir
+              Change
             </button>
           </div>
         ) : (
-          // SOL yakılamaz (native, mint hesabı yok) — bu yüzden burada
-          // havuz oluşturmadan farklı olarak allowSol verilmiyor.
+          // SOL cannot be burned (it is native and has no mint account) — which is
+          // why, unlike the create-pool tab, allowSol is not passed here.
           <CoinPicker
             explorerCluster={NETWORKS[network].explorerCluster}
             onSelect={(m) => {
@@ -1253,25 +1253,25 @@ function TokenBurn({
       </div>
 
       <label className="field">
-        <span>Yakılacak Miktar *</span>
+        <span>Amount To Burn *</span>
         <input
           type="text"
           inputMode="decimal"
-          placeholder="ör. 1250.5"
+          placeholder="e.g. 1250.5"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           disabled={busy || !mint}
         />
         {balance !== null && (
           <small>
-            Bakiyeniz: {balance}{' '}
+            Your balance: {balance}{' '}
             <button
               type="button"
               className="link-btn"
               onClick={() => setAmount(balance)}
               disabled={busy}
             >
-              tamamını yak
+              burn all of it
             </button>
           </small>
         )}
@@ -1279,11 +1279,11 @@ function TokenBurn({
 
       <label className="field">
         <span>
-          Onay — kutuya <strong>YAK</strong> yazın *
+          Confirmation — type <strong>BURN</strong> in the box *
         </span>
         <input
           type="text"
-          placeholder="YAK"
+          placeholder="BURN"
           value={confirmText}
           onChange={(e) => setConfirmText(e.target.value)}
           disabled={busy || !mint}
@@ -1297,10 +1297,10 @@ function TokenBurn({
         disabled={!canBurn}
       >
         {busy
-          ? 'Yakılıyor...'
+          ? 'Burning...'
           : wallet.connected
-            ? '🔥 Tokenları Kalıcı Olarak Yak'
-            : 'Önce Cüzdan Bağlayın'}
+            ? '🔥 Burn The Tokens Permanently'
+            : 'Connect A Wallet First'}
       </button>
 
       {error && <div className="alert alert--error">{error}</div>}
