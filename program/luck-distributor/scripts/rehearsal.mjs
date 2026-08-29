@@ -1,26 +1,24 @@
 // ---------------------------------------------------------------------------
-// Devnet uçtan uca prova
+// Devnet end-to-end rehearsal
 // ---------------------------------------------------------------------------
-// Testler zincire hiç bağlanmadan koşuyor (solana-program-test) ve 16
-// senaryoyu kapsıyor. Ama TGE günü çalışacak olan şey o testler değil:
-// gerçek bir mint, gerçek bir RPC, gerçek ATA'lar ve initialize-round.mjs
-// script'inin kendisi. Aradaki farkı ancak gerçek bir zincirde koşarak
-// kapatabiliriz.
+// The tests run without ever connecting to a chain (solana-program-test) and
+// cover 16 scenarios. But those tests are not what runs on TGE day: a real mint,
+// a real RPC, real ATAs and the initialize-round.mjs script itself are. The gap
+// between the two can only be closed by running on a real chain.
 //
-// Bu script tam olarak TGE gününün provasını yapıyor:
-//   1. Atılabilir bir mint oluşturur ve arz basar
-//   2. Üç sahte alıcıdan bir merkle listesi üretir
-//   3. initialize-round.mjs'i GERÇEKTEN çalıştırır (turu açar, kilitler)
-//   4. Alıcılardan biri olarak claim eder
-//   5. Çekilen miktarın takvimin öngördüğü tutara TAM eşit olduğunu
-//      doğrular
-//   6. İkinci kez claim denemesinin hiçbir şey ödemediğini doğrular
+// This script rehearses TGE day exactly:
+//   1. Creates a throwaway mint and mints the supply
+//   2. Produces a merkle list from three fake buyers
+//   3. REALLY runs initialize-round.mjs (opens the round, locks the tokens)
+//   4. Claims as one of the buyers
+//   5. Verifies that the amount claimed is EXACTLY what the schedule predicts
+//   6. Verifies that a second claim attempt pays nothing
 //
-// Kullanım (env):
-//   PROGRAM_ID=...   luck-distributor adresi
-//   KEYPAIR_PATH=... deploy/ödeme cüzdanı
+// Usage (env):
+//   PROGRAM_ID=...   the luck-distributor address
+//   KEYPAIR_PATH=... the deploy/payer wallet
 //   RPC_URL=https://api.devnet.solana.com
-//   ROUND_ID=900     provaya özel, gerçek turlarla çakışmayan bir numara
+//   ROUND_ID=900     a rehearsal-only number that does not collide with real rounds
 
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -43,7 +41,7 @@ const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xW
 const MINT_LEN = 82
 const DECIMALS = 9
 
-const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID ?? (() => { throw new Error('PROGRAM_ID gerekli') })())
+const PROGRAM_ID = new PublicKey(process.env.PROGRAM_ID ?? (() => { throw new Error('PROGRAM_ID is required') })())
 const KEYPAIR_PATH = process.env.KEYPAIR_PATH || `${process.env.HOME}/.config/solana/id.json`
 const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 const ROUND_ID = BigInt(process.env.ROUND_ID || '900')
@@ -53,7 +51,7 @@ const payer = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(readFileSync(KEYPAIR_PATH, 'utf8'))),
 )
 
-const adim = (n, t) => console.log(`\n[${n}] ${t}`)
+const step = (n, t) => console.log(`\n[${n}] ${t}`)
 const u64le = (v) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b }
 const disc = (n) => createHash('sha256').update(`global:${n}`).digest().subarray(0, 8)
 const ata = (owner, mint) =>
@@ -68,57 +66,58 @@ async function tokenBalance(account) {
 }
 
 
-// --- Kalan SOL'ü geri süpür -------------------------------------------------
-// Prova, tek kullanımlık cüzdanlara SOL gönderiyor. Süpürülmezse o SOL
-// ORADA KALIYOR ve anahtarlar süreç bitince kayboluyor — yani her koşu
-// deploy cüzdanını biraz daha boşaltıyor. Nitekim boşalttı: bir sonraki
-// program yükseltmesi, buffer kirası için 0,11 SOL bulamadığı ve devnet
-// faucet'i de rate limit yüzünden vermediği için düştü.
+// --- Sweep the leftover SOL back --------------------------------------------
+// The rehearsal sends SOL to single-use wallets. Without a sweep that SOL STAYS
+// THERE and the keys are lost when the process ends — so every run empties the
+// deploy wallet a little further. Which it did: the next program upgrade failed
+// because it could not find the 0.11 SOL for the buffer rent, and the devnet
+// faucet would not provide it because of the rate limit.
 //
-// Hesabı tamamen boşaltıyoruz (bakiye - işlem ücreti). Rent-exempt taban
-// altına düşen hesap zaten silinip lamport'ları iade ediliyor.
-async function suepuer(kaynaklar, hedef) {
-  let toplam = 0n
-  for (const kp of kaynaklar) {
+// We empty the account completely (balance minus the transaction fee). An
+// account that drops below the rent-exempt floor is deleted anyway and its
+// lamports are returned.
+async function sweep(sources, target) {
+  let total = 0n
+  for (const kp of sources) {
     try {
-      const bakiye = await connection.getBalance(kp.publicKey)
-      const ucret = 5_000
-      if (bakiye <= ucret) continue
-      const gonder = bakiye - ucret
-      // TEKRAR DENEME. İlk sürüm tek deneme yapıyordu ve devnet'te
-      // "Blockhash not found" ile düşüp SIFIR SOL geri aldı — süpürmenin
-      // tek işi cüzdanı boşaltmamak olduğu için sessizce başarısız olması
-      // onu tümüyle işlevsiz kılıyor. Hata geçici (blockhash yayılma
-      // gecikmesi), yani tekrar denemek çözüyor.
-      let gonderildi = false
-      let sonHata = null
-      for (let deneme = 0; deneme < 3 && !gonderildi; deneme++) {
+      const balance = await connection.getBalance(kp.publicKey)
+      const fee = 5_000
+      if (balance <= fee) continue
+      const amount = balance - fee
+      // RETRY. The first version made a single attempt, failed on devnet with
+      // "Blockhash not found" and recovered ZERO SOL — since the sweep's only
+      // job is to not empty the wallet, failing silently makes it entirely
+      // pointless. The error is transient (blockhash propagation delay), so
+      // retrying fixes it.
+      let sent = false
+      let lastError = null
+      for (let attempt = 0; attempt < 3 && !sent; attempt++) {
         try {
           await sendAndConfirmTransaction(
             connection,
             new Transaction().add(SystemProgram.transfer({
-              fromPubkey: kp.publicKey, toPubkey: hedef, lamports: gonder,
+              fromPubkey: kp.publicKey, toPubkey: target, lamports: amount,
             })),
             [kp],
             { commitment: 'confirmed' },
           )
-          gonderildi = true
+          sent = true
         } catch (err) {
-          sonHata = err
-          await new Promise((r) => setTimeout(r, 1500 * (deneme + 1)))
+          lastError = err
+          await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
         }
       }
-      if (!gonderildi) throw sonHata
-      toplam += BigInt(gonder)
+      if (!sent) throw lastError
+      total += BigInt(amount)
     } catch (err) {
-      console.log(`    süpürülemedi ${kp.publicKey.toBase58().slice(0, 8)}…: ${err.message}`)
+      console.log(`    could not sweep ${kp.publicKey.toBase58().slice(0, 8)}…: ${err.message}`)
     }
   }
-  console.log(`    geri alınan: ${Number(toplam) / 1_000_000_000} SOL`)
+  console.log(`    recovered: ${Number(total) / 1_000_000_000} SOL`)
 }
 
 // --- 1) Mint --------------------------------------------------------------
-adim(1, 'Atılabilir mint oluşturuluyor')
+step(1, 'Creating a throwaway mint')
 const mintKp = Keypair.generate()
 const rent = await connection.getMinimumBalanceForRentExemption(MINT_LEN)
 {
@@ -126,7 +125,7 @@ const rent = await connection.getMinimumBalanceForRentExemption(MINT_LEN)
   initMint.writeUInt8(0, 0) // InitializeMint
   initMint.writeUInt8(DECIMALS, 1)
   payer.publicKey.toBuffer().copy(initMint, 2)
-  initMint.writeUInt8(0, 34) // freeze authority yok
+  initMint.writeUInt8(0, 34) // no freeze authority
   const tx = new Transaction()
     .add(SystemProgram.createAccount({
       fromPubkey: payer.publicKey,
@@ -148,34 +147,34 @@ const rent = await connection.getMinimumBalanceForRentExemption(MINT_LEN)
 const MINT = mintKp.publicKey
 console.log(`    mint: ${MINT.toBase58()}`)
 
-// --- 2) Alıcılar ve merkle listesi -----------------------------------------
-adim(2, 'Sahte alıcı listesi ve merkle ağacı üretiliyor')
-const alicilar = [Keypair.generate(), Keypair.generate(), Keypair.generate()]
-const PAY = 1_110_000_000_000_000n // 1.110.000 token, 9 ondalık
-const tmp = mkdtempSync(join(tmpdir(), 'prova-'))
-const listeDosyasi = join(tmp, 'alicilar.txt')
-writeFileSync(listeDosyasi, alicilar.map((k) => k.publicKey.toBase58()).join('\n'))
+// --- 2) Buyers and the merkle list -----------------------------------------
+step(2, 'Producing a fake buyer list and the merkle tree')
+const buyers = [Keypair.generate(), Keypair.generate(), Keypair.generate()]
+const ALLOCATION = 1_110_000_000_000_000n // 1,110,000 tokens, 9 decimals
+const tmp = mkdtempSync(join(tmpdir(), 'rehearsal-'))
+const listFile = join(tmp, 'buyers.txt')
+writeFileSync(listFile, buyers.map((k) => k.publicKey.toBase58()).join('\n'))
 
-const merkleDosyasi = join(tmp, 'round.json')
+const merkleFile = join(tmp, 'round.json')
 writeFileSync(
-  merkleDosyasi,
+  merkleFile,
   execFileSync(process.execPath, [
-    'scripts/build-merkle.mjs', '--amount', PAY.toString(), listeDosyasi,
+    'scripts/build-merkle.mjs', '--amount', ALLOCATION.toString(), listFile,
   ], { encoding: 'utf8' }),
 )
-const merkle = JSON.parse(readFileSync(merkleDosyasi, 'utf8'))
-const TOPLAM = BigInt(merkle.total)
-console.log(`    ${merkle.count} alıcı · toplam ${TOPLAM} · kök ${merkle.root.slice(0, 16)}...`)
+const merkle = JSON.parse(readFileSync(merkleFile, 'utf8'))
+const TOTAL = BigInt(merkle.total)
+console.log(`    ${merkle.count} buyers · total ${TOTAL} · root ${merkle.root.slice(0, 16)}...`)
 
-// --- 3) Arz bas -------------------------------------------------------------
-adim(3, 'Arz basılıyor (kaynak hesaba)')
-const kaynak = ata(payer.publicKey, MINT)
+// --- 3) Mint the supply -----------------------------------------------------
+step(3, 'Minting the supply (into the source account)')
+const source = ata(payer.publicKey, MINT)
 {
   const createAta = new TransactionInstruction({
     programId: ASSOCIATED_TOKEN_PROGRAM_ID,
     keys: [
       { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-      { pubkey: kaynak, isSigner: false, isWritable: true },
+      { pubkey: source, isSigner: false, isWritable: true },
       { pubkey: payer.publicKey, isSigner: false, isWritable: false },
       { pubkey: MINT, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
@@ -185,14 +184,14 @@ const kaynak = ata(payer.publicKey, MINT)
   })
   const mintTo = Buffer.alloc(9)
   mintTo.writeUInt8(7, 0) // MintTo
-  mintTo.writeBigUInt64LE(TOPLAM, 1)
+  mintTo.writeBigUInt64LE(TOTAL, 1)
   await sendAndConfirmTransaction(
     connection,
     new Transaction().add(createAta).add(new TransactionInstruction({
       programId: TOKEN_PROGRAM_ID,
       keys: [
         { pubkey: MINT, isSigner: false, isWritable: true },
-        { pubkey: kaynak, isSigner: false, isWritable: true },
+        { pubkey: source, isSigner: false, isWritable: true },
         { pubkey: payer.publicKey, isSigner: true, isWritable: false },
       ],
       data: mintTo,
@@ -201,14 +200,14 @@ const kaynak = ata(payer.publicKey, MINT)
     { commitment: 'confirmed' },
   )
 }
-console.log(`    kaynak hesapta: ${await tokenBalance(kaynak)}`)
+console.log(`    in the source account: ${await tokenBalance(source)}`)
 
-// --- 4) Turu aç — TGE günü çalışacak script'in TA KENDİSİ ------------------
-adim(4, 'initialize-round.mjs çalıştırılıyor (gerçek kilitleme)')
-// Başlangıcı GEÇMİŞE alıyoruz ki TGE dilimi hemen açılmış olsun ve
-// claim'i aynı koşuda sınayabilelim. Takvim gerçek presale takvimiyle
-// birebir aynı: %9 + 13 × %7.
-const BASLANGIC = new Date(Date.now() - 60_000)
+// --- 4) Open the round — THE VERY script that runs on TGE day --------------
+step(4, 'Running initialize-round.mjs (a real lock)')
+// We put the start IN THE PAST so the TGE slice is already unlocked and we can
+// exercise the claim in the same run. The schedule is byte-for-byte the real
+// presale schedule: 9% + 13 x 7%.
+const START = new Date(Date.now() - 60_000)
 console.log(
   execFileSync(process.execPath, ['program/luck-distributor/scripts/initialize-round.mjs'], {
     encoding: 'utf8',
@@ -217,10 +216,10 @@ console.log(
       PROGRAM_ID: PROGRAM_ID.toBase58(),
       MINT: MINT.toBase58(),
       ROUND_ID: ROUND_ID.toString(),
-      MERKLE_FILE: merkleDosyasi,
-      START_ISO: BASLANGIC.toISOString(),
+      MERKLE_FILE: merkleFile,
+      START_ISO: START.toISOString(),
       CLIFF_BPS: '900', PERIOD_BPS: '700', PERIODS: '13',
-      SOURCE_TOKEN_ACCOUNT: kaynak.toBase58(),
+      SOURCE_TOKEN_ACCOUNT: source.toBase58(),
       KEYPAIR_PATH,
       RPC_URL,
       DRY_RUN: '0',
@@ -234,42 +233,42 @@ const [vault] = PublicKey.findProgramAddressSync(
   [Buffer.from('vault'), distributor.toBuffer()], PROGRAM_ID)
 
 // --- 5) Claim ---------------------------------------------------------------
-adim(5, 'Alıcı kendi payını çekiyor')
-const alici = alicilar[0]
-const giris = merkle.claims.find((c) => c.address === alici.publicKey.toBase58())
-if (!giris) throw new Error('alıcı merkle listesinde bulunamadı')
+step(5, 'The buyer claims their allocation')
+const buyer = buyers[0]
+const entry = merkle.claims.find((c) => c.address === buyer.publicKey.toBase58())
+if (!entry) throw new Error('the buyer was not found in the merkle list')
 
-// Alıcının işlem ücreti için birazcık SOL'e ihtiyacı var.
+// The buyer needs a little SOL for the transaction fee.
 await sendAndConfirmTransaction(
   connection,
   new Transaction().add(SystemProgram.transfer({
-    fromPubkey: payer.publicKey, toPubkey: alici.publicKey, lamports: 20_000_000,
+    fromPubkey: payer.publicKey, toPubkey: buyer.publicKey, lamports: 20_000_000,
   })),
   [payer],
   { commitment: 'confirmed' },
 )
 
-const hedef = ata(alici.publicKey, MINT)
+const destination = ata(buyer.publicKey, MINT)
 const [claimStatus] = PublicKey.findProgramAddressSync(
-  [Buffer.from('claim'), distributor.toBuffer(), alici.publicKey.toBuffer()], PROGRAM_ID)
+  [Buffer.from('claim'), distributor.toBuffer(), buyer.publicKey.toBuffer()], PROGRAM_ID)
 
 function claimIx() {
-  const kanit = giris.proof.map((h) => Buffer.from(h, 'hex'))
-  const data = Buffer.alloc(8 + 8 + 4 + kanit.length * 32)
+  const proof = entry.proof.map((h) => Buffer.from(h, 'hex'))
+  const data = Buffer.alloc(8 + 8 + 4 + proof.length * 32)
   let o = 0
   disc('claim').copy(data, o); o += 8
-  data.writeBigUInt64LE(BigInt(giris.amount), o); o += 8
-  data.writeUInt32LE(kanit.length, o); o += 4
-  for (const n of kanit) { n.copy(data, o); o += 32 }
+  data.writeBigUInt64LE(BigInt(entry.amount), o); o += 8
+  data.writeUInt32LE(proof.length, o); o += 4
+  for (const n of proof) { n.copy(data, o); o += 32 }
   return new TransactionInstruction({
     programId: PROGRAM_ID,
     keys: [
-      { pubkey: alici.publicKey, isSigner: true, isWritable: true },
+      { pubkey: buyer.publicKey, isSigner: true, isWritable: true },
       { pubkey: distributor, isSigner: false, isWritable: true },
       { pubkey: MINT, isSigner: false, isWritable: false },
       { pubkey: vault, isSigner: false, isWritable: true },
       { pubkey: claimStatus, isSigner: false, isWritable: true },
-      { pubkey: hedef, isSigner: false, isWritable: true },
+      { pubkey: destination, isSigner: false, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
@@ -278,52 +277,52 @@ function claimIx() {
   })
 }
 
-await sendAndConfirmTransaction(connection, new Transaction().add(claimIx()), [alici], {
+await sendAndConfirmTransaction(connection, new Transaction().add(claimIx()), [buyer], {
   commitment: 'confirmed',
 })
 
-// --- 6) Doğrulama -----------------------------------------------------------
-adim(6, 'Sonuç doğrulanıyor')
-const cekilen = (await tokenBalance(hedef)) ?? 0n
-const beklenen = (PAY * 900n) / 10_000n // TGE dilimi: %9
-console.log(`    çekilen : ${cekilen}`)
-console.log(`    beklenen: ${beklenen} (payın %9'u)`)
-if (cekilen !== beklenen) {
-  console.error('DOĞRULAMA DÜŞTÜ: çekilen tutar takvimin öngördüğüne eşit değil.')
+// --- 6) Verification --------------------------------------------------------
+step(6, 'Verifying the result')
+const claimed = (await tokenBalance(destination)) ?? 0n
+const expected = (ALLOCATION * 900n) / 10_000n // the TGE slice: 9%
+console.log(`    claimed : ${claimed}`)
+console.log(`    expected: ${expected} (9% of the allocation)`)
+if (claimed !== expected) {
+  console.error('VERIFICATION FAILED: the amount claimed does not equal what the schedule predicts.')
   process.exit(1)
 }
 
-const kasaKalan = await tokenBalance(vault)
-if (kasaKalan !== TOPLAM - beklenen) {
-  console.error(`DOĞRULAMA DÜŞTÜ: kasada ${kasaKalan}, olması gereken ${TOPLAM - beklenen}.`)
+const vaultRemaining = await tokenBalance(vault)
+if (vaultRemaining !== TOTAL - expected) {
+  console.error(`VERIFICATION FAILED: the vault holds ${vaultRemaining}, it should hold ${TOTAL - expected}.`)
   process.exit(1)
 }
 
-// İkinci claim aynı dilimi TEKRAR ödememeli.
-adim(7, 'İkinci claim denemesi (aynı dilim tekrar ödenmemeli)')
+// A second claim must NOT pay the same slice again.
+step(7, 'A second claim attempt (the same slice must not be paid twice)')
 try {
-  await sendAndConfirmTransaction(connection, new Transaction().add(claimIx()), [alici], {
+  await sendAndConfirmTransaction(connection, new Transaction().add(claimIx()), [buyer], {
     commitment: 'confirmed',
   })
 } catch {
-  // Program "çekilecek bir şey yok" diyerek reddedebilir — bu da kabul.
-  console.log('    ikinci deneme reddedildi (beklenen)')
+  // The program may reject it with "there is nothing to claim" — that is fine too.
+  console.log('    the second attempt was rejected (expected)')
 }
-const sonra = (await tokenBalance(hedef)) ?? 0n
-if (sonra !== cekilen) {
-  console.error(`DOĞRULAMA DÜŞTÜ: ikinci claim ${sonra - cekilen} token daha ödedi.`)
+const after = (await tokenBalance(destination)) ?? 0n
+if (after !== claimed) {
+  console.error(`VERIFICATION FAILED: the second claim paid another ${after - claimed} tokens.`)
   process.exit(1)
 }
 
-adim(8, 'Kalan SOL geri süpürülüyor')
-await suepuer(alicilar, payer.publicKey)
+step(8, 'Sweeping the leftover SOL back')
+await sweep(buyers, payer.publicKey)
 
 console.log('\n=========================================================')
-console.log(' PROVA BAŞARILI')
-console.log(` mint       : ${MINT.toBase58()}`)
-console.log(` dağıtıcı   : ${distributor.toBase58()}`)
-console.log(` kasa       : ${vault.toBase58()}`)
-console.log(` çekilen    : ${cekilen} (payın tam %9'u)`)
-console.log(` kasada     : ${kasaKalan}`)
-console.log(' çifte çekim: engellendi')
+console.log(' THE REHEARSAL SUCCEEDED')
+console.log(` mint         : ${MINT.toBase58()}`)
+console.log(` distributor  : ${distributor.toBase58()}`)
+console.log(` vault        : ${vault.toBase58()}`)
+console.log(` claimed      : ${claimed} (exactly 9% of the allocation)`)
+console.log(` in the vault : ${vaultRemaining}`)
+console.log(' double claim : prevented')
 console.log('=========================================================')

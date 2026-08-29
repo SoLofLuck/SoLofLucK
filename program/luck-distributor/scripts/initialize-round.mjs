@@ -1,31 +1,31 @@
 // ---------------------------------------------------------------------------
-// luck-distributor: bir dağıtım turu açar ve tokenleri kilitler
+// luck-distributor: opens a distribution round and locks the tokens
 // ---------------------------------------------------------------------------
-// TGE günü çalışacak script bu. Yaptığı iş sırayla:
-//   1. Dağıtıcı (distributor) hesabını ve kasasını (vault) oluşturur —
-//      merkle kökü, toplam miktar ve vesting takvimi burada SABİTLENİR.
-//   2. Tokenleri kasaya aktarır.
-//   3. Kasadaki bakiyenin merkle listesindeki toplama TAM eşit olduğunu
-//      doğrular.
+// This is the script that runs on TGE day. What it does, in order:
+//   1. Creates the distributor account and its vault — the merkle root, the
+//      total amount and the vesting schedule are FIXED here.
+//   2. Moves the tokens into the vault.
+//   3. Verifies that the vault balance is EXACTLY equal to the total in the
+//      merkle list.
 //
-// Adım 3 kritik: program "parayı geri çek" talimatı içermiyor (bilerek).
-// Kasaya eksik token konursa son alıcılar çekemez; fazla konursa fazlası
-// sonsuza kadar kilitli kalır. İkisi de geri alınamaz, o yüzden script
-// eksik ya da fazla gördüğü anda duruyor.
+// Step 3 is critical: the program contains no "withdraw the money" instruction
+// (deliberately). If too few tokens are put in the vault, the last buyers cannot
+// claim; if too many, the excess stays locked forever. Neither can be undone, so
+// the script stops the moment it sees a shortfall or an excess.
 //
-// Kullanım (env):
-//   PROGRAM_ID=...            (zorunlu) luck-distributor program adresi
-//   MINT=...                  (zorunlu) $LUCK mint adresi
-//   ROUND_ID=0                (zorunlu) 0 = presale, 1..14 = haftalık çekiliş
-//   MERKLE_FILE=public/merkle/round-0.json   (zorunlu)
-//   START_ISO=2026-09-01T12:00:00Z           (zorunlu) TGE / tur başlangıcı
+// Usage (env):
+//   PROGRAM_ID=...            (required) the luck-distributor program address
+//   MINT=...                  (required) the $LUCK mint address
+//   ROUND_ID=0                (required) 0 = presale, 1..14 = weekly raffles
+//   MERKLE_FILE=public/merkle/round-0.json   (required)
+//   START_ISO=2026-09-01T12:00:00Z           (required) TGE / round start
 //   CLIFF_BPS=900 PERIOD_BPS=700 PERIODS=13 PERIOD_SECONDS=604800
-//   SOURCE_TOKEN_ACCOUNT=...  (varsayılan: imzalayanın ATA'sı)
+//   SOURCE_TOKEN_ACCOUNT=...  (default: the signer's ATA)
 //   KEYPAIR_PATH=~/.config/solana/id.json
 //   RPC_URL=https://api.devnet.solana.com
-//   DRY_RUN=1                 hiçbir işlem göndermeden ne yapacağını yazar
+//   DRY_RUN=1                 prints what it would do without sending anything
 //
-// Çekiliş turları için takvim tek kalemdir: CLIFF_BPS=10000, PERIODS=0.
+// For raffle rounds the schedule is a single item: CLIFF_BPS=10000, PERIODS=0.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -46,7 +46,7 @@ const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xW
 function requireEnv(name) {
   const v = process.env[name]
   if (!v) {
-    console.error(`Eksik ortam değişkeni: ${name}`)
+    console.error(`Missing environment variable: ${name}`)
     process.exit(1)
   }
   return v
@@ -68,43 +68,43 @@ const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 const DRY_RUN = process.env.DRY_RUN === '1'
 
 if (!Number.isFinite(Number(START_TS)) || START_TS <= 0n) {
-  console.error('START_ISO geçerli bir tarih değil.')
+  console.error('START_ISO is not a valid date.')
   process.exit(1)
 }
 
-// Takvim kontrolü — program da aynısını zorunlu kılıyor (ScheduleNotComplete)
-// ama hatayı zincire para göndermeden ÖNCE görmek istiyoruz.
+// Schedule check — the program enforces the same thing (ScheduleNotComplete),
+// but we want to see the error BEFORE sending money to the chain.
 const totalBps = CLIFF_BPS + PERIODS * PERIOD_BPS
 if (totalBps !== 10_000) {
   console.error(
-    `Takvim %100'e ulaşmıyor: ${CLIFF_BPS} + ${PERIODS} × ${PERIOD_BPS} = ${totalBps} bps.\n` +
-      'Program bunu zaten reddederdi; burada durmak, boşuna işlem ücreti ödememek için.',
+    `The schedule does not reach 100%: ${CLIFF_BPS} + ${PERIODS} x ${PERIOD_BPS} = ${totalBps} bps.\n` +
+      'The program would reject this anyway; stopping here avoids paying a transaction fee for nothing.',
   )
   process.exit(1)
 }
 
-// --- Merkle dosyası ---------------------------------------------------------
+// --- The merkle file --------------------------------------------------------
 const merkle = JSON.parse(readFileSync(MERKLE_FILE, 'utf8'))
 if (!merkle.root || !Array.isArray(merkle.claims)) {
-  console.error(`${MERKLE_FILE} beklenen biçimde değil (root + claims).`)
+  console.error(`${MERKLE_FILE} is not in the expected format (root + claims).`)
   process.exit(1)
 }
 const totalFromClaims = merkle.claims.reduce((a, c) => a + BigInt(c.amount), 0n)
 if (merkle.total !== undefined && BigInt(merkle.total) !== totalFromClaims) {
   console.error(
-    `Merkle dosyasındaki toplam (${merkle.total}) tek tek payların toplamıyla ` +
-      `(${totalFromClaims}) uyuşmuyor.`,
+    `The total in the merkle file (${merkle.total}) does not match the sum of the ` +
+      `individual allocations (${totalFromClaims}).`,
   )
   process.exit(1)
 }
 const TOTAL_ALLOCATED = totalFromClaims
 const MERKLE_ROOT = Buffer.from(merkle.root, 'hex')
 if (MERKLE_ROOT.length !== 32) {
-  console.error('Merkle kökü 32 bayt değil.')
+  console.error('The merkle root is not 32 bytes.')
   process.exit(1)
 }
 
-// --- PDA'lar ----------------------------------------------------------------
+// --- The PDAs ---------------------------------------------------------------
 function u64le(v) {
   const b = Buffer.alloc(8)
   b.writeBigUInt64LE(BigInt(v))
@@ -126,7 +126,7 @@ function ata(owner, mint) {
   )[0]
 }
 
-// --- Anchor talimat ayırıcısı ----------------------------------------------
+// --- The Anchor instruction discriminator ----------------------------------
 const discriminator = (name) =>
   createHash('sha256').update(`global:${name}`).digest().subarray(0, 8)
 
@@ -158,7 +158,7 @@ function buildInitializeIx(authority) {
   })
 }
 
-/** SPL Token `Transfer` (talimat 3): u8 etiket + u64 miktar. */
+/** SPL Token `Transfer` (instruction 3): a u8 tag + a u64 amount. */
 function buildTransferIx(source, destination, owner, amount) {
   const data = Buffer.alloc(9)
   data.writeUInt8(3, 0)
@@ -177,20 +177,20 @@ function buildTransferIx(source, destination, owner, amount) {
 async function tokenBalance(connection, account) {
   const info = await connection.getAccountInfo(account)
   if (!info) return null
-  // SPL token hesabında miktar 64. bayttan itibaren, u64 little-endian.
+  // In an SPL token account the amount starts at byte 64, as a little-endian u64.
   return Buffer.from(info.data).readBigUInt64LE(64)
 }
 
-// --- Çalıştır ---------------------------------------------------------------
-// DRY_RUN, ANAHTAR OLMADAN da çalışmalı: bu modun asıl işi, TGE'den önce
-// "hangi sayılarla, hangi takvimle, hangi kökle kilitleyeceğiz" sorusunu
-// zincire hiç dokunmadan yanıtlamak. İmza anahtarı gerektirseydi bu
-// kontrolü ancak deploy makinesinde yapabilirdik.
-// Anahtar YALNIZCA gerçekten işlem gönderirken zorunlu. DRY_RUN ve
-// PRINT_IX, TGE'den önce her yerden koşturulabilmeli.
-const anahtarGerekli = !DRY_RUN && process.env.PRINT_IX !== '1'
+// --- Run --------------------------------------------------------------------
+// DRY_RUN has to work WITHOUT A KEY: the whole point of that mode is to answer,
+// before TGE and without touching the chain, "which numbers, which schedule and
+// which root are we going to lock with". If it required a signing key, that
+// check could only be done on the deploy machine.
+// A key is required ONLY when a transaction is actually sent. DRY_RUN and
+// PRINT_IX have to be runnable from anywhere before TGE.
+const keyRequired = !DRY_RUN && process.env.PRINT_IX !== '1'
 let payer = null
-if (anahtarGerekli || existsSync(KEYPAIR_PATH)) {
+if (keyRequired || existsSync(KEYPAIR_PATH)) {
   const secret = JSON.parse(readFileSync(KEYPAIR_PATH, 'utf8'))
   payer = Keypair.fromSecretKey(Uint8Array.from(secret))
 }
@@ -200,31 +200,31 @@ const source = process.env.SOURCE_TOKEN_ACCOUNT
     ? ata(payer.publicKey, MINT)
     : null
 
-const sessiz = process.env.PRINT_IX === '1'
-const yaz = (...a) => { if (!sessiz) console.log(...a) }
-yaz('=========================================================')
-yaz(` Tur              : ${ROUND_ID}`)
-yaz(` Program          : ${PROGRAM_ID.toBase58()}`)
-yaz(` Mint             : ${MINT.toBase58()}`)
-yaz(` Dağıtıcı         : ${distributor.toBase58()}`)
-yaz(` Kasa             : ${vault.toBase58()}`)
-yaz(` Kaynak hesap     : ${source ? source.toBase58() : '(imzalayanın ATA’sı — anahtar verilmedi)'}`)
-yaz(` Alıcı sayısı     : ${merkle.claims.length}`)
-yaz(` Toplam miktar    : ${TOTAL_ALLOCATED}`)
-yaz(` Merkle kökü      : ${merkle.root}`)
-yaz(` Başlangıç        : ${new Date(Number(START_TS) * 1000).toISOString()}`)
-yaz(` Takvim           : TGE %${CLIFF_BPS / 100} + ${PERIODS} × %${PERIOD_BPS / 100}`)
-yaz(` Aralık           : ${PERIOD_SECONDS} sn`)
-yaz('=========================================================')
+const quiet = process.env.PRINT_IX === '1'
+const say = (...a) => { if (!quiet) console.log(...a) }
+say('=========================================================')
+say(` Round            : ${ROUND_ID}`)
+say(` Program          : ${PROGRAM_ID.toBase58()}`)
+say(` Mint             : ${MINT.toBase58()}`)
+say(` Distributor      : ${distributor.toBase58()}`)
+say(` Vault            : ${vault.toBase58()}`)
+say(` Source account   : ${source ? source.toBase58() : "(the signer's ATA — no key was given)"}`)
+say(` Buyers           : ${merkle.claims.length}`)
+say(` Total amount     : ${TOTAL_ALLOCATED}`)
+say(` Merkle root      : ${merkle.root}`)
+say(` Start            : ${new Date(Number(START_TS) * 1000).toISOString()}`)
+say(` Schedule         : TGE ${CLIFF_BPS / 100}% + ${PERIODS} x ${PERIOD_BPS / 100}%`)
+say(` Interval         : ${PERIOD_SECONDS} s`)
+say('=========================================================')
 
-// PRINT_IX, bu script'in ÜRETTİĞİ initialize talimatını (bayt bayt) dışarı
-// veriyor. scripts/check-abi.mjs onu programın kendi ürettiği altın
-// vektörle karşılaştırıyor.
+// PRINT_IX exports the initialize instruction THIS SCRIPT PRODUCES, byte for
+// byte. scripts/check-abi.mjs compares it against the golden vector the program
+// itself produces.
 //
-// Talimatı kontrol script'inde yeniden yazmak yerine BURADAN okumamızın
-// sebebi: TGE günü çalışacak kod tam olarak bu — env okuması, takvim
-// hesabı, hesap sırası dahil. Kopyasını sınamak, kopyanın kendisiyle
-// uyuştuğunu kanıtlardı.
+// The reason we read the instruction FROM HERE rather than rewriting it in the
+// check script: this is exactly the code that will run on TGE day — including
+// the env reading, the schedule arithmetic and the account order. Testing a copy
+// would only prove that the copy agrees with itself.
 if (process.env.PRINT_IX === '1') {
   const authority = new PublicKey(
     process.env.AUTHORITY || 'BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36',
@@ -247,7 +247,7 @@ if (process.env.PRINT_IX === '1') {
 }
 
 if (DRY_RUN) {
-  console.log('DRY_RUN=1 — hiçbir işlem gönderilmedi.')
+  console.log('DRY_RUN=1 — no transaction was sent.')
   process.exit(0)
 }
 
@@ -255,7 +255,7 @@ const connection = new Connection(RPC_URL, 'confirmed')
 
 const existing = await connection.getAccountInfo(distributor)
 if (existing) {
-  console.log('Dağıtıcı zaten mevcut — initialize atlanıyor.')
+  console.log('The distributor already exists — skipping initialize.')
 } else {
   const sig = await sendAndConfirmTransaction(
     connection,
@@ -263,33 +263,33 @@ if (existing) {
     [payer],
     { commitment: 'confirmed' },
   )
-  console.log(`initialize gönderildi: ${sig}`)
+  console.log(`initialize sent: ${sig}`)
 }
 
 const vaultBalance = (await tokenBalance(connection, vault)) ?? 0n
-const eksik = TOTAL_ALLOCATED - vaultBalance
-if (eksik > 0n) {
-  console.log(`Kasaya ${eksik} token aktarılıyor...`)
+const shortfall = TOTAL_ALLOCATED - vaultBalance
+if (shortfall > 0n) {
+  console.log(`Moving ${shortfall} tokens into the vault...`)
   const sig = await sendAndConfirmTransaction(
     connection,
-    new Transaction().add(buildTransferIx(source, vault, payer.publicKey, eksik)),
+    new Transaction().add(buildTransferIx(source, vault, payer.publicKey, shortfall)),
     [payer],
     { commitment: 'confirmed' },
   )
-  console.log(`transfer gönderildi: ${sig}`)
-} else if (eksik < 0n) {
+  console.log(`transfer sent: ${sig}`)
+} else if (shortfall < 0n) {
   console.error(
-    `Kasada FAZLA token var (${vaultBalance} > ${TOTAL_ALLOCATED}). Fazlası ` +
-      'sonsuza kadar kilitli kalır — programda geri çekme talimatı yok.',
+    `The vault holds TOO MANY tokens (${vaultBalance} > ${TOTAL_ALLOCATED}). The ` +
+      'excess stays locked forever — the program has no withdraw instruction.',
   )
   process.exit(1)
 }
 
-// Son doğrulama: kasadaki bakiye listedeki toplama TAM eşit olmalı.
-const son = (await tokenBalance(connection, vault)) ?? 0n
-if (son !== TOTAL_ALLOCATED) {
-  console.error(`DOĞRULAMA DÜŞTÜ: kasada ${son}, olması gereken ${TOTAL_ALLOCATED}.`)
+// The final check: the vault balance has to be EXACTLY the total in the list.
+const finalBalance = (await tokenBalance(connection, vault)) ?? 0n
+if (finalBalance !== TOTAL_ALLOCATED) {
+  console.error(`VERIFICATION FAILED: the vault holds ${finalBalance}, it should hold ${TOTAL_ALLOCATED}.`)
   process.exit(1)
 }
-console.log(`\nTamam. Kasada tam ${son} token kilitli.`)
-console.log(`Dağıtıcı: ${distributor.toBase58()}`)
+console.log(`\nDone. Exactly ${finalBalance} tokens are locked in the vault.`)
+console.log(`Distributor: ${distributor.toBase58()}`)

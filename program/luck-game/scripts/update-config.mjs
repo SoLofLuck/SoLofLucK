@@ -1,29 +1,27 @@
-// luck-game update_config() çağırıcısı.
+// The luck-game update_config() caller.
 //
-// initialize() yalnızca BİR KEZ çalışır; oyunun parametrelerini (ödüller,
-// oranlar, paket tarifesi) ve HAZİNE CÜZDANINI sonradan değiştirmenin tek
-// yolu bu instruction. Yalnızca `config.authority` (deploy anahtarı)
-// çağırabilir.
+// initialize() runs only ONCE; this instruction is the only way to change the
+// game's parameters (the prizes, the odds, the package tariff) and THE TREASURY
+// WALLET afterwards. Only `config.authority` (the deploy key) can call it.
 //
-// DİKKAT: update_config, verilen TÜM alanları baştan yazar — "sadece şunu
-// değiştir" gibi kısmi bir güncelleme yok. Bu yüzden aşağıdaki
-// varsayılanlar src/config.ts içindeki GAME_CONFIG ile birebir aynı
-// tutulmalı; sadece değiştirmek istediğiniz değeri env ile geçin, gerisi
-// olduğu gibi yeniden yazılır.
+// CAREFUL: update_config rewrites EVERY field it is given from scratch — there
+// is no partial "just change this one thing" update. So the defaults below have
+// to be kept exactly in step with GAME_CONFIG in src/config.ts; pass only the
+// value you want to change through env, and the rest is rewritten as it was.
 //
-// Kullanım (env değişkenleriyle):
-//   PROGRAM_ID=...        (zorunlu)
-//   TREASURY_WALLET=...   (zorunlu — %20 payın ve ödül payının gideceği cüzdan)
-//   KEYPAIR_PATH=~/.config/solana/id.json  (varsayılan)
-//   RPC_URL=https://api.devnet.solana.com  (varsayılan)
+// Usage (through env variables):
+//   PROGRAM_ID=...        (required)
+//   TREASURY_WALLET=...   (required — the wallet the 20% share and the prize share go to)
+//   KEYPAIR_PATH=~/.config/solana/id.json  (default)
+//   RPC_URL=https://api.devnet.solana.com  (default)
 //   FREE_PLAYS=3
 //   SMALL_PRIZE_SOL=0.5  BIG_PRIZE_SOL=1  BIG_PRIZE_BPS=3000  VAULT_THRESHOLD_SOL=2
 //   NORMAL_WIN_BPS=50  EASY_WIN_BPS=1000  TREASURY_FEE_BPS=2000
 //   SPIN_TIER_COUNTS=1,5,10,20,50,100  SPIN_TIER_PRICES_SOL=0.1,0.3,0.5,0.8,1.5,2.5
 //
-// Not: `reveal_delay_slots` update_config'te YOK — commit/reveal penceresi
-// initialize anındaki değerde kalır (bekleyen oyunların kurallarını
-// değiştirmemek için kasıtlı).
+// Note: `reveal_delay_slots` is NOT in update_config — the commit/reveal window
+// stays at the value it had at initialize (deliberate, so that the rules of
+// pending games are not changed).
 
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -39,7 +37,7 @@ import {
 function requireEnv(name) {
   const v = process.env[name]
   if (!v) {
-    console.error(`Eksik ortam değişkeni: ${name}`)
+    console.error(`Missing environment variable: ${name}`)
     process.exit(1)
   }
   return v
@@ -61,15 +59,15 @@ const KEYPAIR_PATH = process.env.KEYPAIR_PATH || `${process.env.HOME}/.config/so
 const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 
 const LAMPORTS_PER_SOL = 1_000_000_000
-// Zincir üstü ücretsiz deneme: 0.
+// On-chain free spins: 0.
 //
-// Ücretsiz denemeler (3 + 1 bonus) TAMAMEN tarayıcıda, localStorage
-// üzerinde veriliyor (bkz. src/lib/luckGame.ts) — zincire hiç yazılmadıkları
-// için ne işlem ücreti ne de hesap kirası doğuruyorlar. Program da ilk
-// play() çağrısında ayrıca `free_plays` kadar kredi yüklüyordu; ikisi
-// birlikte çalışınca 0,1 SOL'e 1 spin alan oyuncu toplam 8 kez
-// çevirebiliyordu. Zincir üstü tarafı 0'a çekmek bunu kapatıyor (0 iken
-// program içindeki tek seferlik +1 bonus koşulu da hiç tetiklenmiyor).
+// The free spins (3 + 1 bonus) are granted ENTIRELY in the browser, in
+// localStorage (see src/lib/luckGame.ts) — because they are never written to the
+// chain they incur neither a transaction fee nor account rent. The program also
+// used to load `free_plays` credits on the first play() call; with both in
+// effect, a player who bought 1 spin for 0.1 SOL could spin 8 times in total.
+// Pulling the on-chain side to 0 closes that (at 0 the one-off +1 bonus
+// condition inside the program never fires either).
 const freePlays = envInt('FREE_PLAYS', 0)
 const smallPrizeLamports = BigInt(Math.round(envFloat('SMALL_PRIZE_SOL', 0.5) * LAMPORTS_PER_SOL))
 const bigPrizeLamports = BigInt(Math.round(envFloat('BIG_PRIZE_SOL', 1) * LAMPORTS_PER_SOL))
@@ -92,20 +90,20 @@ const spinTierPricesLamports = (process.env.SPIN_TIER_PRICES_SOL
 ).map((sol) => BigInt(Math.round(sol * LAMPORTS_PER_SOL)))
 
 if (spinTierCounts.length !== 6 || spinTierPricesLamports.length !== 6) {
-  console.error('SPIN_TIER_COUNTS ve SPIN_TIER_PRICES_SOL tam olarak 6 değer içermeli')
+  console.error('SPIN_TIER_COUNTS and SPIN_TIER_PRICES_SOL have to contain exactly 6 values')
   process.exit(1)
 }
 
-// Programın kendi kontrolüyle aynı kural: kasa eşiği, jackpot + onun
-// üstüne eklenen operasyon payını karşılayabilmeli. Zincire boşuna bir
-// işlem göndermeden burada da doğruluyoruz ki hata, anlaşılmaz bir
-// "InvalidParam" yerine burada net bir mesajla çıksın.
+// The same rule the program itself enforces: the vault threshold has to cover
+// the jackpot plus the operations fee added on top of it. We verify it here too,
+// without sending a pointless transaction to the chain, so the error comes out
+// with a clear message here rather than as an opaque "InvalidParam".
 const jackpotWithFee =
   bigPrizeLamports + (bigPrizeLamports * BigInt(treasuryFeeBps)) / BigInt(10_000)
 if (vaultThresholdLamports < jackpotWithFee) {
   console.error(
-    `VAULT_THRESHOLD_SOL çok düşük: jackpot + %${treasuryFeeBps / 100} pay = ` +
-      `${Number(jackpotWithFee) / LAMPORTS_PER_SOL} SOL, eşik ise ` +
+    `VAULT_THRESHOLD_SOL is too low: the jackpot + the ${treasuryFeeBps / 100}% share = ` +
+      `${Number(jackpotWithFee) / LAMPORTS_PER_SOL} SOL, while the threshold is ` +
       `${Number(vaultThresholdLamports) / LAMPORTS_PER_SOL} SOL.`,
   )
   process.exit(1)
@@ -140,16 +138,16 @@ async function main() {
   const existing = await connection.getAccountInfo(configPda)
   if (!existing) {
     console.error(
-      `GameConfig bulunamadı (${configPda.toBase58()}) — önce initialize.mjs çalıştırılmalı.`,
+      `GameConfig was not found (${configPda.toBase58()}) — initialize.mjs has to be run first.`,
     )
     process.exit(1)
   }
 
-  // Mevcut hazine adresini yazdır ki değişiklik kayda geçsin: GameConfig
-  // düzeni = 8 (disc) + 32 (authority) + 32 (treasury) ...
+  // Print the current treasury address so the change is on the record: the
+  // GameConfig layout is 8 (disc) + 32 (authority) + 32 (treasury) ...
   const currentTreasury = new PublicKey(existing.data.subarray(40, 72))
-  console.log('Mevcut hazine:', currentTreasury.toBase58())
-  console.log('Yeni hazine  :', TREASURY_WALLET.toBase58())
+  console.log('Current treasury:', currentTreasury.toBase58())
+  console.log('New treasury    :', TREASURY_WALLET.toBase58())
 
   const data = Buffer.concat([
     anchorDiscriminator('update_config'),
@@ -176,7 +174,7 @@ async function main() {
   })
 
   const sig = await sendAndConfirmTransaction(connection, new Transaction().add(ix), [authority])
-  console.log('update_config() başarılı, imza:', sig)
+  console.log('update_config() succeeded, signature:', sig)
 }
 
 main().catch((err) => {

@@ -1,26 +1,25 @@
 // ---------------------------------------------------------------------------
-// TAM AKIŞ PROVASI — presale'den claim'e, gerçek zincirde
+// THE FULL-FLOW REHEARSAL — from the presale to the claim, on a real chain
 // ---------------------------------------------------------------------------
-// rehearsal.mjs dağıtım tarafını kanıtlıyor (tur açma + claim). Ama TGE
-// gününün zinciri daha uzun ve halkalardan biri kopsa diğerleri işe
-// yaramaz:
+// rehearsal.mjs proves the distribution side (opening a round + claiming). But
+// TGE day's chain is longer than that, and if one link breaks the others are
+// useless:
 //
-//   katkı → alıcı listesi → merkle → dağıtıcı → claim
+//   contribution -> buyer list -> merkle -> distributor -> claim
 //
-// Ortadaki iki halka bugüne kadar GERÇEK ZİNCİRDE hiç koşmadı:
-// presale-buyers.mjs'in zincir okuma kısmı (yalnızca saf fonksiyonu
-// --selftest ile sınanmıştı) ve build-merkle.mjs'in o çıktıyı okuması.
-// Alıcı listesi yanlışsa herkesin payı yanlış olur ve bunu ancak TGE günü
-// öğreniriz.
+// The two links in the middle have never run ON A REAL CHAIN until now: the
+// chain-reading part of presale-buyers.mjs (only its pure function had been
+// exercised with --selftest) and build-merkle.mjs reading that output. If the
+// buyer list is wrong then everyone's allocation is wrong, and we would only
+// find out on TGE day.
 //
-// Bu prova zincirin TAMAMINI koşuyor: üç sahte alıcı gerçekten SOL
-// gönderiyor (sitenin yaptığı gibi %90/%10 bölünmüş, memo'lu), sonra
-// presale-buyers.mjs bu katkıları zincirden okuyor, build-merkle.mjs
-// ağacı kuruyor, initialize-round.mjs turu açıyor ve alıcılardan biri
-// payını çekiyor.
+// This rehearsal runs the WHOLE chain: three fake buyers really send SOL (split
+// 90%/10% with a memo, exactly as the site does), then presale-buyers.mjs reads
+// those contributions off the chain, build-merkle.mjs builds the tree,
+// initialize-round.mjs opens the round, and each buyer claims their allocation.
 //
-// Kullanım (env):
-//   PROGRAM_ID / KEYPAIR_PATH / RPC_URL / ROUND_ID (varsayılan 901)
+// Usage (env):
+//   PROGRAM_ID / KEYPAIR_PATH / RPC_URL / ROUND_ID (default 901)
 
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
@@ -45,29 +44,30 @@ const MINT_LEN = 82
 const LAMPORTS = 1_000_000_000
 
 const PROGRAM_ID = new PublicKey(
-  process.env.PROGRAM_ID ?? (() => { throw new Error('PROGRAM_ID gerekli') })(),
+  process.env.PROGRAM_ID ?? (() => { throw new Error('PROGRAM_ID is required') })(),
 )
 const KEYPAIR_PATH = process.env.KEYPAIR_PATH || `${process.env.HOME}/.config/solana/id.json`
 const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 const ROUND_ID = BigInt(process.env.ROUND_ID || '901')
 
-// Bölünme oranı ve fiyat sitedeki gerçek değerler.
+// The split ratio and the price are the real values from the site.
 //
-// KATKI TUTARLARI KÜÇÜLTÜLDÜ. Önce sitedeki gerçek ölçekle
-// (0,5 / 1,25 / 2,0 SOL, bilet birimi 0,5) koşuyordu ve tek prova 3,75
-// SOL harcıyordu — devnet cüzdanını boşalttı, faucet de rate limit
-// yüzünden doldurmadı. Prova "tekrar tekrar" koşturulamıyorsa işe
-// yaramaz.
+// THE CONTRIBUTION AMOUNTS WERE SCALED DOWN. It used to run at the site's real
+// scale (0.5 / 1.25 / 2.0 SOL, with a 0.5 ticket unit) and a single rehearsal
+// spent 3.75 SOL — it emptied the devnet wallet, and the faucet would not refill
+// it because of the rate limit. A rehearsal that cannot be run over and over is
+// useless.
 //
-// Bilet birimi de aynı oranda küçültüldüğü için sınanan MANTIK
-// değişmiyor: tam bölünen katkı, artan bırakan katkı ve katı bir kat.
-// Bilet hesabının doğruluğu oranlara bağlı, mutlak tutara değil.
+// Because the ticket unit was scaled down by the same factor, the LOGIC under
+// test does not change: a contribution that divides exactly, one that leaves a
+// remainder, and a strict multiple. The correctness of the ticket calculation
+// depends on the ratios, not on the absolute amounts.
 const TOKENS_PER_SOL = 350_000
 const TICKET_UNIT_SOL = 0.02
-/** Alıcı başına işlem ücreti + ATA kirası payı. Fazlası sonda geri süpürülüyor. */
-const ALICI_GAZ_LAMPORT = 10_000_000
-/** Katkı tutarları (SOL). Bakiye ön kontrolü de bunlardan hesaplıyor. */
-const ALICI_TUTARLARI = [0.02, 0.05, 0.08]
+/** Transaction fees plus a share of the ATA rent, per buyer. The excess is swept back at the end. */
+const BUYER_GAS_LAMPORTS = 10_000_000
+/** The contribution amounts (SOL). The balance pre-check is computed from these too. */
+const BUYER_AMOUNTS = [0.02, 0.05, 0.08]
 const OPS_NUM = 10
 const OPS_DEN = 100
 const DECIMALS = 9
@@ -77,7 +77,7 @@ const payer = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(readFileSync(KEYPAIR_PATH, 'utf8'))),
 )
 
-const adim = (n, t) => console.log(`\n[${n}] ${t}`)
+const step = (n, t) => console.log(`\n[${n}] ${t}`)
 const u64le = (v) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b }
 const disc = (n) => createHash('sha256').update(`global:${n}`).digest().subarray(0, 8)
 const ata = (owner, mint) =>
@@ -90,150 +90,151 @@ async function tokenBalance(a) {
   return i ? Buffer.from(i.data).readBigUInt64LE(64) : null
 }
 
-const tmp = mkdtempSync(join(tmpdir(), 'tam-prova-'))
+const tmp = mkdtempSync(join(tmpdir(), 'full-rehearsal-'))
 
-// --- Ön kontrol: bakiye yeterli mi ------------------------------------------
-// Yetersizse prova ortasında ham bir Solana hatasıyla ("Transfer:
-// insufficient lamports ...") düşüyor ve sebebi ancak logları okuyup
-// hesaplayarak anlaşılıyor. Baştan, tutarı ve cüzdanı adıyla söyleyerek
-// durmak daha dürüst.
+// --- Pre-check: is the balance sufficient -----------------------------------
+// If it is not, the rehearsal dies halfway through with a raw Solana error
+// ("Transfer: insufficient lamports ...") whose cause can only be worked out by
+// reading the logs and doing the arithmetic. Stopping up front, naming the
+// amount and the wallet, is more honest.
 //
-// KATKI TUTARLARI DAHA DA KÜÇÜLTÜLEMİYOR ve sebebi öğretici: katkı
-// %90/%10 bölünüyor, yani 0,02 SOL'lük katkıda operasyon cüzdanına
-// 2.000.000 lamport gidiyor. Bunun altına inersek operasyon payı
-// Solana'nın kira muafiyeti tabanının (~890.880 lamport) ALTINA düşer ve
-// işlem "InsufficientFundsForRent" ile reddedilir — tam da bu projenin
-// başında yaşanan hatanın aynısı. Yani prova ucuzlarken sınadığı akışı
-// bozmuş olurduk.
+// THE CONTRIBUTION AMOUNTS CANNOT BE SCALED DOWN FURTHER, and the reason is
+// instructive: a contribution is split 90%/10%, so on a 0.02 SOL contribution
+// 2,000,000 lamports go to the operations wallet. Below that, the operations
+// share drops UNDER Solana's rent-exemption floor (~890,880 lamports) and the
+// transaction is rejected with "InsufficientFundsForRent" — the very same error
+// this project hit at the start. So making the rehearsal cheaper would break the
+// flow it is meant to test.
 {
-  const gerekenLamport =
-    ALICI_TUTARLARI.reduce((t, sol) => t + Math.round(sol * LAMPORTS) + ALICI_GAZ_LAMPORT, 0) +
-    60_000_000 // mint, dağıtıcı, kasa ve ATA kiraları + işlem ücretleri payı
-  const mevcut = await connection.getBalance(payer.publicKey)
-  if (mevcut < gerekenLamport) {
+  const neededLamports =
+    BUYER_AMOUNTS.reduce((t, sol) => t + Math.round(sol * LAMPORTS) + BUYER_GAS_LAMPORTS, 0) +
+    60_000_000 // the mint, distributor, vault and ATA rents + a share of the transaction fees
+  const current = await connection.getBalance(payer.publicKey)
+  if (current < neededLamports) {
     console.error(
-      'Bakiye yetersiz.\n' +
-        `  cüzdan  : ${payer.publicKey.toBase58()}\n` +
-        `  mevcut  : ${(mevcut / LAMPORTS).toFixed(4)} SOL\n` +
-        `  gereken : ~${(gerekenLamport / LAMPORTS).toFixed(4)} SOL\n\n` +
-        "Devnet faucet'i GitHub runner IP'lerini sınırlıyor. Bu cüzdana elle " +
-        'devnet SOL gönderilmesi gerekiyor (faucet.solana.com).',
+      'Insufficient balance.\n' +
+        `  wallet  : ${payer.publicKey.toBase58()}\n` +
+        `  current : ${(current / LAMPORTS).toFixed(4)} SOL\n` +
+        `  needed  : ~${(neededLamports / LAMPORTS).toFixed(4)} SOL\n\n` +
+        'The devnet faucet rate-limits GitHub runner IPs. Devnet SOL has to be ' +
+        'sent to this wallet by hand (faucet.solana.com).',
     )
     process.exit(1)
   }
 }
 
-// --- Kalan SOL'ü geri süpür -------------------------------------------------
-// Prova, tek kullanımlık cüzdanlara SOL gönderiyor. Süpürülmezse o SOL
-// ORADA KALIYOR ve anahtarlar süreç bitince kayboluyor — yani her koşu
-// deploy cüzdanını biraz daha boşaltıyor. Nitekim boşalttı: bir sonraki
-// program yükseltmesi, buffer kirası için 0,11 SOL bulamadığı ve devnet
-// faucet'i de rate limit yüzünden vermediği için düştü.
+// --- Sweep the leftover SOL back --------------------------------------------
+// The rehearsal sends SOL to single-use wallets. Without a sweep that SOL STAYS
+// THERE and the keys are lost when the process ends — so every run empties the
+// deploy wallet a little further. Which it did: the next program upgrade failed
+// because it could not find the 0.11 SOL for the buffer rent, and the devnet
+// faucet would not provide it because of the rate limit.
 //
-// Hesabı tamamen boşaltıyoruz (bakiye - işlem ücreti). Rent-exempt taban
-// altına düşen hesap zaten silinip lamport'ları iade ediliyor.
-async function suepuer(kaynaklar, hedef) {
-  let toplam = 0n
-  for (const kp of kaynaklar) {
+// We empty the account completely (balance minus the transaction fee). An
+// account that drops below the rent-exempt floor is deleted anyway and its
+// lamports are returned.
+async function sweep(sources, target) {
+  let total = 0n
+  for (const kp of sources) {
     try {
-      const bakiye = await connection.getBalance(kp.publicKey)
-      const ucret = 5_000
-      if (bakiye <= ucret) continue
-      const gonder = bakiye - ucret
-      // TEKRAR DENEME. İlk sürüm tek deneme yapıyordu ve devnet'te
-      // "Blockhash not found" ile düşüp SIFIR SOL geri aldı — süpürmenin
-      // tek işi cüzdanı boşaltmamak olduğu için sessizce başarısız olması
-      // onu tümüyle işlevsiz kılıyor. Hata geçici (blockhash yayılma
-      // gecikmesi), yani tekrar denemek çözüyor.
-      let gonderildi = false
-      let sonHata = null
-      for (let deneme = 0; deneme < 3 && !gonderildi; deneme++) {
+      const balance = await connection.getBalance(kp.publicKey)
+      const fee = 5_000
+      if (balance <= fee) continue
+      const amount = balance - fee
+      // RETRY. The first version made a single attempt, failed on devnet with
+      // "Blockhash not found" and recovered ZERO SOL — since the sweep's only
+      // job is to not empty the wallet, failing silently makes it entirely
+      // pointless. The error is transient (blockhash propagation delay), so
+      // retrying fixes it.
+      let sent = false
+      let lastError = null
+      for (let attempt = 0; attempt < 3 && !sent; attempt++) {
         try {
           await sendAndConfirmTransaction(
             connection,
             new Transaction().add(SystemProgram.transfer({
-              fromPubkey: kp.publicKey, toPubkey: hedef, lamports: gonder,
+              fromPubkey: kp.publicKey, toPubkey: target, lamports: amount,
             })),
             [kp],
             { commitment: 'confirmed' },
           )
-          gonderildi = true
+          sent = true
         } catch (err) {
-          sonHata = err
-          await new Promise((r) => setTimeout(r, 1500 * (deneme + 1)))
+          lastError = err
+          await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
         }
       }
-      if (!gonderildi) throw sonHata
-      toplam += BigInt(gonder)
+      if (!sent) throw lastError
+      total += BigInt(amount)
     } catch (err) {
-      console.log(`    süpürülemedi ${kp.publicKey.toBase58().slice(0, 8)}…: ${err.message}`)
+      console.log(`    could not sweep ${kp.publicKey.toBase58().slice(0, 8)}…: ${err.message}`)
     }
   }
-  console.log(`    geri alınan: ${Number(toplam) / 1_000_000_000} SOL`)
+  console.log(`    recovered: ${Number(total) / 1_000_000_000} SOL`)
 }
 
 
-// --- 1) Atılabilir presale ve operasyon cüzdanları --------------------------
-adim(1, 'Atılabilir presale/operasyon cüzdanları ve üç alıcı')
+// --- 1) Throwaway presale and operations wallets ----------------------------
+step(1, 'Throwaway presale/operations wallets and three buyers')
 const presaleWallet = Keypair.generate()
 const opsWallet = Keypair.generate()
-// 0,02 → tam 1 bilet · 0,05 → 2 bilet (0,01 artıyor) · 0,08 → 4 bilet
-const alicilar = ALICI_TUTARLARI.map((sol) => ({ kp: Keypair.generate(), sol }))
-for (const a of alicilar) {
+// 0.02 -> exactly 1 ticket · 0.05 -> 2 tickets (0.01 left over) · 0.08 -> 4 tickets
+const buyers = BUYER_AMOUNTS.map((sol) => ({ kp: Keypair.generate(), sol }))
+for (const b of buyers) {
   await sendAndConfirmTransaction(
     connection,
     new Transaction().add(SystemProgram.transfer({
       fromPubkey: payer.publicKey,
-      toPubkey: a.kp.publicKey,
-      lamports: Math.round(a.sol * LAMPORTS) + ALICI_GAZ_LAMPORT,
+      toPubkey: b.kp.publicKey,
+      lamports: Math.round(b.sol * LAMPORTS) + BUYER_GAS_LAMPORTS,
     })),
     [payer],
     { commitment: 'confirmed' },
   )
-  console.log(`    alıcı ${a.kp.publicKey.toBase58().slice(0, 8)}… → ${a.sol} SOL katkı yapacak`)
+  console.log(`    buyer ${b.kp.publicKey.toBase58().slice(0, 8)}… will contribute ${b.sol} SOL`)
 }
 
-// --- 2) Katkılar — sitenin yaptığı işlemin AYNISI ---------------------------
-adim(2, 'Katkılar gönderiliyor (%90 kasa / %10 operasyon, memo ile)')
-for (const a of alicilar) {
-  const toplam = Math.round(a.sol * LAMPORTS)
-  const ops = Math.floor((toplam * OPS_NUM) / OPS_DEN)
-  const havuz = toplam - ops
-  const bilet = Math.floor((a.sol + 1e-9) / TICKET_UNIT_SOL)
+// --- 2) The contributions — EXACTLY the transaction the site sends ----------
+step(2, 'Sending the contributions (90% vault / 10% operations, with a memo)')
+for (const b of buyers) {
+  const total = Math.round(b.sol * LAMPORTS)
+  const ops = Math.floor((total * OPS_NUM) / OPS_DEN)
+  const pool = total - ops
+  const tickets = Math.floor((b.sol + 1e-9) / TICKET_UNIT_SOL)
   await sendAndConfirmTransaction(
     connection,
     new Transaction()
       .add(SystemProgram.transfer({
-        fromPubkey: a.kp.publicKey, toPubkey: presaleWallet.publicKey, lamports: havuz,
+        fromPubkey: b.kp.publicKey, toPubkey: presaleWallet.publicKey, lamports: pool,
       }))
       .add(SystemProgram.transfer({
-        fromPubkey: a.kp.publicKey, toPubkey: opsWallet.publicKey, lamports: ops,
+        fromPubkey: b.kp.publicKey, toPubkey: opsWallet.publicKey, lamports: ops,
       }))
       .add(new TransactionInstruction({
-        keys: [{ pubkey: a.kp.publicKey, isSigner: true, isWritable: false }],
+        keys: [{ pubkey: b.kp.publicKey, isSigner: true, isWritable: false }],
         programId: MEMO_PROGRAM_ID,
         data: Buffer.from(JSON.stringify({
-          app: 'solofluck-presale', mode: 'flex', sol: a.sol, tickets: bilet,
-          pool: havuz, ops,
+          app: 'solofluck-presale', mode: 'flex', sol: b.sol, tickets,
+          pool, ops,
         }), 'utf-8'),
       })),
-    [a.kp],
+    [b.kp],
     { commitment: 'confirmed' },
   )
-  // İKİ ALAN, İKİ AYRI BİRİM — ikisi de ayrı ayrı doğrulanıyor.
-  // `tokens` insan için (tam token), `baseUnits` zincir için (en küçük
-  // birim). Merkle yaprağına ve claim'e giren `baseUnits`.
-  a.beklenenTamToken = Math.round(a.sol * TOKENS_PER_SOL)
-  a.beklenenToken = BigInt(a.beklenenTamToken) * BigInt(10) ** BigInt(DECIMALS)
-  a.beklenenBilet = bilet
-  console.log(`    ${a.sol} SOL gönderildi (${havuz} kasa + ${ops} operasyon)`)
+  // TWO FIELDS, TWO DIFFERENT UNITS — each is verified separately.
+  // `tokens` is for humans (whole tokens), `baseUnits` is for the chain (the
+  // smallest unit). What goes into the merkle leaf and the claim is `baseUnits`.
+  b.expectedWholeTokens = Math.round(b.sol * TOKENS_PER_SOL)
+  b.expectedBaseUnits = BigInt(b.expectedWholeTokens) * BigInt(10) ** BigInt(DECIMALS)
+  b.expectedTickets = tickets
+  console.log(`    sent ${b.sol} SOL (${pool} vault + ${ops} operations)`)
 }
 
-// --- 3) Alıcı listesi — ZİNCİRDEN okunuyor ---------------------------------
-adim(3, 'presale-buyers.mjs zincirden okuyor')
-const alicilarJson = join(tmp, 'alicilar.json')
+// --- 3) The buyer list — read FROM THE CHAIN -------------------------------
+step(3, 'presale-buyers.mjs reads from the chain')
+const buyersJson = join(tmp, 'buyers.json')
 writeFileSync(
-  alicilarJson,
+  buyersJson,
   execFileSync(process.execPath, ['scripts/presale-buyers.mjs'], {
     encoding: 'utf8',
     env: {
@@ -247,69 +248,69 @@ writeFileSync(
     },
   }),
 )
-const liste = JSON.parse(readFileSync(alicilarJson, 'utf8'))
-const kayitlar = liste.buyers ?? liste.rows ?? liste
-console.log(`    ${Array.isArray(kayitlar) ? kayitlar.length : '?'} alıcı bulundu`)
+const list = JSON.parse(readFileSync(buyersJson, 'utf8'))
+const records = list.buyers ?? list.rows ?? list
+console.log(`    found ${Array.isArray(records) ? records.length : '?'} buyer(s)`)
 
-// ASIL KONTROL: script her alıcıya TAM doğru tutarı verdi mi?
-// Operasyon payı sayılmasaydı herkes %10 eksik alırdı — bu kontrol tam
-// olarak o hatayı yakalar.
-let hata = 0
-for (const a of alicilar) {
-  const adres = a.kp.publicKey.toBase58()
-  const kayit = (Array.isArray(kayitlar) ? kayitlar : []).find(
-    (r) => (r.address ?? r.wallet ?? r.buyer) === adres,
+// THE REAL CHECK: did the script give every buyer EXACTLY the right amount?
+// If the operations share were not accounted for, everyone would be 10% short —
+// this check catches precisely that bug.
+let errors = 0
+for (const b of buyers) {
+  const address = b.kp.publicKey.toBase58()
+  const record = (Array.isArray(records) ? records : []).find(
+    (r) => (r.address ?? r.wallet ?? r.buyer) === address,
   )
-  if (!kayit) {
-    console.error(`    HATA: ${adres} listede yok`)
-    hata++
+  if (!record) {
+    console.error(`    ERROR: ${address} is not in the list`)
+    errors++
     continue
   }
-  // `baseUnits` alanı ZORUNLU: merkle yaprağına giren sayı bu. Yoksa
-  // liste eski sürümle üretilmiş demektir ve sessizce 10^9 kat yanlış
-  // bir ağaç kurulurdu.
-  if (kayit.baseUnits === undefined) {
-    console.error(`    HATA: ${adres} kaydında "baseUnits" yok`)
-    hata++
+  // The `baseUnits` field is REQUIRED: it is the number that goes into the
+  // merkle leaf. Without it the list was produced by an older version, and the
+  // tree would silently be built with a factor of 10^9 wrong.
+  if (record.baseUnits === undefined) {
+    console.error(`    ERROR: the record for ${address} has no "baseUnits"`)
+    errors++
     continue
   }
-  const tamToken = Number(kayit.tokens ?? -1)
-  const enKucukBirim = BigInt(kayit.baseUnits)
-  const bilet = Number(kayit.tickets ?? -1)
-  const tamOk = tamToken === a.beklenenTamToken
-  const birimOk = enKucukBirim === a.beklenenToken
-  const biletOk = bilet === a.beklenenBilet
+  const wholeTokens = Number(record.tokens ?? -1)
+  const baseUnits = BigInt(record.baseUnits)
+  const tickets = Number(record.tickets ?? -1)
+  const wholeOk = wholeTokens === b.expectedWholeTokens
+  const unitsOk = baseUnits === b.expectedBaseUnits
+  const ticketsOk = tickets === b.expectedTickets
   console.log(
-    `    ${adres.slice(0, 8)}…` +
-      ` tam token ${tamToken}/${a.beklenenTamToken} ${tamOk ? 'OK' : 'HATA'}` +
-      ` · en küçük birim ${enKucukBirim}/${a.beklenenToken} ${birimOk ? 'OK' : 'HATA'}` +
-      ` · bilet ${bilet}/${a.beklenenBilet} ${biletOk ? 'OK' : 'HATA'}`,
+    `    ${address.slice(0, 8)}…` +
+      ` whole tokens ${wholeTokens}/${b.expectedWholeTokens} ${wholeOk ? 'OK' : 'ERROR'}` +
+      ` · base units ${baseUnits}/${b.expectedBaseUnits} ${unitsOk ? 'OK' : 'ERROR'}` +
+      ` · tickets ${tickets}/${b.expectedTickets} ${ticketsOk ? 'OK' : 'ERROR'}`,
   )
-  if (!tamOk || !birimOk || !biletOk) hata++
+  if (!wholeOk || !unitsOk || !ticketsOk) errors++
 }
-if (hata > 0) {
-  console.error(`\nDOĞRULAMA DÜŞTÜ: ${hata} alıcının payı yanlış hesaplandı.`)
+if (errors > 0) {
+  console.error(`\nVERIFICATION FAILED: the allocation of ${errors} buyer(s) was computed wrong.`)
   process.exit(1)
 }
 
-// --- 4) Merkle ağacı — alıcı listesinden --------------------------------
-adim(4, 'build-merkle.mjs alıcı listesinden ağacı kuruyor')
-const merkleDosyasi = join(tmp, 'round.json')
+// --- 4) The merkle tree — from the buyer list ------------------------------
+step(4, 'build-merkle.mjs builds the tree from the buyer list')
+const merkleFile = join(tmp, 'round.json')
 writeFileSync(
-  merkleDosyasi,
-  execFileSync(process.execPath, ['scripts/build-merkle.mjs', alicilarJson], { encoding: 'utf8' }),
+  merkleFile,
+  execFileSync(process.execPath, ['scripts/build-merkle.mjs', buyersJson], { encoding: 'utf8' }),
 )
-const merkle = JSON.parse(readFileSync(merkleDosyasi, 'utf8'))
-const TOPLAM = BigInt(merkle.total)
-console.log(`    ${merkle.count} yaprak · toplam ${TOPLAM} · kök ${merkle.root.slice(0, 16)}…`)
-const beklenenToplam = alicilar.reduce((s, a) => s + a.beklenenToken, 0n)
-if (TOPLAM !== beklenenToplam) {
-  console.error(`DOĞRULAMA DÜŞTÜ: merkle toplamı ${TOPLAM}, olması gereken ${beklenenToplam}.`)
+const merkle = JSON.parse(readFileSync(merkleFile, 'utf8'))
+const TOTAL = BigInt(merkle.total)
+console.log(`    ${merkle.count} leaves · total ${TOTAL} · root ${merkle.root.slice(0, 16)}…`)
+const expectedTotal = buyers.reduce((s, b) => s + b.expectedBaseUnits, 0n)
+if (TOTAL !== expectedTotal) {
+  console.error(`VERIFICATION FAILED: the merkle total is ${TOTAL}, it should be ${expectedTotal}.`)
   process.exit(1)
 }
 
-// --- 5) Mint + arz ----------------------------------------------------------
-adim(5, 'Mint oluşturuluyor ve arz basılıyor')
+// --- 5) Mint + supply -------------------------------------------------------
+step(5, 'Creating the mint and minting the supply')
 const mintKp = Keypair.generate()
 const rent = await connection.getMinimumBalanceForRentExemption(MINT_LEN)
 const initMint = Buffer.alloc(35)
@@ -336,10 +337,10 @@ await sendAndConfirmTransaction(
   { commitment: 'confirmed' },
 )
 const MINT = mintKp.publicKey
-const kaynak = ata(payer.publicKey, MINT)
+const source = ata(payer.publicKey, MINT)
 const mintTo = Buffer.alloc(9)
 mintTo.writeUInt8(7, 0)
-mintTo.writeBigUInt64LE(TOPLAM, 1)
+mintTo.writeBigUInt64LE(TOTAL, 1)
 await sendAndConfirmTransaction(
   connection,
   new Transaction()
@@ -347,7 +348,7 @@ await sendAndConfirmTransaction(
       programId: ASSOCIATED_TOKEN_PROGRAM_ID,
       keys: [
         { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-        { pubkey: kaynak, isSigner: false, isWritable: true },
+        { pubkey: source, isSigner: false, isWritable: true },
         { pubkey: payer.publicKey, isSigner: false, isWritable: false },
         { pubkey: MINT, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
@@ -359,7 +360,7 @@ await sendAndConfirmTransaction(
       programId: TOKEN_PROGRAM_ID,
       keys: [
         { pubkey: MINT, isSigner: false, isWritable: true },
-        { pubkey: kaynak, isSigner: false, isWritable: true },
+        { pubkey: source, isSigner: false, isWritable: true },
         { pubkey: payer.publicKey, isSigner: true, isWritable: false },
       ],
       data: mintTo,
@@ -367,10 +368,10 @@ await sendAndConfirmTransaction(
   [payer],
   { commitment: 'confirmed' },
 )
-console.log(`    mint ${MINT.toBase58()} · basılan ${await tokenBalance(kaynak)}`)
+console.log(`    mint ${MINT.toBase58()} · minted ${await tokenBalance(source)}`)
 
-// --- 6) Turu aç -------------------------------------------------------------
-adim(6, 'initialize-round.mjs turu açıyor (gerçek presale takvimi)')
+// --- 6) Open the round ------------------------------------------------------
+step(6, 'initialize-round.mjs opens the round (the real presale schedule)')
 console.log(
   execFileSync(process.execPath, ['program/luck-distributor/scripts/initialize-round.mjs'], {
     encoding: 'utf8',
@@ -379,84 +380,84 @@ console.log(
       PROGRAM_ID: PROGRAM_ID.toBase58(),
       MINT: MINT.toBase58(),
       ROUND_ID: ROUND_ID.toString(),
-      MERKLE_FILE: merkleDosyasi,
+      MERKLE_FILE: merkleFile,
       START_ISO: new Date(Date.now() - 60_000).toISOString(),
       CLIFF_BPS: '900', PERIOD_BPS: '700', PERIODS: '13',
-      SOURCE_TOKEN_ACCOUNT: kaynak.toBase58(),
+      SOURCE_TOKEN_ACCOUNT: source.toBase58(),
       KEYPAIR_PATH, RPC_URL, DRY_RUN: '0',
     },
   }),
 )
 
 // --- 7) Claim ---------------------------------------------------------------
-adim(7, 'Her alıcı payını çekiyor')
+step(7, 'Every buyer claims their allocation')
 const [distributor] = PublicKey.findProgramAddressSync(
   [Buffer.from('distributor'), MINT.toBuffer(), u64le(ROUND_ID)], PROGRAM_ID)
 const [vault] = PublicKey.findProgramAddressSync(
   [Buffer.from('vault'), distributor.toBuffer()], PROGRAM_ID)
 
-let toplamCekilen = 0n
-for (const a of alicilar) {
-  const adres = a.kp.publicKey.toBase58()
-  const giris = merkle.claims.find((c) => c.address === adres)
-  if (!giris) { console.error(`HATA: ${adres} merkle'da yok`); process.exit(1) }
+let totalClaimed = 0n
+for (const b of buyers) {
+  const address = b.kp.publicKey.toBase58()
+  const entry = merkle.claims.find((c) => c.address === address)
+  if (!entry) { console.error(`ERROR: ${address} is not in the merkle tree`); process.exit(1) }
 
-  const hedef = ata(a.kp.publicKey, MINT)
+  const destination = ata(b.kp.publicKey, MINT)
   const [claimStatus] = PublicKey.findProgramAddressSync(
-    [Buffer.from('claim'), distributor.toBuffer(), a.kp.publicKey.toBuffer()], PROGRAM_ID)
-  const kanit = giris.proof.map((h) => Buffer.from(h, 'hex'))
-  const data = Buffer.alloc(8 + 8 + 4 + kanit.length * 32)
+    [Buffer.from('claim'), distributor.toBuffer(), b.kp.publicKey.toBuffer()], PROGRAM_ID)
+  const proof = entry.proof.map((h) => Buffer.from(h, 'hex'))
+  const data = Buffer.alloc(8 + 8 + 4 + proof.length * 32)
   let o = 0
   disc('claim').copy(data, o); o += 8
-  data.writeBigUInt64LE(BigInt(giris.amount), o); o += 8
-  data.writeUInt32LE(kanit.length, o); o += 4
-  for (const n of kanit) { n.copy(data, o); o += 32 }
+  data.writeBigUInt64LE(BigInt(entry.amount), o); o += 8
+  data.writeUInt32LE(proof.length, o); o += 4
+  for (const n of proof) { n.copy(data, o); o += 32 }
 
   await sendAndConfirmTransaction(
     connection,
     new Transaction().add(new TransactionInstruction({
       programId: PROGRAM_ID,
       keys: [
-        { pubkey: a.kp.publicKey, isSigner: true, isWritable: true },
+        { pubkey: b.kp.publicKey, isSigner: true, isWritable: true },
         { pubkey: distributor, isSigner: false, isWritable: true },
         { pubkey: MINT, isSigner: false, isWritable: false },
         { pubkey: vault, isSigner: false, isWritable: true },
         { pubkey: claimStatus, isSigner: false, isWritable: true },
-        { pubkey: hedef, isSigner: false, isWritable: true },
+        { pubkey: destination, isSigner: false, isWritable: true },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       data,
     })),
-    [a.kp],
+    [b.kp],
     { commitment: 'confirmed' },
   )
 
-  const cekilen = (await tokenBalance(hedef)) ?? 0n
-  const beklenen = (a.beklenenToken * 900n) / 10_000n
-  console.log(`    ${adres.slice(0, 8)}… çekti ${cekilen} (bekl. ${beklenen})`)
-  if (cekilen !== beklenen) {
-    console.error(`DOĞRULAMA DÜŞTÜ: ${adres} yanlış tutar çekti.`)
+  const claimed = (await tokenBalance(destination)) ?? 0n
+  const expected = (b.expectedBaseUnits * 900n) / 10_000n
+  console.log(`    ${address.slice(0, 8)}… claimed ${claimed} (expected ${expected})`)
+  if (claimed !== expected) {
+    console.error(`VERIFICATION FAILED: ${address} claimed the wrong amount.`)
     process.exit(1)
   }
-  toplamCekilen += cekilen
+  totalClaimed += claimed
 }
 
-const kasa = await tokenBalance(vault)
-if (kasa !== TOPLAM - toplamCekilen) {
-  console.error(`DOĞRULAMA DÜŞTÜ: kasada ${kasa}, olması gereken ${TOPLAM - toplamCekilen}.`)
+const vaultBalance = await tokenBalance(vault)
+if (vaultBalance !== TOTAL - totalClaimed) {
+  console.error(`VERIFICATION FAILED: the vault holds ${vaultBalance}, it should hold ${TOTAL - totalClaimed}.`)
   process.exit(1)
 }
 
-adim(8, 'Kalan SOL geri süpürülüyor')
-await suepuer([...alicilar.map((a) => a.kp), presaleWallet, opsWallet], payer.publicKey)
+step(8, 'Sweeping the leftover SOL back')
+await sweep([...buyers.map((b) => b.kp), presaleWallet, opsWallet], payer.publicKey)
 
 console.log('\n=========================================================')
-console.log(' TAM AKIŞ PROVASI BAŞARILI')
-console.log(' katkı → alıcı listesi → merkle → dağıtıcı → claim')
-console.log(` alıcı sayısı  : ${alicilar.length}`)
-console.log(` toplam pay    : ${TOPLAM}`)
-console.log(` çekilen (TGE) : ${toplamCekilen}`)
-console.log(` kasada kalan  : ${kasa}`)
+console.log(' THE FULL-FLOW REHEARSAL SUCCEEDED')
+console.log(' contribution -> buyer list -> merkle -> distributor -> claim')
+console.log(` buyers          : ${buyers.length}`)
+console.log(` total allocated : ${TOTAL}`)
+console.log(` claimed (TGE)   : ${totalClaimed}`)
+console.log(` left in vault   : ${vaultBalance}`)
 console.log('=========================================================')

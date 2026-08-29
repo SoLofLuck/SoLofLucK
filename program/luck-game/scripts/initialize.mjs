@@ -1,10 +1,10 @@
-// luck-game initialize() çağırıcısı.
+// The luck-game initialize() caller.
 //
-// Kullanım (env değişkenleriyle):
-//   PROGRAM_ID=...        (zorunlu)
-//   TREASURY_WALLET=...   (zorunlu — %20 ücret payının gideceği cüzdan)
-//   KEYPAIR_PATH=~/.config/solana/id.json  (varsayılan)
-//   RPC_URL=https://api.devnet.solana.com  (varsayılan)
+// Usage (through env variables):
+//   PROGRAM_ID=...        (required)
+//   TREASURY_WALLET=...   (required — the wallet the 20% fee share goes to)
+//   KEYPAIR_PATH=~/.config/solana/id.json  (default)
+//   RPC_URL=https://api.devnet.solana.com  (default)
 //   FREE_PLAYS=3
 //   SMALL_PRIZE_SOL=0.5  BIG_PRIZE_SOL=1  BIG_PRIZE_BPS=3000  VAULT_THRESHOLD_SOL=2
 //   NORMAL_WIN_BPS=50  EASY_WIN_BPS=1000  TREASURY_FEE_BPS=2000
@@ -12,10 +12,10 @@
 //   SPIN_TIER_COUNTS=1,5,10,20,50,100  SPIN_TIER_PRICES_SOL=0.1,0.3,0.5,0.8,1.5,2.5
 //   VAULT_BOOTSTRAP_SOL=0.05
 //
-// Bu değerlerin varsayılanları src/config.ts içindeki GAME_CONFIG ile
-// birebir eşleşir. Program zaten initialize edilmişse (config PDA'sı
-// mevcutsa) initialize() çağrısı atlanır, hata vermez — ama kasa (vault)
-// bootstrap adımı yine de çalışır (idempotent, güvenle tekrar çalıştırılabilir).
+// The defaults for these values match GAME_CONFIG in src/config.ts exactly. If
+// the program has already been initialized (the config PDA exists), the
+// initialize() call is skipped rather than failing — but the vault bootstrap
+// step still runs (it is idempotent and safe to run again).
 
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -32,7 +32,7 @@ import {
 function requireEnv(name) {
   const v = process.env[name]
   if (!v) {
-    console.error(`Eksik ortam değişkeni: ${name}`)
+    console.error(`Missing environment variable: ${name}`)
     process.exit(1)
   }
   return v
@@ -55,15 +55,15 @@ const KEYPAIR_PATH =
 const RPC_URL = process.env.RPC_URL || 'https://api.devnet.solana.com'
 
 const LAMPORTS_PER_SOL = 1_000_000_000
-// Zincir üstü ücretsiz deneme: 0.
+// On-chain free spins: 0.
 //
-// Ücretsiz denemeler (3 + 1 bonus) TAMAMEN tarayıcıda, localStorage
-// üzerinde veriliyor (bkz. src/lib/luckGame.ts) — zincire hiç yazılmadıkları
-// için ne işlem ücreti ne de hesap kirası doğuruyorlar. Program da ilk
-// play() çağrısında ayrıca `free_plays` kadar kredi yüklüyordu; ikisi
-// birlikte çalışınca 0,1 SOL'e 1 spin alan oyuncu toplam 8 kez
-// çevirebiliyordu. Zincir üstü tarafı 0'a çekmek bunu kapatıyor (0 iken
-// program içindeki tek seferlik +1 bonus koşulu da hiç tetiklenmiyor).
+// The free spins (3 + 1 bonus) are granted ENTIRELY in the browser, in
+// localStorage (see src/lib/luckGame.ts) — because they are never written to the
+// chain they incur neither a transaction fee nor account rent. The program also
+// used to load `free_plays` credits on the first play() call; with both in
+// effect, a player who bought 1 spin for 0.1 SOL could spin 8 times in total.
+// Pulling the on-chain side to 0 closes that (at 0 the one-off +1 bonus
+// condition inside the program never fires either).
 const freePlays = envInt('FREE_PLAYS', 0)
 const smallPrizeLamports = BigInt(Math.round(envFloat('SMALL_PRIZE_SOL', 0.5) * LAMPORTS_PER_SOL))
 const bigPrizeLamports = BigInt(Math.round(envFloat('BIG_PRIZE_SOL', 1) * LAMPORTS_PER_SOL))
@@ -76,9 +76,8 @@ const easyWinBps = envInt('EASY_WIN_BPS', 1000)
 const treasuryFeeBps = envInt('TREASURY_FEE_BPS', 2000)
 const revealDelaySlots = BigInt(envInt('REVEAL_DELAY_SLOTS', 5))
 
-// Spin paket tarifesi: N adet spin, X SOL karşılığında. Varsayılanlar
-// kullanıcının belirlediği tarifeyle birebir eşleşir: 1/0.1, 5/0.3,
-// 10/0.5, 20/0.8, 50/1.5, 100/2.5 SOL.
+// The spin package tariff: N spins for X SOL. The defaults match the tariff the
+// user set exactly: 1/0.1, 5/0.3, 10/0.5, 20/0.8, 50/1.5, 100/2.5 SOL.
 const DEFAULT_SPIN_TIER_COUNTS = [1, 5, 10, 20, 50, 100]
 const DEFAULT_SPIN_TIER_PRICES_SOL = [0.1, 0.3, 0.5, 0.8, 1.5, 2.5]
 const spinTierCounts = (process.env.SPIN_TIER_COUNTS
@@ -90,18 +89,18 @@ const spinTierPricesLamports = (process.env.SPIN_TIER_PRICES_SOL
 ).map((sol) => BigInt(Math.round(sol * LAMPORTS_PER_SOL)))
 
 if (spinTierCounts.length !== 6 || spinTierPricesLamports.length !== 6) {
-  console.error('SPIN_TIER_COUNTS ve SPIN_TIER_PRICES_SOL tam olarak 6 değer içermeli')
+  console.error('SPIN_TIER_COUNTS and SPIN_TIER_PRICES_SOL have to contain exactly 6 values')
   process.exit(1)
 }
 
-// Yeni bir oyuncu ilk kez register_delegate() çağırdığında, program
-// delegenin gaz bakiyesini KASADAN (vault) sponsor eder (bkz. lib.rs
-// DELEGATE_GAS_SPONSOR_LAMPORTS) — ücretsiz deneme gerçekten ücretsiz
-// olsun diye. Ama taze kurulmuş bir oyunda kasada henüz hiç satın alma
-// olmadığı için 0 SOL var — sponsor edilecek bir şey yok. Bu yüzden kasayı
-// burada, program sahibinin cüzdanından, küçük bir başlangıç rezerviyle
-// "tohumluyoruz". Bu düz bir SOL transferi (PDA'lar imza olmadan SOL kabul
-// edebilir), programın kendisiyle bir ilgisi yok.
+// When a new player calls register_delegate() for the first time, the program
+// sponsors the delegate's gas balance OUT OF THE VAULT (see
+// DELEGATE_GAS_SPONSOR_LAMPORTS in lib.rs) — so that the free spin really is
+// free. But in a freshly installed game the vault holds 0 SOL because nothing
+// has been bought yet, so there is nothing to sponsor with. That is why we
+// "seed" the vault here with a small initial reserve, out of the program owner's
+// wallet. This is a plain SOL transfer (PDAs can accept SOL without a
+// signature); it has nothing to do with the program itself.
 const vaultBootstrapLamports = BigInt(Math.round(envFloat('VAULT_BOOTSTRAP_SOL', 0.05) * LAMPORTS_PER_SOL))
 
 function anchorDiscriminator(name) {
@@ -133,7 +132,7 @@ async function main() {
 
   const existing = await connection.getAccountInfo(configPda)
   if (existing) {
-    console.log('GameConfig zaten var, initialize atlanıyor:', configPda.toBase58())
+    console.log('GameConfig already exists, skipping initialize:', configPda.toBase58())
   } else {
     const data = Buffer.concat([
       anchorDiscriminator('initialize'),
@@ -146,8 +145,8 @@ async function main() {
       u16(easyWinBps),
       u16(treasuryFeeBps),
       u64(revealDelaySlots),
-      // [u16; 6] ve [u64; 6] — sabit boyutlu diziler, Vec<T>'nin aksine
-      // uzunluk ön eki OLMADAN art arda ham değerler olarak serileşir.
+      // [u16; 6] and [u64; 6] — fixed-size arrays, which unlike Vec<T>
+      // serialize as raw values one after another, WITHOUT a length prefix.
       ...spinTierCounts.map((n) => u16(n)),
       ...spinTierPricesLamports.map((n) => u64(n)),
     ])
@@ -165,7 +164,7 @@ async function main() {
 
     const tx = new Transaction().add(ix)
     const sig = await sendAndConfirmTransaction(connection, tx, [authority])
-    console.log('initialize() başarılı, imza:', sig)
+    console.log('initialize() succeeded, signature:', sig)
     console.log('GameConfig PDA:', configPda.toBase58())
   }
 
@@ -185,11 +184,11 @@ async function main() {
     )
     const sig = await sendAndConfirmTransaction(connection, tx, [authority])
     console.log(
-      `Kasa (vault) ${Number(topUp) / LAMPORTS_PER_SOL} SOL ile tohumlandı, imza:`,
+      `The vault was seeded with ${Number(topUp) / LAMPORTS_PER_SOL} SOL, signature:`,
       sig,
     )
   } else {
-    console.log('Kasa (vault) zaten yeterli bakiyeye sahip, tohumlama atlanıyor:', vaultPda.toBase58())
+    console.log('The vault already holds a sufficient balance, skipping the seeding:', vaultPda.toBase58())
   }
 }
 
