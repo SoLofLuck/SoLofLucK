@@ -1,63 +1,62 @@
-name: luck-distributor — Devnet'e Derle ve Deploy Et
+name: luck-distributor — Build and Deploy to Devnet
 
 on:
   workflow_dispatch:
     inputs:
       first_deploy:
-        description: "false (VARSAYILAN): kaynaktaki declare_id adresindeki programi YUKSELT - adres degismez. true: YENI bir adres uret ve ilk kez deploy et (yalnizca hesap duzeni degistiginde ya da ilk kurulumda; ardindan yazdirilan ID declare_id/Anchor.toml/config.ts'e islenmeli)"
+        description: "false (DEFAULT): UPGRADE the program at the declare_id address in the source - the address does not change. true: generate a NEW address and deploy for the first time (only when the account layout changes or on first setup; afterwards the printed ID has to be written into declare_id/Anchor.toml/config.ts)"
         required: false
         type: boolean
         default: false
 
-# Bu iş akışı, claim/dağıtım programını (program/luck-distributor) derleyip
-# Devnet'e kurar. luck-game workflow'uyla aynı deploy cüzdanını
-# (LUCK_GAME_DEPLOY_KEY) ve aynı "adrese yükseltme" mantığını kullanıyor.
+# This workflow builds the claim/distribution program (program/luck-distributor)
+# and installs it on Devnet. It uses the same deploy wallet
+# (LUCK_GAME_DEPLOY_KEY) and the same "upgrade the address" logic as the
+# luck-game workflow.
 #
-# Rust/Solana/Anchor
-# araç zincirini GitHub'ın kendi runner'ında kurup Devnet'e deploy eder.
-# Neden CI üzerinden: bu depoyu geliştiren AI ajanının çalıştığı sandbox'ın
-# internet erişimi Solana ağına (hatta çoğu dış siteye) kapalı — GitHub
-# Actions runner'ları ise tam internet erişimine sahip, bu yüzden build ve
-# deploy işini burada yapıyoruz.
+# It sets the Rust/Solana/Anchor toolchain up on GitHub's own runner.
+# Why through CI: the sandbox the AI agent developing this repository runs in has
+# no internet access to the Solana network (or to most external sites), while
+# GitHub Actions runners have full internet access, so we do the build and the
+# deploy here.
 #
-# Gerekli tek seferlik kurulum: repo Settings → Secrets and variables →
-# Actions → "New repository secret" → adı LUCK_GAME_DEPLOY_KEY, değeri ise
-# Devnet'e özel, deploy yetkisi için üretilmiş 64 sayılık bir JSON dizisi
-# (solana-keygen'in ürettiği formatla aynı). Bu anahtarın SADECE Devnet'te
-# değeri var, gerçek parayla hiçbir ilgisi yok.
+# The one-off setup required: repo Settings → Secrets and variables → Actions →
+# "New repository secret" → name it LUCK_GAME_DEPLOY_KEY, with a JSON array of 64
+# numbers generated for deploy rights on Devnet only (the same format
+# solana-keygen produces). That key has value ONLY on Devnet and has nothing to
+# do with real money.
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Rust kurulumu
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cargo önbelleği
+      - name: Cargo cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: program/luck-distributor -> target
 
-      - name: Solana CLI kurulumu
+      - name: Install the Solana CLI
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      # `anchor build`, PATH'te `solana-install` isimli bir komut bulamayınca
-      # (modern Agave kurulumları bunu `agave-install` olarak yeniden
-      # adlandırdı) kendi hardcoded eski Solana sürümünü (v1.18.17,
-      # rustc 1.75.0 bundle ediyor) indirip kullanıyor — bu da modern
-      # paketlerin gerektirdiği edition2024'ü derleyemiyor. Az önce
-      # kurduğumuz güncel Solana araç zincirini zorlamak için PATH'e,
-      # gerçek `solana-install`/`agave-install`'a (o da yoksa `solana`
-      # binary'sine) işaret eden bir uyumluluk sembolik linki ekliyoruz —
-      # böylece anchor build kendi eski indirmesini atlayıp bizim
-      # kurduğumuz güncel araç zincirini kullanabilir.
-      - name: Solana araç zinciri uyumluluk shim'i
+      # When `anchor build` cannot find a command named `solana-install` on PATH
+      # (modern Agave installations renamed it to `agave-install`), it downloads
+      # and uses its own hardcoded old Solana version (v1.18.17, which bundles
+      # rustc 1.75.0) — and that cannot compile the edition2024 modern packages
+      # require. To force the up-to-date Solana toolchain we just installed, we
+      # add a compatibility symlink to PATH pointing at the real
+      # `solana-install`/`agave-install` (or, failing that, at the `solana`
+      # binary) — so anchor build skips its own old download and uses the
+      # toolchain we installed.
+      - name: Solana toolchain compatibility shim
         run: |
           BIN_DIR="$HOME/.local/share/solana/install/active_release/bin"
-          echo "Kurulu binary'ler:"
+          echo "Installed binaries:"
           ls -la "$BIN_DIR"
           if [ ! -e "$BIN_DIR/solana-install" ]; then
             if [ -e "$BIN_DIR/agave-install" ]; then
@@ -65,122 +64,122 @@ jobs:
             else
               ln -s "$BIN_DIR/solana" "$BIN_DIR/solana-install"
             fi
-            echo "solana-install shim'i oluşturuldu -> $(readlink -f "$BIN_DIR/solana-install")"
+            echo "solana-install shim created -> $(readlink -f "$BIN_DIR/solana-install")"
           fi
-          command -v solana-install && solana-install --version || echo "solana-install hâlâ bulunamadı"
+          command -v solana-install && solana-install --version || echo "solana-install still not found"
 
-      - name: Anchor CLI kurulumu
+      - name: Install the Anchor CLI
         run: |
           cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           "$HOME/.cargo/bin/avm" install 0.30.1
           "$HOME/.cargo/bin/avm" use 0.30.1
 
-      - name: Deploy anahtarını yaz
+      - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
           cat > ~/.config/solana/id.json <<'KEYFILE'
           ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
           KEYFILE
 
-      - name: Devnet'i yapılandır
+      - name: Configure Devnet
         run: solana config set --url devnet --keypair ~/.config/solana/id.json
 
-      - name: Devnet SOL airdrop (deploy ücreti için)
-        # GitHub'ın paylaşımlı runner IP'leri devnet faucet'inde sık sık rate
-        # limit'e takılıyor — bu yüzden hem daha uzun/çok deneme yapıyoruz
-        # hem de burada başarısız olması job'ı durdurmuyor. Airdrop hiç
-        # tutmazsa, deploy adımı yetersiz bakiye yüzünden zaten net bir
-        # hatayla duracak; o durumda deploy anahtarına (aşağıda yazdırılan
-        # public key) manuel olarak devnet SOL göndermek gerekir.
+      - name: Devnet SOL airdrop (for the deploy fee)
+        # GitHub's shared runner IPs hit the devnet faucet's rate limit often —
+        # so we both retry longer and more often, and failing here does not stop
+        # the job. If the airdrop never lands, the deploy step will stop with a
+        # clear insufficient-funds error anyway; in that case devnet SOL has to
+        # be sent manually to the deploy key (the public key printed below).
         run: |
           for i in 1 2 3 4 5 6 7 8; do
             if solana airdrop 2 || solana airdrop 1; then break; fi
-            echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar denenecek..."
+            echo "Airdrop attempt $i failed, retrying in 20s..."
             sleep 20
           done
-          echo "Deploy cüzdanı: $(solana address)"
+          echo "Deploy wallet: $(solana address)"
           solana balance
 
-      # ÖNCEKİ BAŞARISIZ DEPLOY'LARDAN KALAN BUFFER'LARI ÖNCE TEMİZLE.
+      # CLEAN UP BUFFERS LEFT OVER FROM EARLIER FAILED DEPLOYS FIRST.
       #
-      # `solana program deploy` yarıda düşerse yazdığı buffer hesabı, içindeki
-      # kira SOL'üyle birlikte zincirde kalıyor. Bu, bir sonraki koşuyu da
-      # düşürüyor: cüzdan boşalmış oluyor ve `solana program extend` kira
-      # ödeyemediği için "custom program error: 0x1" veriyor — hata mesajı
-      # sebebi hiç anlatmıyor.
+      # If `solana program deploy` dies halfway through, the buffer account it
+      # wrote stays on the chain along with the rent SOL inside it. That also
+      # fails the next run: the wallet ends up empty and `solana program extend`
+      # cannot pay the rent, so it reports "custom program error: 0x1" — an error
+      # message that explains nothing about the cause.
       #
-      # Nitekim tam olarak bu oldu: bir önceki koşu 2,3 SOL'ü buffer'da
-      # bıraktı, sonraki koşu extend için 0,46 SOL bulamadı. Temizliği
-      # yalnızca `if: failure()` adımında yapmak GEÇ kalıyor — parayı bir
-      # sonraki koşunun BAŞINDA geri almak gerekiyor.
-      - name: Kalan buffer'ları temizle (deploy öncesi)
+      # And that is exactly what happened: an earlier run left 2.3 SOL in a
+      # buffer, and the next run could not find the 0.46 SOL for the extend.
+      # Doing the cleanup only in an `if: failure()` step is TOO LATE — the money
+      # has to be recovered at the START of the next run.
+      - name: Close leftover buffers (before the deploy)
         run: |
           solana program close --buffers --bypass-warning || \
-            echo "Kapatılacak buffer yok."
-          echo "Temizlik sonrası bakiye:"
+            echo "No buffers to close."
+          echo "Balance after cleanup:"
           solana balance
 
       # ---------------------------------------------------------------
-      # Cargo.lock ARTIK REPODAN GELİYOR — burada üretilmiyor.
+      # Cargo.lock NOW COMES FROM THE REPOSITORY — it is not generated here.
       # ---------------------------------------------------------------
-      # Eskiden bu adım her deploy'da `cargo generate-lockfile` çalıştırıp
-      # bağımlılıkları SIFIRDAN çözüyordu. İki ayrı sorun doğuruyordu:
+      # This step used to run `cargo generate-lockfile` on every deploy and
+      # resolve the dependencies FROM SCRATCH. That caused two separate problems:
       #
-      # 1) Derleme, crates.io'nun o günkü haline bağlıydı. luck-distributor'ın
-      #    ilk deploy'u tam olarak böyle düştü: zeroize_derive 1.5.0 çıktı,
-      #    edition2024 istiyor, anchor'ın bundle ettiği rustc 1.75 onu
-      #    okuyamıyor. Kimse bir şey değiştirmemişti — sadece yukarıda bir
-      #    paket yeni sürüm yayınlamıştı. Aynı şey yükseltme sırasında,
-      #    TGE günü de olabilirdi.
+      # 1) The build depended on the state of crates.io that day.
+      #    luck-distributor's first deploy failed exactly like this:
+      #    zeroize_derive 1.5.0 was released, it wants edition2024, and the rustc
+      #    1.75 anchor bundles cannot read that. Nobody had changed anything — a
+      #    package upstream had simply published a new version. The same thing
+      #    could have happened during an upgrade, on TGE day.
       #
-      # 2) Bytecode yeniden üretilemiyordu. Para tutan bir programda
-      #    "zincirdeki bytecode gerçekten bu kaynaktan mı çıktı" sorusunun
-      #    cevabı, aynı girdilerle aynı çıktının üretilebilmesine bağlı.
-      #    Kilit dosyası olmadan bu mümkün değil.
+      # 2) The bytecode was not reproducible. In a program that holds money, the
+      #    answer to "did the bytecode on chain really come from this source"
+      #    depends on the same inputs producing the same output. Without a
+      #    lockfile that is impossible.
       #
-      # Kilit dosyası artık repoda, v3 formatında (eski araç zinciri v4'ü
-      # okuyamıyor) ve MSRV-farkında çözümle üretilmiş durumda:
+      # The lockfile is now in the repository, in the v3 format (the old
+      # toolchain cannot read v4) and generated with MSRV-aware resolution:
       #
       #   cargo generate-lockfile \
       #     --config 'resolver.incompatible-rust-versions="fallback"'
       #
-      # Bu, rust-version = "1.75.0" bildirimini dikkate alıp her transitive
-      # bağımlılığı o derleyicinin derleyebileceği son sürüme düşürüyor.
-      # Bağımlılık güncellemesi artık bilinçli bir işlem: yerelde bu komut
-      # çalıştırılır, testler koşar, kilit commit'lenir.
+      # That takes the rust-version = "1.75.0" declaration into account and drops
+      # every transitive dependency to the last version that compiler can build.
+      # Updating a dependency is now a deliberate act: you run that command
+      # locally, run the tests, and commit the lockfile.
       #
-      # --locked, kilidin CI'da sessizce değişmesini engelliyor: kilit ile
-      # Cargo.toml uyuşmuyorsa derleme, tahmin yürütmek yerine duruyor.
-      - name: Cargo.lock doğrula (repodaki kilit kullanılacak)
+      # --locked stops the lockfile from changing silently in CI: if the lockfile
+      # and Cargo.toml disagree, the build stops instead of guessing.
+      - name: Verify Cargo.lock (the lockfile in the repository will be used)
         working-directory: program/luck-distributor
         run: |
           if [ ! -f Cargo.lock ]; then
-            echo "Cargo.lock repoda yok — commit edilmesi gerekiyor." >&2
+            echo "Cargo.lock is not in the repository — it has to be committed." >&2
             exit 1
           fi
           head -n 3 Cargo.lock
           cargo metadata --locked --format-version 1 > /dev/null
-          echo "Kilit dosyası Cargo.toml ile tutarlı."
+          echo "The lockfile is consistent with Cargo.toml."
 
       # ---------------------------------------------------------------
-      # Program ID artık KAYNAK KODDAN geliyor, keypair dosyasından değil.
+      # The Program ID now comes FROM THE SOURCE CODE, not from a keypair file.
       # ---------------------------------------------------------------
-      # Eskiden her deploy'da `anchor keys sync` çalışıyordu: keypair
-      # dosyası yoksa yenisini üretip declare_id!()'yi ONA göre yazıyordu.
-      # Keypair yalnızca CI önbelleğinde durduğu ve o önbellek Cargo.lock
-      # değişince ıskaladığı için, program üst üste ÜÇ KEZ yeni bir adrese
-      # deploy oldu — her seferinde config.ts güncellendi, initialize()
-      # yeniden koştu, eski kasadaki bakiye orada kaldı.
+      # `anchor keys sync` used to run on every deploy: if the keypair file was
+      # missing it generated a new one and wrote declare_id!() to match IT.
+      # Because the keypair lived only in the CI cache, and that cache missed
+      # whenever Cargo.lock changed, the program was deployed to a new address
+      # THREE TIMES IN A ROW — each time config.ts was updated, initialize() ran
+      # again, and the balance in the old vault stayed where it was.
       #
-      # Artık tersi: declare_id!() tek doğru kaynak. Normal deploy'lar o
-      # adresteki programı YÜKSELTİYOR ve keypair'e hiç ihtiyaç duymuyor —
-      # yükseltme için gereken tek imza upgrade authority'nin (deploy
-      # cüzdanı) imzası. Bu yüzden önbellek adımları da tamamen kaldırıldı.
+      # It is the other way round now: declare_id!() is the single source of
+      # truth. Ordinary deploys UPGRADE the program at that address and need no
+      # keypair at all — the only signature an upgrade needs is that of the
+      # upgrade authority (the deploy wallet). That is why the cache steps were
+      # removed entirely too.
       #
-      # `anchor keys sync` yalnızca BİLEREK yeni bir program açarken
-      # (first_deploy=true) çalışıyor.
-      - name: Yeni program keypair'i üret (yalnızca first_deploy=true ise)
+      # `anchor keys sync` runs only when a new program is opened DELIBERATELY
+      # (first_deploy=true).
+      - name: Generate a new program keypair (only when first_deploy=true)
         if: inputs.first_deploy == true
         working-directory: program/luck-distributor
         run: |
@@ -188,224 +187,224 @@ jobs:
           rm -f target/deploy/luck_distributor-keypair.json
           solana-keygen new --no-bip39-passphrase --silent -o target/deploy/luck_distributor-keypair.json
           anchor keys sync
-          echo "Yeni declare_id!():"
+          echo "New declare_id!():"
           grep declare_id programs/luck-distributor/src/lib.rs
 
-      - name: Hedef Program ID'yi belirle
+      - name: Determine the target Program ID
         working-directory: program/luck-distributor
         run: |
           PROGRAM_ID=$(grep -oP 'declare_id!\("\K[^"]+' programs/luck-distributor/src/lib.rs)
           if [ -z "$PROGRAM_ID" ]; then
-            echo "declare_id!() okunamadı" >&2
+            echo "declare_id!() could not be read" >&2
             exit 1
           fi
           echo "PROGRAM_ID=$PROGRAM_ID" >> "$GITHUB_ENV"
-          echo "Hedef Program ID: $PROGRAM_ID"
+          echo "Target Program ID: $PROGRAM_ID"
 
-      # Anchor'ın ayrı "IDL üretim" adımı (host toolchain ile, on-chain SBF
-      # derlemesinden bağımsız — istemci SDK'ları için target/idl/*.json
-      # üretiyor, deploy'un kendisi için gerekli değil) anchor-syn/
-      # proc-macro2 sürüm çakışmalarına saplanıp kaldı: proc-macro2'yi
-      # eski sürüme sabitlemek anchor-syn'i düzeltti ama sonra kendi içindeki
-      # nightly-uyum kodu, host rustc'nin GERÇEK proc_macro::Span API'siyle
-      # çakıştı ("no method named source_file found for &proc_macro::Span").
-      # On-chain SBF derlemesi zaten sorunsuz çalışıyor — IDL'i tamamen
-      # atlayarak bu ayrı, gereksiz sorun kaynağını devre dışı bırakıyoruz.
+      # Anchor's separate "IDL generation" step (run with the host toolchain,
+      # independently of the on-chain SBF build — it produces target/idl/*.json
+      # for client SDKs and is not needed for the deploy itself) got stuck on
+      # anchor-syn/proc-macro2 version conflicts: pinning proc-macro2 to an older
+      # version fixed anchor-syn, but then its own nightly-compatibility code
+      # clashed with the host rustc's REAL proc_macro::Span API ("no method named
+      # source_file found for &proc_macro::Span"). The on-chain SBF build works
+      # fine as it is — by skipping the IDL entirely we switch off this separate,
+      # unnecessary source of trouble.
       - name: anchor build
         working-directory: program/luck-distributor
         run: anchor build --no-idl
 
-      # `anchor build`, --locked'ı alt araca (cargo-build-sbf) geçirmiyor,
-      # dolayısıyla kilidin derleme sırasında sessizce güncellenmesini
-      # bayrakla engelleyemiyoruz. Onun yerine SONUCUNU kontrol ediyoruz:
-      # kilit dosyası değiştiyse, deploy edilecek bytecode repodaki
-      # bağımlılıklardan üretilmemiş demektir ve burada duruyoruz.
-      - name: Kilit dosyası değişmedi mi
+      # `anchor build` does not pass --locked down to the underlying tool
+      # (cargo-build-sbf), so we cannot use a flag to stop the lockfile being
+      # updated silently during the build. Instead we check the RESULT: if the
+      # lockfile changed, the bytecode about to be deployed was not produced from
+      # the dependencies in the repository, and we stop here.
+      - name: Did the lockfile stay unchanged
         working-directory: program/luck-distributor
         run: |
           if ! git diff --quiet -- Cargo.lock; then
-            echo "Cargo.lock derleme sırasında değişti — deploy durduruluyor." >&2
+            echo "Cargo.lock changed during the build — stopping the deploy." >&2
             git diff -- Cargo.lock | head -n 40
             exit 1
           fi
-          echo "Kilit dosyası derleme boyunca değişmedi."
+          echo "The lockfile stayed unchanged throughout the build."
 
-      # İlk deploy: programı keypair'in adresine doğuruyor.
-      - name: İlk deploy (yalnızca first_deploy=true ise)
+      # First deploy: brings the program into being at the keypair's address.
+      - name: First deploy (only when first_deploy=true)
         if: inputs.first_deploy == true
         working-directory: program/luck-distributor
         run: anchor deploy --provider.cluster devnet --provider.wallet ~/.config/solana/id.json
 
-      # Normal yol: ADRESE yükseltme. Keypair GEREKMİYOR — zincir yalnızca
-      # upgrade authority'nin imzasını arıyor. Program o adreste yoksa
-      # sessizce yeni bir şey yaratmak yerine net bir hatayla duruyoruz.
-      - name: Yükselt (varsayılan)
+      # The normal path: upgrading the ADDRESS. NO keypair is needed — the chain
+      # only looks for the upgrade authority's signature. If there is no program
+      # at that address we stop with a clear error rather than silently creating
+      # something new.
+      - name: Upgrade (default)
         if: inputs.first_deploy != true
         working-directory: program/luck-distributor
         run: |
-          # Bakiyeyi verilen tutarin ustunde tutar; yetersizse airdrop dener.
-          # Devnet faucet'i IP basina sinirli oldugu icin tek denemeye
-          # guvenmiyoruz.
-          bakiyeyi_sagla() {
-            local gereken="$1" ad="$2" mevcut
-            mevcut=$(solana balance | awk '{print $1}')
-            echo "$ad icin gereken ~$gereken SOL - mevcut $mevcut SOL"
-            awk "BEGIN{exit !($mevcut < $gereken)}" || return 0
-            echo "Bakiye yetersiz - airdrop deneniyor."
-            # Devnet faucet'i istek basina 2 SOL'u gecmiyor ve IP basina
-            # sinirli; 2 tutmazsa 1 ile deniyoruz (kismi dolum da ise yarar,
-            # birden fazla tur birikiyor).
+          # Keeps the balance above the given amount; tries an airdrop when it
+          # falls short. Because the devnet faucet is rate-limited per IP, we do
+          # not rely on a single attempt.
+          ensure_balance() {
+            local needed="$1" label="$2" current
+            current=$(solana balance | awk '{print $1}')
+            echo "$label needs ~$needed SOL - currently $current SOL"
+            awk "BEGIN{exit !($current < $needed)}" || return 0
+            echo "Balance too low - trying an airdrop."
+            # The devnet faucet does not go above 2 SOL per request and is rate
+            # limited per IP; if 2 does not land we try 1 (a partial fill helps
+            # too, several rounds accumulate).
             for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
               solana airdrop 2 || solana airdrop 1 || true
-              mevcut=$(solana balance | awk '{print $1}')
-              awk "BEGIN{exit !($mevcut >= $gereken)}" && break
-              echo "Deneme $i sonrasi $mevcut SOL, 30sn sonra tekrar."
+              current=$(solana balance | awk '{print $1}')
+              awk "BEGIN{exit !($current >= $needed)}" && break
+              echo "$current SOL after attempt $i, retrying in 30s."
               sleep 30
             done
             solana balance
 
-            # BURADA DURMAK ZORUNDAYIZ.
+            # WE HAVE TO STOP HERE.
             #
-            # Eskiden bu fonksiyon hedefe ulasamasa bile sessizce donuyordu ve
-            # is akisi doomed bir `solana program deploy`a giriyordu. Bunun iki
-            # kotu sonucu var: (a) hata mesaji "insufficient funds for spend"
-            # olup sebebi (faucet rate limit) hic anlatmiyor, (b) deploy buffer
-            # hesabini YARATTIKTAN sonra duserse 2,3 SOL zincirde mahsur
-            # kaliyor ve BIR SONRAKI kosuyu da dusuruyor - nitekim tam olarak
-            # bu zincirleme yasandi.
+            # This function used to return silently even when it could not reach
+            # the target, and the workflow then walked into a doomed `solana
+            # program deploy`. That has two bad consequences: (a) the error
+            # message is "insufficient funds for spend" and says nothing about
+            # the cause (the faucet rate limit), and (b) if the deploy dies AFTER
+            # creating the buffer account, 2.3 SOL is stranded on chain and fails
+            # the NEXT run too - which is exactly the chain of events that
+            # happened.
             #
-            # Simdi net bir hatayla duruyoruz: harcama hic denenmiyor, para
-            # mahsur kalmiyor ve loga ne yapilacagi (su adrese devnet SOL
-            # gonder) yaziliyor.
-            mevcut=$(solana balance | awk '{print $1}')
-            if awk "BEGIN{exit !($mevcut < $gereken)}"; then
-              echo "::error::$ad icin ~$gereken SOL gerekiyor, cuzdanda $mevcut SOL var" \
-                   "ve devnet faucet'i vermedi (IP basina rate limit)." \
-                   "Harcama denenmiyor - denenirse buffer hesabinda SOL mahsur kalir." \
-                   "Cozum: $(solana address) adresine devnet SOL gonderip bu is akisini tekrar calistirin."
+            # Now we stop with a clear error: no spend is attempted, no money is
+            # stranded, and the log says what to do (send devnet SOL to this
+            # address).
+            current=$(solana balance | awk '{print $1}')
+            if awk "BEGIN{exit !($current < $needed)}"; then
+              echo "::error::$label needs ~$needed SOL, the wallet holds $current SOL" \
+                   "and the devnet faucet did not provide it (per-IP rate limit)." \
+                   "No spend is attempted - attempting one would strand SOL in a buffer account." \
+                   "Fix: send devnet SOL to $(solana address) and run this workflow again."
               exit 1
             fi
           }
 
           if ! solana program show "$PROGRAM_ID" >/dev/null 2>&1; then
-            echo "::error::$PROGRAM_ID adresinde kurulu bir program yok." \
-                 "Yeni bir program açmak istiyorsanız bu workflow'u first_deploy=true ile çalıştırın."
+            echo "::error::There is no program installed at $PROGRAM_ID." \
+                 "If you want to open a new program, run this workflow with first_deploy=true."
             exit 1
           fi
-          echo "Mevcut program:"
+          echo "The current program:"
           solana program show "$PROGRAM_ID"
 
-          # ZİNCİRDEKİ ALANI GEREKİRSE BÜYÜT.
+          # GROW THE SPACE ON CHAIN IF NEEDED.
           #
-          # Solana, programın verisini sabit boyutlu bir ProgramData
-          # hesabında tutuyor ve bu hesap ilk deploy'da ayrılıyor. Program
-          # büyüdükçe yükseltme bir noktada
-          # "account data too small for instruction" ile düşüyor —
-          # nitekim düştü: zincirde 329.728 bayt yer vardı, yeni derleme
-          # daha büyüktü. Hata mesajı sebebi hiç anlatmıyor ve bu, koda
-          # birkaç satır eklendiği herhangi bir gün gelebilecek bir duvar.
+          # Solana keeps the program's data in a fixed-size ProgramData account,
+          # and that account is allocated on the first deploy. As the program
+          # grows, an upgrade eventually fails with "account data too small for
+          # instruction" — and it did: there were 329,728 bytes on chain and the
+          # new build was larger. The error message explains nothing about the
+          # cause, and it is a wall that can arrive on any day a few lines are
+          # added to the code.
           #
-          # Pay 16 KiB. Önce 64 KiB seçmiştim ve bu bir hataydı: ayrılan
-          # her bayt KALICI olarak kira kilitliyor (~0,00000696 SOL/bayt),
-          # yani 64 KiB = 0,456 SOL sonsuza kadar ProgramData hesabında
-          # duruyor. Devnet'te bu, bir sonraki deploy'un buffer kirasını
-          # bulamamasına yol açtı; mainnet'te doğrudan para.
+          # The headroom is 16 KiB. I picked 64 KiB first and that was a mistake:
+          # every allocated byte locks rent PERMANENTLY (~0.00000696 SOL/byte),
+          # so 64 KiB = 0.456 SOL sitting in the ProgramData account forever. On
+          # devnet that led to the next deploy not finding its buffer rent; on
+          # mainnet it is money outright.
           #
-          # 16 KiB, birkaç yükseltmelik büyümeye yetiyor ve gerekirse bu
-          # adım zaten yeniden büyütüyor.
+          # 16 KiB is enough growth for several upgrades, and this step grows it
+          # again if it has to.
           NEW_LEN=$(stat -c%s target/deploy/luck_distributor.so)
           CUR_LEN=$(solana program show "$PROGRAM_ID" | awk '/Data Length/ {print $3}')
-          echo "Yeni derleme: $NEW_LEN bayt · zincirdeki alan: $CUR_LEN bayt"
+          echo "New build: $NEW_LEN bytes · space on chain: $CUR_LEN bytes"
           if [ -n "$CUR_LEN" ] && [ "$NEW_LEN" -gt "$CUR_LEN" ]; then
             EXTRA=$(( NEW_LEN - CUR_LEN + 16384 ))
-            # Genişletme, eklenen baytların kirasını PEŞİN istiyor
-            # (~0,00000696 SOL/bayt). Yetersiz bakiyede zincir
-            # "custom program error: 0x1" diyor ve sebebi hiç anlatmıyor —
-            # bu koşuda saatler kaybettirebilecek bir hata. Onun yerine
-            # burada ölçüp gerekirse airdrop istiyoruz.
-            bakiyeyi_sagla "$(awk "BEGIN{printf \"%.4f\", $EXTRA * 0.00000696 + 0.05}")" "genisletme"
-            echo "Alan yetersiz — $EXTRA bayt genişletiliyor."
+            # Extending asks for the rent of the added bytes UP FRONT
+            # (~0.00000696 SOL/byte). On an insufficient balance the chain says
+            # "custom program error: 0x1" and explains nothing about the cause —
+            # an error that can cost hours on this run. So instead we measure
+            # here and ask for an airdrop when needed.
+            ensure_balance "$(awk "BEGIN{printf \"%.4f\", $EXTRA * 0.00000696 + 0.05}")" "the extend"
+            echo "Not enough space — extending by $EXTRA bytes."
             solana program extend "$PROGRAM_ID" "$EXTRA"
             solana program show "$PROGRAM_ID" | grep 'Data Length'
           fi
 
-          # Deploy'un KENDISI de para istiyor ve genisletmeden AYRI bir
-          # kalem: `solana program deploy` once programin tamamini gecici bir
-          # "buffer" hesabina yaziyor, o hesabin kirasi da program boyutu
-          # kadar (~2,3 SOL). Genisletme bakiyeyi tam bu tutarin altina
-          # dusurdugu icin deploy "insufficient funds for spend" ile
-          # dusmustu - genisletme BASARILI olduktan SONRA, yani en can sikici
-          # noktada.
-          bakiyeyi_sagla "$(awk "BEGIN{printf \"%.4f\", $NEW_LEN * 0.00000696 + 0.2}")" "deploy"
+          # The deploy ITSELF costs money too, and it is a SEPARATE line item
+          # from the extend: `solana program deploy` first writes the whole
+          # program into a temporary "buffer" account, and that account's rent is
+          # proportional to the program size (~2.3 SOL). Because the extend
+          # dropped the balance just below that amount, the deploy failed with
+          # "insufficient funds for spend" - AFTER the extend had SUCCEEDED, that
+          # is, at the most annoying possible point.
+          ensure_balance "$(awk "BEGIN{printf \"%.4f\", $NEW_LEN * 0.00000696 + 0.2}")" "the deploy"
 
           solana program deploy \
             --program-id "$PROGRAM_ID" \
             --upgrade-authority ~/.config/solana/id.json \
             target/deploy/luck_distributor.so
 
-      # BAŞARISIZ DEPLOY İKİ ŞEY BIRAKIYOR — ikisi de temizlenmeli.
+      # A FAILED DEPLOY LEAVES TWO THINGS BEHIND — both have to be cleaned up.
       #
-      # `solana program deploy` önce bir "buffer" hesabına yazıyor, sonra
-      # onu programa taşıyor. Ortada düşerse buffer hesabı zincirde,
-      # içindeki kira SOL'üyle birlikte kalıyor. Dahası CLI, o buffer'ın
-      # geçici anahtarını kurtarmak için 12 KELİMELİK SEED PHRASE'İ LOGA
-      # BASIYOR — ve bu repo'nun Actions logları herkese açık. Devnet'te
-      # bedeli birkaç test SOL'ü; MAINNET'TE gerçek para.
+      # `solana program deploy` writes into a "buffer" account first and then
+      # moves it into the program. If it dies in the middle, the buffer account
+      # stays on chain along with the rent SOL inside it. Worse, the CLI PRINTS
+      # THE 12-WORD SEED PHRASE for that buffer's temporary key TO THE LOG so it
+      # can be recovered — and this repository's Actions logs are public. On
+      # devnet the cost is a few test SOL; ON MAINNET it is real money.
       #
-      # Bu adım, deploy düştüğünde bizim yetkimizdeki tüm buffer'ları
-      # kapatıp lamport'ları geri alıyor. Sızan seed phrase de böylece
-      # işe yaramaz hale geliyor: kurtaracak bir bakiye kalmıyor.
-      - name: Başarısız deploy'dan kalan buffer'ları kapat
+      # This step closes every buffer under our authority when a deploy fails and
+      # takes the lamports back. That also makes the leaked seed phrase useless:
+      # there is no balance left to recover.
+      - name: Close buffers left by a failed deploy
         if: failure()
         run: |
           solana program close --buffers --bypass-warning || \
-            echo "Kapatılacak buffer bulunamadı (ya da kapatma başarısız oldu)."
+            echo "No buffers found to close (or closing them failed)."
           solana balance
 
-      - name: Sonucu doğrula
+      - name: Verify the result
         working-directory: program/luck-distributor
         run: |
-          # first_deploy'da `anchor keys sync` declare_id'yi zaten yeni
-          # adrese yazdı ve "Hedef Program ID" adımı onu okudu — yani
-          # PROGRAM_ID her iki yolda da doğru.
+          # On a first_deploy, `anchor keys sync` has already written declare_id
+          # to the new address and the "Determine the target Program ID" step
+          # read it — so PROGRAM_ID is correct either way.
           echo "================================================"
           echo " PROGRAM ID: $PROGRAM_ID"
           echo "================================================"
-          # Zincirdeki hâli yazdırıyoruz: yükseltmenin gerçekten olduğunu
-          # (ve authority'nin beklediğimiz cüzdan olduğunu) loglardan
-          # doğrulayabilmek için.
+          # We print its state on chain so the logs can confirm the upgrade
+          # really happened (and that the authority is the wallet we expect).
           solana program show "$PROGRAM_ID"
 
-          # ZINCIRDEKI BAYTLAR, AZ ONCE DERLEDIGIMIZ BAYTLAR MI?
+          # ARE THE BYTES ON CHAIN THE BYTES WE JUST BUILT?
           #
-          # `solana program deploy`in cikis kodu 0 olmasi, yukseltmenin
-          # gercekten indigini KANITLAMIYOR: yanlis authority, yarim kalan
-          # bir buffer tasima ya da hedefi sasirmis bir --program-id
-          # durumunda zincirde ESKI bytecode kalabilir ve is akisi yesil
-          # gorunur. O zaman da duzeltme (ornegin atlanan slot yamasi)
-          # aslinda hic yayina girmemis olur - fark edilmesi en zor hata
-          # turu.
+          # `solana program deploy` exiting 0 does NOT PROVE the upgrade actually
+          # landed: with the wrong authority, a half-finished buffer move or a
+          # --program-id that missed its target, the OLD bytecode can remain on
+          # chain while the workflow looks green. The fix (the skipped-slot patch,
+          # say) would then never have gone live - the hardest kind of error to
+          # notice.
           #
-          # Bu yuzden zincirdeki programi indirip derlediklerimizle
-          # bayt bayt karsilastiriyoruz. `solana program dump` ayrilan
-          # alanin tamamini yaziyor (sonu sifir dolgusu), o yuzden ilk
-          # NEW_LEN bayti kesip hash'liyoruz.
-          solana program dump "$PROGRAM_ID" /tmp/zincirdeki.so
-          YEREL_LEN=$(stat -c%s target/deploy/luck_distributor.so)
-          head -c "$YEREL_LEN" /tmp/zincirdeki.so > /tmp/zincirdeki-kirpik.so
-          YEREL_HASH=$(sha256sum target/deploy/luck_distributor.so | awk '{print $1}')
-          ZINCIR_HASH=$(sha256sum /tmp/zincirdeki-kirpik.so | awk '{print $1}')
-          echo "yerel  sha256: $YEREL_HASH ($YEREL_LEN bayt)"
-          echo "zincir sha256: $ZINCIR_HASH"
-          if [ "$YEREL_HASH" != "$ZINCIR_HASH" ]; then
-            echo "::error::Zincirdeki bytecode derledigimizle AYNI DEGIL." \
-                 "Deploy komutu hata vermedi ama yukseltme inmemis." \
-                 "Bu is akisini tekrar calistirin; tekrarlarsa upgrade authority'yi" \
-                 "($(solana address)) ve $PROGRAM_ID adresini kontrol edin."
+          # So we download the program from the chain and compare it byte for
+          # byte with what we built. `solana program dump` writes the whole
+          # allocated space (zero-padded at the end), so we cut the first NEW_LEN
+          # bytes and hash those.
+          solana program dump "$PROGRAM_ID" /tmp/onchain.so
+          LOCAL_LEN=$(stat -c%s target/deploy/luck_distributor.so)
+          head -c "$LOCAL_LEN" /tmp/onchain.so > /tmp/onchain-trimmed.so
+          LOCAL_HASH=$(sha256sum target/deploy/luck_distributor.so | awk '{print $1}')
+          CHAIN_HASH=$(sha256sum /tmp/onchain-trimmed.so | awk '{print $1}')
+          echo "local    sha256: $LOCAL_HASH ($LOCAL_LEN bytes)"
+          echo "on chain sha256: $CHAIN_HASH"
+          if [ "$LOCAL_HASH" != "$CHAIN_HASH" ]; then
+            echo "::error::The bytecode on chain is NOT THE SAME as what we built." \
+                 "The deploy command reported no error but the upgrade did not land." \
+                 "Run this workflow again; if it happens again, check the upgrade authority" \
+                 "($(solana address)) and the address $PROGRAM_ID."
             exit 1
           fi
-          echo "Zincirdeki bytecode derlemeyle birebir ayni."
+          echo "The bytecode on chain is byte-for-byte identical to the build."
 
           if [ "${{ inputs.first_deploy }}" = "true" ]; then
-            echo "::notice::YENİ program açıldı. Bu ID'yi declare_id!(), Anchor.toml ve src/config.ts'e işleyin."
+            echo "::notice::A NEW program was opened. Write this ID into declare_id!(), Anchor.toml and src/config.ts."
           fi

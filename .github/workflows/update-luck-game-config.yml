@@ -1,37 +1,37 @@
-name: luck-game — Oyun Ayarlarını Güncelle (Devnet)
+name: luck-game — Update the Game Settings (Devnet)
 
-# initialize() yalnızca bir kez çalışır. Oyun zaten kuruluyken hazine
-# cüzdanını, ödülleri, oranları ya da paket tarifesini değiştirmenin tek
-# yolu update_config() — bu workflow onu çağırır.
+# initialize() runs only once. Once the game is set up, the only way to change
+# the treasury wallet, the prizes, the odds or the package tariff is
+# update_config() — and this workflow calls it.
 #
-# DİKKAT: update_config TÜM alanları baştan yazar. Boş bırakılan girdiler
-# için script, src/config.ts içindeki GAME_CONFIG ile aynı varsayılanları
-# kullanır; yani sadece değiştirmek istediğiniz alanı doldurmanız yeterli.
+# CAREFUL: update_config rewrites EVERY field from scratch. For inputs left
+# empty, the script uses the same defaults as GAME_CONFIG in src/config.ts; so
+# you only need to fill in the field you actually want to change.
 on:
   workflow_dispatch:
     inputs:
       program_id:
-        description: 'Kurulu oyunun Program ID (site config.ts / GAME_CONFIG.programId)'
+        description: 'The Program ID of the installed game (site config.ts / GAME_CONFIG.programId)'
         required: true
         type: string
       treasury_wallet:
-        description: 'Hazine cüzdanı: paket satışlarının %20si + kazanılan ödüllerin %20si buraya gider'
+        description: 'The treasury wallet: 20% of the package sales + 20% of the prizes won go here'
         required: true
         type: string
       treasury_fee_bps:
-        description: 'Ev payı (bps, 2000 = %20). Boş bırakılırsa 2000.'
+        description: 'The house share (bps, 2000 = 20%). Defaults to 2000 when left empty.'
         required: false
         type: string
       small_prize_sol:
-        description: 'Küçük ödül (SOL). Boş bırakılırsa 0.5.'
+        description: 'The small prize (SOL). Defaults to 0.5 when left empty.'
         required: false
         type: string
       big_prize_sol:
-        description: 'Büyük ödül / jackpot (SOL). Boş bırakılırsa 1.'
+        description: 'The big prize / jackpot (SOL). Defaults to 1 when left empty.'
         required: false
         type: string
       vault_threshold_sol:
-        description: 'Kolay moda geçiş eşiği (SOL). Boş bırakılırsa 2.'
+        description: 'The threshold for switching to easy mode (SOL). Defaults to 2 when left empty.'
         required: false
         type: string
 
@@ -45,17 +45,17 @@ jobs:
         with:
           node-version: 20
 
-      - name: Bağımlılıkları kur
+      - name: Install dependencies
         run: npm ci
 
-      - name: Deploy anahtarını yaz
+      - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
           cat > ~/.config/solana/id.json <<'KEYFILE'
           ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
           KEYFILE
 
-      - name: update_config() çağır
+      - name: Call update_config()
         env:
           PROGRAM_ID: ${{ inputs.program_id }}
           TREASURY_WALLET: ${{ inputs.treasury_wallet }}

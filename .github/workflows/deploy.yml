@@ -1,4 +1,4 @@
-name: GitHub Pages'e Dağıt
+name: Deploy to GitHub Pages
 
 on:
   push:
@@ -21,28 +21,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Node.js kurulumu
+      - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - name: Bağımlılıkları kur
+      - name: Install dependencies
         run: npm ci
 
       - name: Build
         env:
-          # Solana Vakfı'nın public RPC'leri hız sınırlı; varsa Helius API
-          # anahtarını build'e enjekte ediyoruz (bkz. src/config.ts).
-          # Repo Settings → Secrets and variables → Actions → HELIUS_API_KEY
-          # secret'ı olarak eklenmeli. Yoksa build public endpoint'e düşer.
+          # The Solana Foundation's public RPCs are rate limited; when one is
+          # available we inject a Helius API key into the build (see
+          # src/config.ts). It has to be added under repo Settings → Secrets and
+          # variables → Actions as the HELIUS_API_KEY secret. Without it the
+          # build falls back to the public endpoint.
           VITE_HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
         run: npm run build
 
-      - name: Pages'i yapılandır
+      - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      - name: Build çıktısını yükle
+      - name: Upload the build output
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
@@ -54,6 +55,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: GitHub Pages'e dağıt
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

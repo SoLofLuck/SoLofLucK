@@ -1,0 +1,206 @@
+name: Security Scan
+
+# ---------------------------------------------------------------------------
+# THE FREE AUDIT LAYER
+# ---------------------------------------------------------------------------
+# One of the two things a paid audit gives you is MECHANICAL findings: known
+# vulnerability patterns, dependency advisories, suspicious Rust patterns. This
+# workflow runs exactly that part, with free tools, on every change.
+#
+# Human judgement (— "can this design decision be exploited economically") is
+# OUTSIDE the scope of this workflow. Coming out green here does not mean "we
+# passed an audit"; it means "we scanned for known patterns". The difference
+# matters and should be described that way.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Dependency advisories appear WITHOUT THE CODE CHANGING: a package that was
+    # clean yesterday can have a security advisory published against it today.
+    # That is why this also runs weekly.
+    - cron: '17 6 * * 1'
+
+jobs:
+  clippy:
+    name: clippy (strict)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [luck-game, luck-distributor]
+    steps:
+      - uses: actions/checkout@v4
+      # DELIBERATELY `stable`, not a pinned version.
+      #
+      # A new Rust release brings new lints, and those can turn a PR red without
+      # our code changing — which is exactly what happened on the first run:
+      # clippy 1.94 was clean locally while 1.98 in CI found two more things
+      # (`unnecessary_sort_by`, `manual_div_ceil`). Both were genuine
+      # improvements.
+      #
+      # Pinning the version would cut that noise, but we would lose the new
+      # lints too. This workflow is NOT on the deploy path — being red here does
+      # not block a release, it only says "look at this". So we prefer to stay
+      # current.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: program/${{ matrix.program }} -> target
+
+      # -D warnings: warnings count as ERRORS, otherwise they pile up and become
+      # invisible.
+      #
+      # Two exceptions, both deliberate:
+      #
+      #   unexpected_cfgs — Anchor's macros produce cfgs such as `anchor-debug`,
+      #     `custom-heap`, `custom-panic` and `solana`; they are not our code and
+      #     there is no other way to silence them.
+      #
+      #   clippy::too_many_arguments — initialize() and update_config() take 12
+      #     parameters because THE GAME'S CONFIGURATION is that wide. Wrapping
+      #     them in a struct would change Anchor's client-side ABI, and the only
+      #     thing gained would be silencing the lint.
+      - name: clippy
+        working-directory: program/${{ matrix.program }}
+        run: |
+          cargo clippy --all-targets --locked -- \
+            -D warnings \
+            -A unexpected_cfgs \
+            -A clippy::too_many_arguments
+
+  dependencies:
+    name: dependency advisories
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [luck-game, luck-distributor]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # cargo-audit: scans against the RustSec security advisory database.
+      #
+      # This is not a hypothetical risk: luck-distributor's FIRST deploy failed
+      # for exactly this kind of dependency surprise (zeroize_derive 1.5.0 wanted
+      # edition2024). That was a compatibility problem, not a security one — but
+      # a SECURITY hole can arrive through the same channel, with nobody having
+      # changed anything.
+      - name: install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # RUN cargo-audit and keep the JSON output. We do not use its own exit
+      # code: cargo-audit also returns 1 on "unsound"/"unmaintained" warnings,
+      # and those come from upstream, where we cannot fix them. The step below
+      # makes the decision.
+      - name: cargo-audit — produce a report
+        working-directory: program/${{ matrix.program }}
+        run: |
+          cargo audit --json > audit.json || true
+          if [ ! -s audit.json ]; then
+            echo "::error::cargo audit produced no output at all — the audit counts as not having run."
+            exit 1
+          fi
+          echo "Everything found in the whole lockfile:"
+          jq -r '"  vulnerabilities: \(.vulnerabilities.count)"' audit.json
+          jq -r '.warnings | to_entries[] | "  \(.key): \(.value | length)"' audit.json || true
+
+      # NOTE: the hard gate is NOT here any more — it is in the "are there
+      # advisories in the packages that reach the chain" step below. The reason:
+      # cargo audit scans Cargo.lock, and Cargo.lock contains the WHOLE Solana
+      # validator/TLS stack pulled in for the tests (h2, quinn, rustls, ring,
+      # tokio, curve25519-dalek...). The first run reported 10 "vulnerabilities"
+      # and not one of them was inside the program uploaded to the chain.
+      # Auditing Cargo.lock as if it were the on-chain program is a category
+      # error.
+
+      # VISIBLE BUT NOT BLOCKING: "unsound" and "unmaintained" warnings.
+      #
+      # The first run produced six warnings: lru, memmap2, ouroboros, rand,
+      # sized-chunks, solana_rbpf. None of them is a vulnerability and — more to
+      # the point — none of them reaches the bytecode uploaded to the chain:
+      #
+      #   * lru, memmap2, ouroboros, rand and solana_rbpf arrive only through
+      #     solana-program-test, that is, [dev-dependencies].
+      #   * sized-chunks is bound to solana-frozen-abi through `im`, and in
+      #     solana-frozen-abi `im` is declared as:
+      #       [target."cfg(not(target_os = \"solana\"))".dependencies.im]
+      #     so it is never compiled in an SBF build.
+      #
+      # That is why we DO NOT make `--deny warnings` a hard gate — if we did,
+      # every PR would go red over upstream warnings we cannot fix, and before
+      # long everyone would start ignoring the red. But we do not SILENCE them
+      # either: the warnings are here, visible on every run.
+      #
+      # We chose this over adding IDs to `cargo audit`'s ignore list: ignore
+      # silences a warning, this leaves it visible. And when a new dependency
+      # does reach the chain, `npm run check:onchain-deps` fails and somebody has
+      # to look — that is the real gate.
+      - name: cargo-audit — unsound/unmaintained (informational)
+        working-directory: program/${{ matrix.program }}
+        continue-on-error: true
+        run: cargo audit --deny warnings
+
+      - name: install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      # HARD GATE: the SOURCE of the supply chain.
+      #
+      # The `sources` check asks "does every package come from crates.io", and
+      # that question is MEANINGFUL for the whole lockfile: a git dependency can
+      # silently change the code that goes into the build when the branch it
+      # points at moves — we do not want that even in test tooling, because the
+      # test tooling runs on our CI machine.
+      - name: cargo-deny — source check (hard gate)
+        working-directory: program/${{ matrix.program }}
+        run: cargo deny --all-features check sources
+
+      # VISIBLE BUT NOT BLOCKING: advisories.
+      #
+      # cargo-deny's advisories check makes the same category error as
+      # cargo-audit — it looks at the whole lockfile and fails on findings in the
+      # test stack (rcgen, x509-parser, quic-client…). The step below makes the
+      # decision about vulnerabilities: are there advisories in the packages that
+      # DO reach the SBF build.
+      - name: cargo-deny — advisories (informational)
+        working-directory: program/${{ matrix.program }}
+        continue-on-error: true
+        run: cargo deny --all-features check advisories
+
+      # HARD GATE: are there advisories in the packages that REACH the chain.
+      #
+      # This answers the question cargo-audit could not. Which packages go into
+      # the SBF build is computed by evaluating the cfg conditions in `cargo
+      # metadata` (scripts/lib/sbf-deps.mjs) — `cargo tree --target` cannot be
+      # used because stock rustc does not know the `sbf-solana-solana` target.
+      #
+      # The set that reaches the chain is pinned as well: if a new package gets
+      # in, the audit fails and somebody has to look.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: are there advisories in the packages that reach the chain
+        env:
+          AUDIT_JSON: ${{ github.workspace }}/program/${{ matrix.program }}/audit.json
+        run: |
+          node scripts/check-onchain-deps.mjs --selftest
+          node scripts/check-onchain-deps.mjs
+
+  audits:
+    name: repository audits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      # Tokenomics / ABI / tx-path / error-code / runbook audits.
+      - run: npm run verify
+      # Launch readiness: this does NOT fail the job, it only reports. The
+      # mainnet gate uses `npm run launch-gate` (--strict).
+      - run: npm run check:launch

@@ -1,19 +1,19 @@
-name: luck-game — Oyunu Initialize Et (Devnet)
+name: luck-game — Initialize the Game (Devnet)
 
 on:
   workflow_dispatch:
     inputs:
       program_id:
-        description: 'deploy-luck-game workflow çıktısındaki Program ID'
+        description: 'The Program ID from the deploy-luck-game workflow output'
         required: true
         type: string
       treasury_wallet:
-        description: '%20 ücret payının gideceği hazine cüzdanı (public key)'
+        description: 'The treasury wallet the 20% fee share goes to (public key)'
         required: true
         type: string
 
-# initialize() zaten çağrılmışsa script sessizce atlar, bu yüzden bu workflow
-# güvenle birden fazla kez tetiklenebilir.
+# If initialize() has already been called the script skips it silently, so this
+# workflow can safely be triggered more than once.
 jobs:
   init:
     runs-on: ubuntu-latest
@@ -24,17 +24,17 @@ jobs:
         with:
           node-version: 20
 
-      - name: Bağımlılıkları kur
+      - name: Install dependencies
         run: npm ci
 
-      - name: Deploy anahtarını yaz
+      - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
           cat > ~/.config/solana/id.json <<'KEYFILE'
           ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
           KEYFILE
 
-      - name: initialize() çağır
+      - name: Call initialize()
         env:
           PROGRAM_ID: ${{ inputs.program_id }}
           TREASURY_WALLET: ${{ inputs.treasury_wallet }}

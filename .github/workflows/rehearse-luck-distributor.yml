@@ -1,13 +1,13 @@
-name: luck-distributor — Devnet Uçtan Uca Prova
+name: luck-distributor — Devnet End-to-End Rehearsal
 
-# Testler zincire hiç bağlanmadan koşuyor (16 senaryo) ve mantığı kapsıyor.
-# Ama TGE günü çalışacak olan şey o testler değil: gerçek bir mint, gerçek
-# bir RPC, gerçek ATA'lar ve initialize-round.mjs script'inin kendisi.
-# Aradaki farkı ancak gerçek bir zincirde koşarak kapatabiliriz.
+# The tests run without ever connecting to a chain (16 scenarios) and cover the
+# logic. But those tests are not what runs on TGE day: a real mint, a real RPC,
+# real ATAs and the initialize-round.mjs script itself are. The gap between the
+# two can only be closed by running on a real chain.
 #
-# Bu prova atılabilir bir mint ve üç sahte alıcıyla, gerçek presale
-# takvimiyle (%9 + 13 × %7) tam bir tur açıp claim ediyor. Hiçbir gerçek
-# varlığa dokunmuyor.
+# This rehearsal opens and claims a full round with a throwaway mint and three
+# fake buyers, on the real presale schedule (9% + 13 x 7%). It touches no real
+# asset.
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ on:
         default: 'G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e'
         type: string
       round_id:
-        description: 'Prova tur numarası (gerçek turlarla çakışmasın)'
+        description: 'Rehearsal round number (must not collide with real rounds)'
         required: false
         default: '900'
         type: string
@@ -33,18 +33,18 @@ jobs:
         with:
           node-version: 20
 
-      - name: Bağımlılıkları kur
+      - name: Install dependencies
         run: npm ci
 
-      - name: Denetimler
+      - name: Audits
         run: npm run verify
 
-      - name: Solana CLI kurulumu
+      - name: Install the Solana CLI
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      - name: Deploy anahtarını yaz
+      - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
           cat > ~/.config/solana/id.json <<'KEYFILE'
@@ -56,12 +56,12 @@ jobs:
         run: |
           for i in 1 2 3 4 5 6; do
             if solana airdrop 2; then break; fi
-            echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar."
+            echo "Airdrop attempt $i failed, retrying in 20s."
             sleep 20
           done
           solana balance
 
-      - name: Prova
+      - name: Rehearsal
         env:
           PROGRAM_ID: ${{ inputs.program_id }}
           ROUND_ID: ${{ inputs.round_id }}
@@ -69,12 +69,12 @@ jobs:
           RPC_URL: https://api.devnet.solana.com
         run: node program/luck-distributor/scripts/rehearsal.mjs
 
-  tam-akis:
-    # SIRAYLA, paralel DEĞİL. İki iş de aynı devnet cüzdanını kullanıyor:
-    # paralel koştuklarında ikisi de airdrop isteyip ikisi de harcıyor ve
-    # biri diğerinin parasını bitiriyor. Nitekim bitirdi — tam akış
-    # provası, dağıtım provası aynı anda koşarken "insufficient lamports"
-    # ile düştü.
+  full-flow:
+    # IN SEQUENCE, NOT in parallel. Both jobs use the same devnet wallet: run in
+    # parallel they both ask for an airdrop and both spend, and one runs the
+    # other out of money. Which it did — the full-flow rehearsal failed with
+    # "insufficient lamports" while the distribution rehearsal was running at the
+    # same time.
     needs: rehearse
     runs-on: ubuntu-latest
     steps:
@@ -84,15 +84,15 @@ jobs:
         with:
           node-version: 20
 
-      - name: Bağımlılıkları kur
+      - name: Install dependencies
         run: npm ci
 
-      - name: Solana CLI kurulumu
+      - name: Install the Solana CLI
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
-      - name: Deploy anahtarını yaz
+      - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
           cat > ~/.config/solana/id.json <<'KEYFILE'
@@ -104,19 +104,20 @@ jobs:
         run: |
           for i in 1 2 3 4 5 6; do
             if solana airdrop 2; then break; fi
-            echo "Airdrop denemesi $i başarısız, 20sn sonra tekrar."
+            echo "Airdrop attempt $i failed, retrying in 20s."
             sleep 20
           done
           solana balance
 
-      # TAM AKIŞ: katkı → alıcı listesi → merkle → dağıtıcı → claim
+      # THE FULL FLOW: contribution → buyer list → merkle → distributor → claim
       #
-      # Yukarıdaki prova yalnızca dağıtım tarafını kanıtlıyor. Ortadaki iki
-      # halka (presale-buyers.mjs'in zincir okuması ve build-merkle.mjs'in
-      # o çıktıyı okuması) gerçek zincirde hiç koşmamıştı — ve bu provayı
-      # yazarken tam orada iki hata çıktı: presale yolu argüman ayrıştırma
-      # hatası yüzünden hiç çalışmıyordu, ve birimler 10^9 kat yanlıştı.
-      - name: Tam akış provası
+      # The rehearsal above only proves the distribution side. The two links in
+      # the middle (presale-buyers.mjs reading the chain, and build-merkle.mjs
+      # reading that output) had never run on a real chain — and while writing
+      # this rehearsal two bugs turned up in exactly that spot: the presale path
+      # did not work at all because of an argument-parsing bug, and the units
+      # were off by a factor of 10^9.
+      - name: Full-flow rehearsal
         env:
           PROGRAM_ID: ${{ inputs.program_id }}
           ROUND_ID: '901'

@@ -1,10 +1,11 @@
-name: luck-distributor — Dağıtım Turu Aç (Devnet)
+name: luck-distributor — Open a Distribution Round (Devnet)
 
-# TGE günü çalışacak workflow bu: bir dağıtım turu açar ve tokenleri
-# kilitler. Programda "parayı geri çek" talimatı YOK — yani bu adım geri
-# alınamaz. Bu yüzden varsayılan mod PROVA (dry_run=true): zincire hiç
-# dokunmadan hangi sayılarla, hangi takvimle, hangi kökle kilitleneceğini
-# yazdırır. Gerçek çalıştırma bilinçli bir seçim olmalı.
+# This is the workflow that runs on TGE day: it opens a distribution round and
+# locks the tokens. The program has NO "withdraw the money" instruction — so this
+# step cannot be undone. That is why the default mode is a REHEARSAL
+# (dry_run=true): it prints which numbers, which schedule and which root the
+# lock would use, without touching the chain at all. Running it for real has to
+# be a deliberate choice.
 
 on:
   workflow_dispatch:
@@ -14,38 +15,38 @@ on:
         required: true
         type: string
       mint:
-        description: '$LUCK mint adresi'
+        description: '$LUCK mint address'
         required: true
         type: string
       round_id:
-        description: 'Tur kimliği — 0 = presale vesting, 1..14 = haftalık çekilişler'
+        description: 'Round id — 0 = presale vesting, 1..14 = weekly raffles'
         required: true
         type: string
       merkle_file:
-        description: 'Repodaki merkle dosyası (ör. public/merkle/round-0.json)'
+        description: 'The merkle file in the repository (e.g. public/merkle/round-0.json)'
         required: true
         type: string
       start_iso:
-        description: 'Tur başlangıcı, UTC ISO (ör. 2026-09-01T12:00:00Z)'
+        description: 'Round start, UTC ISO (e.g. 2026-09-01T12:00:00Z)'
         required: true
         type: string
       cliff_bps:
-        description: 'TGE anında açılan pay, bps (presale: 900 = %9 · çekiliş: 10000 = %100)'
+        description: 'The share unlocked at TGE, in bps (presale: 900 = 9% · raffle: 10000 = 100%)'
         required: false
         default: '900'
         type: string
       period_bps:
-        description: 'Her kademede açılan pay, bps (presale: 700 = %7 · çekiliş: 0)'
+        description: 'The share unlocked at each step, in bps (presale: 700 = 7% · raffle: 0)'
         required: false
         default: '700'
         type: string
       periods:
-        description: 'Kademe sayısı (presale: 13 · çekiliş: 0)'
+        description: 'Number of steps (presale: 13 · raffle: 0)'
         required: false
         default: '13'
         type: string
       dry_run:
-        description: 'PROVA (varsayılan): zincire hiç dokunmadan ne yapacağını yazdırır'
+        description: 'REHEARSAL (default): prints what it would do without touching the chain'
         required: false
         default: true
         type: boolean
@@ -60,17 +61,17 @@ jobs:
         with:
           node-version: 20
 
-      - name: Bağımlılıkları kur
+      - name: Install dependencies
         run: npm ci
 
-      # Kilitleme geri alınamaz olduğu için, ABI'nin programla uyuştuğunu
-      # zincire dokunmadan ÖNCE bir kez daha doğruluyoruz. Bu kontrol
-      # initialize talimatının baytlarını, TGE'de çalışacak script'i
-      # koşturarak üretiyor ve programın altın vektörüyle karşılaştırıyor.
-      - name: ABI ve tokenomics denetimleri
+      # Because the lock cannot be undone, we verify once more BEFORE touching
+      # the chain that the ABI agrees with the program. This check produces the
+      # bytes of the initialize instruction by running the very script that will
+      # run at TGE, and compares them against the program's golden vector.
+      - name: ABI and tokenomics audits
         run: npm run verify
 
-      - name: Deploy anahtarını yaz
+      - name: Write the deploy key
         if: inputs.dry_run != true
         run: |
           mkdir -p ~/.config/solana
@@ -78,7 +79,7 @@ jobs:
           ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
           KEYFILE
 
-      - name: Turu aç
+      - name: Open the round
         env:
           PROGRAM_ID: ${{ inputs.program_id }}
           MINT: ${{ inputs.mint }}
@@ -93,8 +94,8 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
         run: node program/luck-distributor/scripts/initialize-round.mjs
 
-      - name: Prova uyarısı
+      - name: Rehearsal notice
         if: inputs.dry_run == true
         run: |
-          echo "::notice::Bu bir PROVAYDI — zincire hiçbir şey yazılmadı." \
-               "Gerçek kilitleme için dry_run=false ile tekrar çalıştırın."
+          echo "::notice::That was a REHEARSAL — nothing was written to the chain." \
+               "Run it again with dry_run=false to lock for real."
