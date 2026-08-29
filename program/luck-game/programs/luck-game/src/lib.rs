@@ -2,17 +2,16 @@ use anchor_lang::prelude::*;
 use anchor_lang::solana_program::sysvar::slot_hashes;
 use anchor_lang::system_program::{self, Transfer as SolTransfer};
 
-// Devnet adresi. Hesap düzeni değişmese bile her redeploy'da yenileniyor:
-// rust-cache CI önbelleği `target/deploy/luck_game-keypair.json`'ı run'lar
-// arasında korumuyor, `anchor keys sync` de her seferinde taze bir keypair
-// üretiyor. Bunun pratik sonucu: her redeploy'dan sonra oyun yeniden
-// initialize edilmeli ve eski kasadaki bakiye orada kalır (devnet test
-// SOL'ü olduğu için şimdilik önemsiz — mainnet'e çıkmadan önce keypair'i
-// bir GitHub secret'ında saklayacak şekilde düzeltilmeli).
-// NOT: rust-cache CI önbelleği program keypair'ini run'lar arasında
-// korumadı, bu yüzden fresh-keypair redeploy'lar `anchor keys sync`
-// adımıyla (bkz. deploy-luck-game.yml) bu satırı CI checkout'unda otomatik
-// güncelledi — gerçek deploy edilen ve kendi içinde tutarlı adres bu.
+// The devnet address. The program ID comes from THE SOURCE CODE: this
+// `declare_id!` is the single source of truth. No keypair is needed for an
+// upgrade — the chain only looks for the upgrade authority's (the deploy
+// wallet's) signature. `anchor keys sync` runs only when a new program is
+// deliberately opened (first_deploy=true); see
+// .github/workflows/deploy-luck-game.yml.
+//
+// An older note here said the keypair was carried in the rust-cache and that
+// the program could not be updated if it were lost. That is no longer true:
+// when the workflow was rewritten the cache steps were removed entirely.
 declare_id!("H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf");
 
 const CONFIG_SEED: &[u8] = b"config";
@@ -20,45 +19,48 @@ const VAULT_SEED: &[u8] = b"vault";
 const PLAYER_SEED: &[u8] = b"player";
 const SPIN_TIERS: usize = 6;
 
-// resolve() en erken commit_slot + reveal_delay_slots'ta, en geç
-// commit_slot + reveal_delay_slots + MAX_RESOLVE_WINDOW_SLOTS'ta çağrılabilir.
-// Bu üst sınır, SlotHashes sysvar'ının yalnızca son ~512 slot'u tuttuğu
-// gerçeğinden kaynaklanıyor — çok geç kalınırsa hedef slot'un hash'i sysvar'dan
-// düşmüş olur ve sonuç asla belirlenemez hale gelirdi. 300 slot (~2 dakika),
-// normal kullanımda (frontend gecikmeden resolve'u otomatik tetikler) bolca
-// pay bırakırken sysvar'ın 512 slot'luk penceresinin epey içinde kalıyor.
+// resolve() can be called at the earliest at commit_slot + reveal_delay_slots
+// and at the latest at
+// commit_slot + reveal_delay_slots + MAX_RESOLVE_WINDOW_SLOTS.
+// That upper bound comes from the fact that the SlotHashes sysvar only keeps
+// the last ~512 slots — leave it too long and the target slot's hash has fallen
+// out of the sysvar, making the result impossible to determine. 300 slots
+// (~2 minutes) leaves plenty of room in normal use (the frontend triggers
+// resolve automatically without delay) while staying well inside the sysvar's
+// 512-slot window.
 const MAX_RESOLVE_WINDOW_SLOTS: u64 = 300;
 
-// Basis points taban değeri (10000 = %100). Olasılıklar ve ücret payı bu
-// birimle ifade ediliyor — ör. 200 bps = %2.
+// The basis-point base (10000 = 100%). Probabilities and the fee share are
+// expressed in this unit — e.g. 200 bps = 2%.
 const BPS_DENOMINATOR: u32 = 10_000;
 
-// Delegenin ("oyun cüzdanı") play()/resolve() işlem ücretlerini ödeyebilmesi
-// için gereken, GERÇEKTEN HARCANABİLİR gaz payı — oyuncudan değil, KASADAN
-// karşılanır. Kasa zaten her satın alımın büyük kısmını topladığından bu,
-// oynanan oyunların doğal bir maliyeti sayılabilir.
+// The GENUINELY SPENDABLE gas share the delegate (the "game wallet") needs in
+// order to pay the play()/resolve() transaction fees — it comes from THE VAULT,
+// not from the player. Since the vault already collects the bulk of every
+// purchase, this can be seen as a natural cost of the games being played.
 //
-// DİKKAT — bu tutar tek başına bir hesabı ayakta TUTMAZ: Solana'da 0 baytlık
-// bir hesabın kira muafiyeti (rent-exempt) tabanı ~890_880 lamport ve bir
-// hesap bu tabanın altında bakiyeyle bırakılamaz. Bu yüzden delegeye
-// gönderilen tutar her zaman `Rent::minimum_balance(0) + bu sabit` olarak
-// hesaplanıyor (bkz. buy_spins içindeki `delegate_target`); bu sabit yalnızca
-// tabanın ÜSTÜNE binen, harcanabilir kısmı ifade ediyor.
+// CAREFUL — this amount alone does NOT keep an account alive: on Solana the
+// rent-exemption floor for a 0-byte account is ~890_880 lamports and an account
+// cannot be left with a balance below it. So the amount sent to the delegate is
+// always computed as `Rent::minimum_balance(0) + this constant` (see
+// `delegate_target` inside buy_spins); this constant only expresses the
+// spendable part that rides ON TOP of the floor.
 //
-// Kasadan çıktığı için ödemesi bilerek `buy_spins()`'e bağlandı: izinsiz
-// çağrılabilen `register_delegate()` içinde olsaydı, boş cüzdanlarla art arda
-// kayıt olup kasayı boşaltmak kârlı bir saldırı olurdu.
-const DELEGATE_GAS_SPONSOR_LAMPORTS: u64 = 200_000; // ~0.0002 SOL, ~30 tur
+// Because it leaves the vault, paying it is deliberately tied to `buy_spins()`:
+// had it been inside `register_delegate()`, which can be called permissionlessly,
+// registering repeatedly with empty wallets to drain the vault would be a
+// profitable attack.
+const DELEGATE_GAS_SPONSOR_LAMPORTS: u64 = 200_000; // ~0.0002 SOL, ~30 rounds
 
 #[program]
 pub mod luck_game {
     use super::*;
 
-    /// Oyunu bir kez kurar: ödül/ihtimal parametrelerini, spin paket
-    /// tarifesini ve hazine (treasury) cüzdanını GameConfig PDA'sına yazar.
-    /// Kasa (vault) için ayrı bir "oluşturma" adımı yok — locked-pool'daki
-    /// pool_authority'de olduğu gibi, ilk `buy_spins()` çağrısındaki
-    /// transfer onu zaten var edecek.
+    /// Sets the game up once: writes the prize and probability parameters, the
+    /// spin package tariff and the treasury wallet into the GameConfig PDA.
+    /// There is no separate "create" step for the vault — as with pool_authority
+    /// in locked-pool, the transfer in the first `buy_spins()` call brings it into
+    /// existence.
     pub fn initialize(
         ctx: Context<Initialize>,
         free_plays: u8,
@@ -74,8 +76,8 @@ pub mod luck_game {
         spin_tier_prices: [u64; SPIN_TIERS],
     ) -> Result<()> {
         require!(small_prize_lamports > 0, GameError::InvalidParam);
-        // Büyük ödül küçük ödülden az olamaz — "büyük" adının bir anlamı
-        // kalmalı (eşit olması, yani tek katmanlı davranış, buna izin verilir).
+        // The big prize cannot be less than the small one — the name "big" has to
+        // mean something (being equal, i.e. single-tier behaviour, is allowed).
         require!(big_prize_lamports >= small_prize_lamports, GameError::InvalidParam);
         require!(reveal_delay_slots > 0, GameError::InvalidParam);
         require!(
@@ -85,15 +87,15 @@ pub mod luck_game {
                 && (big_prize_bps as u32) <= BPS_DENOMINATOR,
             GameError::InvalidParam
         );
-        // "Kolay mod" normal moddan daha kolay olmalı, yoksa eşiğin hiç
-        // anlamı kalmaz.
+        // "Easy mode" has to be easier than normal mode, otherwise the threshold
+        // means nothing at all.
         require!(easy_win_bps >= normal_win_bps, GameError::InvalidParam);
-        // Kasa eşiği, en büyük olası ödülü (jackpot) ödeyebilecek kadar
-        // büyük olmalı — aksi halde "kolay mod" tetiklenip de kasada ödül
-        // için para olmayan bir durum tasarım hatası olurdu.
-        // Eşik yalnızca jackpot'u değil, onun üstüne eklenecek operasyon
-        // payını da karşılamalı — aksi halde "kolay mod"a geçmiş bir kasa,
-        // jackpot çıktığında ödülü ödeyip payı ödeyemeyecek duruma düşerdi.
+        // The vault threshold has to be large enough to pay the largest possible
+        // prize (the jackpot) — otherwise "easy mode" could trigger while the vault
+        // had no money for the prize, which would be a design error.
+        // The threshold must cover not only the jackpot but the house share added on
+        // top of it — otherwise a vault that has switched to "easy mode" could end up
+        // able to pay the prize but not the share when the jackpot lands.
         require!(
             vault_easy_threshold_lamports
                 >= big_prize_lamports
@@ -108,11 +110,10 @@ pub mod luck_game {
             );
         }
 
-        // Vault PDA'sının bump'ını burada bir kez hesaplayıp saklıyoruz ki
-        // sonraki her buy_spins()/resolve() çağrısında tekrar tekrar
-        // `find_program_address` aramasıyla (göreceli olarak pahalı) yeniden
-        // hesaplamak yerine doğrudan kullanılabilsin — locked-pool'daki
-        // `authority_bump` ile aynı optimizasyon.
+        // The vault PDA's bump is computed once here and stored, so that every
+        // later buy_spins()/resolve() call can use it directly instead of
+        // recomputing it with a (relatively expensive) `find_program_address`
+        // search — the same optimisation as `authority_bump` in locked-pool.
         let config_key = ctx.accounts.config.key();
         let (_vault_pda, vault_bump) =
             Pubkey::find_program_address(&[VAULT_SEED, config_key.as_ref()], ctx.program_id);
@@ -137,22 +138,21 @@ pub mod luck_game {
         Ok(())
     }
 
-    /// Parametreleri sonradan ayarlamak için (ör. paket tarifesini
-    /// güncelleme). Yalnızca `config.authority` çağırabilir.
+    /// For adjusting the parameters afterwards (updating the package tariff, say).
+    /// Only `config.authority` can call it.
     ///
-    /// BEKLEYEN OYUNLARI ETKİLEMEZ. `play()` anında ödemeyi belirleyen tüm
-    /// parametreler `PlayerState`'e KOPYALANIYOR ve `resolve()` onları
-    /// okuyor. Yani oyuncu bahsini koyduğu andaki kurallarla sonuçlanır;
-    /// yetkilinin bekleyen bir bahsin oranını sonradan değiştirmesi
-    /// mümkün değil.
+    /// IT DOES NOT AFFECT PENDING GAMES. Every parameter that determines the payout
+    /// is COPIED into `PlayerState` at the moment of `play()`, and `resolve()` reads
+    /// those. So a player's round settles under the rules that applied when they
+    /// placed their bet; it is not possible for the authority to change the odds of
+    /// a pending bet afterwards.
     ///
-    /// Bu böyle DEĞİLDİ. Önceden `resolve()` güncel config'i okuyordu ve
-    /// buradaki yorum "bekleyen oyunları etkilemez" diyip hemen ardından
-    /// "resolve GÜNCEL config'ten okur" diye kendini yalanlıyordu.
-    /// Doğrulanabilir adalet iddiasında bulunan bir oyunda "bahsi
-    /// koyduktan sonra oranı değiştirmeyeceğimize güvenin" kabul edilemez
-    /// bir boşluktu. Yayın öncesinde, düzeltmenin bedava olduğu son anda
-    /// kapatıldı.
+    /// That was NOT the case before. `resolve()` used to read the current config,
+    /// and the comment here said "it does not affect pending games" and then
+    /// contradicted itself one line later with "resolve reads from the CURRENT
+    /// config". In a game that claims verifiable fairness, "trust us not to change
+    /// the odds after you place your bet" was an unacceptable gap. It was closed
+    /// before launch, at the last moment when the fix was still free.
     pub fn update_config(
         ctx: Context<UpdateConfig>,
         new_treasury: Pubkey,
@@ -177,9 +177,9 @@ pub mod luck_game {
             GameError::InvalidParam
         );
         require!(easy_win_bps >= normal_win_bps, GameError::InvalidParam);
-        // Eşik yalnızca jackpot'u değil, onun üstüne eklenecek operasyon
-        // payını da karşılamalı — aksi halde "kolay mod"a geçmiş bir kasa,
-        // jackpot çıktığında ödülü ödeyip payı ödeyemeyecek duruma düşerdi.
+        // The threshold must cover not only the jackpot but the house share added on
+        // top of it — otherwise a vault that has switched to "easy mode" could end up
+        // able to pay the prize but not the share when the jackpot lands.
         require!(
             vault_easy_threshold_lamports
                 >= big_prize_lamports
@@ -194,10 +194,10 @@ pub mod luck_game {
             );
         }
 
-        // Hazine cüzdanı sonradan değiştirilebilir: hem buy_spins()'teki
-        // %20 pay hem resolve()'daki ödül payı bu adrese gider. Sıfır
-        // adres kabul edilmiyor — yanlışlıkla boş bırakılan bir alan tüm
-        // geliri yakılmış bir adrese gönderirdi.
+        // The treasury wallet can be changed later: both the 20% share in
+        // buy_spins() and the prize share in resolve() go to this address. The zero
+        // address is not accepted — a field accidentally left empty would send all
+        // the revenue to a burn address.
         require_keys_neq!(new_treasury, Pubkey::default(), GameError::InvalidParam);
 
         let config = &mut ctx.accounts.config;
@@ -216,15 +216,15 @@ pub mod luck_game {
         Ok(())
     }
 
-    /// Bir spin paketi satın alır — İSTER İSTEMEZ oyuncunun GERÇEK
-    /// cüzdanıyla imzalanmalı (delege burada kullanılamaz, çünkü delege
-    /// yalnızca küçük bir gaz bakiyesi taşır, gerçek ödeme SOL'u değil).
-    /// Tutar aynı `play()`'in eski davranışındaki gibi ikiye bölünüyor:
-    /// bir payı hazineye (treasury), kalanı oyun kasasına (vault). Satın
-    /// alınan spin sayısı `player_state.spins_remaining`'e ekleniyor.
+    /// Buys a spin package — this MUST be signed with the player's REAL wallet
+    /// (the delegate cannot be used here, because the delegate only carries a small
+    /// gas balance, not the SOL for the actual payment). The amount is split in two
+    /// exactly as `play()` used to do: a share to the treasury and the rest to the
+    /// game vault. The number of spins bought is added to
+    /// `player_state.spins_remaining`.
     ///
-    /// İLK satın alımda ayrıca "katılım depozitosu" geri ödemesi yapılır —
-    /// bkz. aşağıdaki `onboarding_cost` açıklaması.
+    /// On the FIRST purchase an "onboarding deposit" refund also happens — see the
+    /// `onboarding_cost` explanation below.
     pub fn buy_spins(ctx: Context<BuySpins>, tier_index: u8) -> Result<()> {
         let config = &ctx.accounts.config;
         require!((tier_index as usize) < SPIN_TIERS, GameError::InvalidParam);
@@ -232,49 +232,48 @@ pub mod luck_game {
         let price = config.spin_tier_prices[tier_index as usize];
 
         // -------------------------------------------------------------------
-        // Katılım maliyeti: oyuncudan değil, KASADAN
-        // -------------------------------------------------------------------
-        // Solana'da hesap açmak ücretsiz değil: bir hesap, "rent-exempt"
-        // (kira muafiyeti) tabanının altında bakiyeyle var olamaz. Yeni bir
-        // oyuncu zincire girerken iki hesap doğuyor:
-        //   * `player_state` PDA'sı (spin kredisi, bekleyen oyun, delege
-        //     kaydı burada tutuluyor) — rent(PlayerState::LEN), ~0,00162 SOL.
-        //     Bunu Anchor'ın `init_if_needed`'i OYUNCUYA ödetiyor.
-        //   * delege / "oyun cüzdanı" (0 baytlık sıradan bir hesap) —
-        //     rent(0) + gaz payı. Bunu doğrudan kasadan gönderiyoruz.
+        // The onboarding cost: paid from THE VAULT, not by the player
         //
-        // İkisi de bize gelir olarak kalmıyor (oyuncunun kendi hesaplarında
-        // duruyorlar) ama oyuncu açısından "ilan edilen paket fiyatının
-        // üstüne çıkan sürpriz masraf" gibi görünüyordu. Artık:
-        //   - player_state kirası oyuncuya AYNEN geri ödeniyor,
-        //   - delegenin kirası + gazı zaten kasadan gidiyor,
-        // yani oyuncunun cebinden çıkan net tutar = ilan edilen paket
-        // fiyatı + Solana'nın kaçınılmaz işlem ücreti (~0,0000065 SOL).
+        // Opening an account on Solana is not free: an account cannot exist with a
+        // balance below the "rent-exempt" floor. A new player entering the chain
+        // brings two accounts into being:
+        //   * the `player_state` PDA (the spin credit, the pending game and the
+        //     delegate registration live here) — rent(PlayerState::LEN), ~0.00162
+        //     SOL. Anchor's `init_if_needed` charges this TO THE PLAYER.
+        //   * the delegate / "game wallet" (an ordinary 0-byte account) — rent(0)
+        //     plus the gas share. We send this straight from the vault.
         //
-        // Maliyeti bizim payımızdan düşürüyoruz: ev payı (treasury_fee_bps)
-        // paketin TAMAMI üzerinden değil, bu katılım maliyeti düşüldükten
-        // sonraki tutar üzerinden hesaplanıyor.
+        // Neither stays with us as revenue (both sit in the player's own accounts),
+        // but from the player's point of view they looked like "a surprise cost on
+        // top of the published package price". Now:
+        //   - the player_state rent is refunded to the player in full,
+        //   - the delegate's rent and gas already come from the vault,
+        // so the net amount leaving the player's pocket = the published package
+        // price plus Solana's unavoidable transaction fee (~0.0000065 SOL).
         //
-        // NEDEN `register_delegate()` İÇİNDE DEĞİL DE BURADA: kasadan çıkan
-        // her kuruşun ücretli bir satın alıma bağlı olması şart. Kayıt
-        // sırasında yapılsaydı, bir saldırgan binlerce boş cüzdanla art arda
-        // kayıt olup kasayı kuru kuruya boşaltabilirdi — üstelik bu yalnızca
-        // teorik değil, kârlı bir saldırı olurdu (işlem ücreti, çekilen
-        // tutardan çok daha küçük). Satın almaya bağlıyken "sömürmek" için
-        // her seferinde katılım maliyetinden onlarca kat büyük bir paket
-        // bedeli ödemek gerekiyor.
+        // We take the cost out of our own share: the house share
+        // (treasury_fee_bps) is computed not on the WHOLE package but on the amount
+        // left after this onboarding cost is deducted.
+        //
+        // WHY HERE AND NOT INSIDE `register_delegate()`: every lamport leaving the
+        // vault must be tied to a paid purchase. Done during registration, an
+        // attacker could register with thousands of empty wallets in a row and drain
+        // the vault dry — and that would not merely be theoretical but profitable
+        // (the transaction fee is far smaller than the amount withdrawn). Tied to a
+        // purchase, "exploiting" it means paying a package price dozens of times the
+        // onboarding cost every time.
         let rent = Rent::get()?;
 
-        // "İlk satın alım" tespiti: hiç oynanmamış VE elde hiç spin yok.
-        // Bu ikisi yalnızca player_state'in ömründe BİR KEZ aynı anda
-        // doğru olabilir — ilk satın alımdan sonra spins_remaining > 0,
-        // spinler tükendiğinde ise plays_count > 0 olur.
+        // Detecting the "first purchase": never played AND holding no spins. Those
+        // two can only be true at the same time ONCE in a player_state's lifetime —
+        // after the first purchase spins_remaining > 0, and once the spins run out
+        // plays_count > 0.
         //
-        // Burada bilerek `initialized` bayrağına BAKMIYORUZ: delege kaydı
-        // artık satın almayla AYNI işlemde, ondan hemen önce gidiyor ve
-        // `register_delegate()` bayrağı çoktan set ediyor. `initialized`
-        // kullanıldığında geri ödeme hiç tetiklenmiyordu — oyuncudan
-        // 0,00162 SOL fazladan çıkıyordu.
+        // We deliberately do NOT look at the `initialized` flag here: the delegate
+        // registration now goes in the SAME transaction as the purchase, immediately
+        // before it, and `register_delegate()` has already set the flag. With
+        // `initialized` the refund never triggered — and the player paid an extra
+        // 0.00162 SOL.
         let is_first_purchase = ctx.accounts.player_state.plays_count == 0
             && ctx.accounts.player_state.spins_remaining == 0;
 
@@ -284,15 +283,15 @@ pub mod luck_game {
             0
         };
 
-        // Delegenin hedef bakiyesi: kira tabanı (hesabın var olabilmesi
-        // için asla harcanamaz) + harcanabilir gaz payı. Her satın alımda
-        // bu seviyeye geri dolduruluyor, yani oynadıkça eriyen gaz, oyuncu
-        // zaten imzaladığı ödemenin İÇİNDE sessizce tazeleniyor — ayrı bir
-        // "doldur" onayı istemeye gerek kalmıyor.
+        // The delegate's target balance: the rent floor (which can never be spent,
+        // so the account can exist) plus the spendable gas share. It is topped back
+        // up to this level on every purchase, so the gas that melts away as the
+        // player plays is quietly refreshed INSIDE the payment they were signing
+        // anyway — with no need to ask for a separate "top up" approval.
         //
-        // Yalnızca oyuncunun GERÇEKTEN kayıtlı delegesi fonlanıyor; hesap
-        // listesine rastgele bir adres koyup kasadan oraya para
-        // göndertilemesin diye.
+        // Only the player's ACTUALLY REGISTERED delegate is funded, so that nobody
+        // can put an arbitrary address in the account list and have the vault send
+        // money to it.
         let delegate_target = rent
             .minimum_balance(0)
             .checked_add(DELEGATE_GAS_SPONSOR_LAMPORTS)
@@ -308,11 +307,11 @@ pub mod luck_game {
         let mut onboarding_cost = player_refund
             .checked_add(delegate_funding)
             .ok_or(GameError::MathOverflow)?;
-        // Katılım maliyeti paket bedelinden büyük olamaz — aksi halde kasa
-        // her yeni oyuncuda para kaybederdi. Tarifedeki en ucuz paket bile
-        // bunun onlarca katı, bu yüzden pratikte hiç tetiklenmiyor; yine de
-        // ileride çok ucuz bir paket eklenirse sessizce zarar etmek yerine
-        // kasadan çıkışı tamamen kapatıyoruz.
+        // The onboarding cost cannot exceed the package price — otherwise the vault
+        // would lose money on every new player. Even the cheapest package in the
+        // tariff is dozens of times this, so in practice it never triggers; even so,
+        // rather than silently making a loss if a very cheap package is added later,
+        // we close the outflow from the vault entirely.
         let (player_refund, delegate_funding) = if onboarding_cost >= price {
             onboarding_cost = 0;
             (0, 0)
@@ -320,7 +319,7 @@ pub mod luck_game {
             (player_refund, delegate_funding)
         };
 
-        // Ev payı, katılım maliyeti DÜŞÜLDÜKTEN SONRAKİ tutar üzerinden.
+        // The house share, on the amount left AFTER the onboarding cost is deducted.
         let fee_base = price
             .checked_sub(onboarding_cost)
             .ok_or(GameError::MathOverflow)?;
@@ -355,13 +354,13 @@ pub mod luck_game {
             vault_amount,
         )?;
 
-        // Katılım maliyetini kasadan öde (yukarıdaki uzun açıklamaya
-        // bakınız): player_state kirası oyuncuya geri, delegenin kirası +
-        // gazı delegeye. Kasa bu satırlardan hemen önce `vault_amount`
-        // aldığı için karşılığı her zaman var; yine de kasanın kendi kira
-        // tabanının altına düşmemesi için tavanlıyoruz — karşılayamazsa
-        // ödeme sessizce atlanır, satın alma yine de tamamlanır (bir gaz
-        // tamponu eksikliği asıl ödemeyi düşürmemeli).
+        // Pay the onboarding cost from the vault (see the long explanation above):
+        // the player_state rent back to the player, the delegate's rent plus gas to
+        // the delegate. Because the vault received `vault_amount` immediately
+        // before these lines there is always cover for it; even so we cap it so the
+        // vault does not fall below its own rent floor — if it cannot cover it, the
+        // payment is skipped silently and the purchase still completes (a missing
+        // gas buffer must not fail the actual payment).
         if onboarding_cost > 0 {
             let config_key = ctx.accounts.config.key();
             let vault_bump = ctx.accounts.config.vault_bump;
@@ -389,9 +388,9 @@ pub mod luck_game {
             if delegate_funding > 0 {
                 let available = ctx.accounts.vault.lamports().saturating_sub(vault_floor);
                 let amount = delegate_funding.min(available);
-                // Delege hesabı zincirde YOKSA, kira tabanının ALTINDA bir
-                // tutar göndermek işlemin tamamını `InsufficientFundsForRent`
-                // ile düşürür. Bu yüzden ya tam yeter, ya hiç göndermiyoruz.
+                // If the delegate account does NOT exist on chain, sending an amount
+                // BELOW the rent floor fails the whole transaction with
+                // `InsufficientFundsForRent`. So we send either enough or nothing.
                 let creates_account = ctx.accounts.delegate.lamports() == 0;
                 let would_be_rent_exempt =
                     ctx.accounts.delegate.lamports().saturating_add(amount) >= vault_floor;
@@ -431,18 +430,17 @@ pub mod luck_game {
         Ok(())
     }
 
-    /// Oyuncunun tarayıcıda tuttuğu, tek seferlik (bir kez) gerçek
-    /// cüzdanla yetkilendirilmiş yerel bir "delege" anahtarını kaydeder —
-    /// bundan sonraki `play()` çağrıları bu delege ile de imzalanabilir,
-    /// böylece her çevirişte cüzdan uygulamasına geçmeye gerek kalmaz.
-    /// Delege sadece bu oyuncunun ÖNCEDEN SATIN ALDIĞI spin kredisini
-    /// harcayabilir; kazanç her zaman `player_state.player`'a (gerçek
-    /// cüzdana) gider, delegenin kendisine asla gitmez.
+    /// Registers a local "delegate" key the player keeps in the browser, authorised
+    /// once with the real wallet — from then on `play()` calls can also be signed
+    /// with that delegate, so there is no need to switch to the wallet app on every
+    /// spin. The delegate can only spend the spin credit this player has ALREADY
+    /// BOUGHT; winnings always go to `player_state.player` (the real wallet) and
+    /// never to the delegate itself.
     ///
-    /// Delegenin play()/resolve() işlem ücretlerini ödeyebilmesi için
-    /// gereken küçük gaz bakiyesi, OYUNCUDAN DEĞİL, bu ilk kayıtta bir
-    /// kereliğine KASADAN (vault) sponsor edilir — ücretsiz deneme
-    /// gerçekten ücretsiz kalsın diye (bkz. DELEGATE_GAS_SPONSOR_LAMPORTS).
+    /// The small gas balance the delegate needs in order to pay the play()/resolve()
+    /// transaction fees is sponsored ONCE, on this first registration, FROM THE
+    /// VAULT rather than by the player — so that a free trial really stays free
+    /// (see DELEGATE_GAS_SPONSOR_LAMPORTS).
     pub fn register_delegate(ctx: Context<RegisterDelegate>) -> Result<()> {
         let owner = ctx.accounts.player.key();
         let delegate_key = ctx.accounts.delegate.key();
@@ -452,44 +450,42 @@ pub mod luck_game {
         player_state.delegate = delegate_key;
         player_state.bump = ctx.bumps.player_state;
 
-        // Bu çağrı KASADAN HİÇ PARA ÇIKARMIYOR — sadece defter tutuyor.
+        // This call TAKES NO MONEY OUT OF THE VAULT — it only keeps the books.
         //
-        // Eskiden burada delegeye bir kereliğine gaz sponsorluğu yapılıyordu.
-        // İki sorunu vardı:
-        //   1. Sponsorluk (200_000 lamport) 0 baytlık bir hesabın kira
-        //      tabanının (~890_880) ALTINDA kaldığı için, delege hesabı
-        //      zincirde yeni doğduğunda işlemin tamamı
-        //      `InsufficientFundsForRent` ile düşüyordu.
-        //   2. Çağrı izinsiz (permissionless): bir saldırgan binlerce boş
-        //      cüzdanla art arda kayıt olup kasayı 200_000'er 200_000'er
-        //      boşaltabilirdi — işlem ücretinden daha çok çektiği için
-        //      KÂRLI bir saldırı.
+        // It used to sponsor the delegate's gas once here. That had two problems:
+        //   1. The sponsorship (200_000 lamports) is BELOW the rent floor of a
+        //      0-byte account (~890_880), so when the delegate account was newly
+        //      born on chain the whole transaction failed with
+        //      `InsufficientFundsForRent`.
+        //   2. The call is permissionless: an attacker could register with thousands
+        //      of empty wallets in a row and drain the vault 200_000 at a time — a
+        //      PROFITABLE attack, since it withdraws more than the transaction fee.
         //
-        // Bu yüzden delegenin kirası da gazı da artık `buy_spins()` içinde,
-        // yani ÜCRETLİ bir satın almaya bağlı olarak gönderiliyor. Kayıt ile
-        // satın alma zaten tek işlemde birlikte gittiği için (bkz.
-        // src/lib/luckGame.ts buySpins/setupDelegate) oyuncu açısından
-        // hiçbir şey değişmiyor: tek imza, delege dolu.
+        // So both the delegate's rent and its gas are now sent inside `buy_spins()`,
+        // tied to a PAID purchase. Because the registration and the purchase already
+        // travel in a single transaction (see buySpins/setupDelegate in
+        // src/lib/luckGame.ts), nothing changes from the player's point of view: one
+        // signature, and the delegate is funded.
         Ok(())
     }
 
-    /// Oyuna katılır ("commit" adımı) — bir spin kredisi harcar. İlk
-    /// çağrıda `config.free_plays` kadar ücretsiz kredi otomatik yükleniyor;
-    /// bitince (ve daha önce hiç bonus verilmediyse) tek seferlik +1 bonus
-    /// spin ekleniyor. Kredi biterse `NoSpinsRemaining` hatası döner —
-    /// oyuncu `buy_spins()` ile paket almalı.
+    /// Enters a round (the "commit" step) — spends one spin credit. On the first
+    /// call, `config.free_plays` free credits are loaded automatically; once they
+    /// run out (and if no bonus has ever been granted) a one-off +1 bonus spin is
+    /// added. When the credit runs out it returns a `NoSpinsRemaining` error — the
+    /// player has to buy a package with `buy_spins()`.
     ///
-    /// Oyuncunun kendisi (`owner` == imzalayan) VEYA `register_delegate()`
-    /// ile kaydedilmiş yerel delege anahtarı imzalayabilir — böylece
-    /// oyuncu bir kez cüzdanıyla onay verip spin paketini/delegeyi
-    /// kaydettikten sonra, her çevirişte tekrar cüzdan onayı gerekmez.
+    /// The player themselves (`owner` == the signer) OR the local delegate key
+    /// registered with `register_delegate()` may sign — so once the player has
+    /// approved once with their wallet and registered the spin package and the
+    /// delegate, no further wallet approval is needed on every spin.
     ///
-    /// Sonuç burada BELLİ OLMAZ — yalnızca "şu an bu oyuncu, şu slot'ta bir
-    /// oyun başlattı" diye zincire yazılır. Kazanıp kazanmadığı, henüz var
-    /// olmayan (gelecekteki) bir slot'un hash'ine bağlı olacak şekilde
-    /// `resolve()`'da belirlenir — bkz. o fonksiyonun açıklaması, bunun
-    /// neden gerekli olduğunu (simülasyonla "önizleyip" hile yapmayı
-    /// engellemek için) anlatıyor.
+    /// The outcome is NOT DECIDED here — all that is written on chain is "this
+    /// player started a game at this slot". Whether they won is decided in
+    /// `resolve()`, tied to the hash of a slot that does not exist yet (a future
+    /// one) — see that function's comment, which explains why this is necessary
+    /// (to stop a player from "previewing" the result by simulating it and
+    /// cheating).
     pub fn play(ctx: Context<Play>) -> Result<()> {
         let owner = ctx.accounts.owner.key();
         let authority = ctx.accounts.authority.key();
@@ -505,12 +501,11 @@ pub mod luck_game {
 
         let config = &ctx.accounts.config;
         if !player_state.spins_seeded {
-            // Toplama (ADD) — üzerine YAZMA: oyuncu ilk hiç oynamadan önce
-            // paket satın almış olabilir (buy_spins zaten spins_remaining'i
-            // artırır), bu durumda ücretsiz hakları o bakiyenin ÜZERİNE
-            // eklemek gerekir, üzerine yazıp satın alınan spinleri
-            // silmemek gerekir. `spins_seeded` bayrağı bu eklemenin yalnızca
-            // bir kez olmasını garanti eder.
+            // ADD, do not OVERWRITE: the player may have bought a package before ever
+            // playing (buy_spins already increases spins_remaining), and in that case
+            // the free spins have to be added ON TOP of that balance — overwriting
+            // would erase the purchased spins. The `spins_seeded` flag guarantees this
+            // addition happens only once.
             player_state.spins_remaining = player_state
                 .spins_remaining
                 .checked_add(config.free_plays as u32)
@@ -525,20 +520,20 @@ pub mod luck_game {
             .checked_add(1)
             .ok_or(GameError::MathOverflow)?;
 
-        // Ücretsiz haklar tam bitince (ve daha önce bonus verilmediyse) tek
-        // seferlik +1 bonus deneme veriyoruz — frontend bunu bildirimle
-        // gösterir (bkz. PlayCommitted.bonus_granted).
+        // When the free spins run out completely (and no bonus has been granted
+        // before) we hand out a one-off +1 bonus attempt — the frontend shows it
+        // with a notification (see PlayCommitted.bonus_granted).
         //
-        // Koşul EŞİTLİK değil, ">=" olmak zorunda. Eşitlikken
-        // (`plays_count == free_plays`) ücretsiz haklarını kullanmadan ÖNCE
-        // paket alan oyuncu bonusu HİÇ ALAMIYORDU: satın alınan spinler de
-        // aynı bakiyeye eklendiği için bakiye 3'te değil 4'te sıfırlanıyor
-        // ve eşitlik hiç tutmuyordu. Testle doğrulandı (bkz.
-        // `paket_once_alinsa_da_bonus_veriliyor`).
+        // The condition has to be ">=", not EQUALITY. With equality
+        // (`plays_count == free_plays`) a player who bought a package BEFORE using
+        // up their free spins would NEVER get the bonus: the purchased spins land
+        // in the same balance, so it hits zero at 4 rather than at 3 and the
+        // equality never holds. Verified by a test (see
+        // `the_bonus_is_granted_even_if_a_package_was_bought_first`).
         //
-        // `free_plays > 0` şartı da gerekli: ücretsiz hak yokken hiç kimse
-        // bonus almamalı, yoksa ">=" herkese ilk oyundan sonra bedava spin
-        // verirdi.
+        // The `free_plays > 0` condition is needed too: with no free spins nobody
+        // should get a bonus, otherwise ">=" would hand everyone a free spin after
+        // their first game.
         let mut bonus_granted = false;
         if player_state.spins_remaining == 0
             && !player_state.bonus_granted
@@ -554,9 +549,8 @@ pub mod luck_game {
         player_state.commit_slot = Clock::get()?.slot;
         player_state.bump = ctx.bumps.player_state;
 
-        // BAHSİN KOYULDUĞU ANDAKİ KURALLARI DONDUR.
-        // resolve() bunları okuyacak; update_config bu bahsi artık
-        // etkileyemez.
+        // FREEZE THE RULES AS THEY STAND WHEN THE BET IS PLACED.
+        // resolve() will read these; update_config can no longer affect this bet.
         player_state.bet_small_prize_lamports = config.small_prize_lamports;
         player_state.bet_big_prize_lamports = config.big_prize_lamports;
         player_state.bet_vault_easy_threshold_lamports = config.vault_easy_threshold_lamports;
@@ -576,30 +570,27 @@ pub mod luck_game {
         Ok(())
     }
 
-    /// Bekleyen oyunu sonuçlandırır ("reveal" adımı). İzinsiz (permissionless)
-    /// — oyuncunun kendisi, delegesi ya da başka biri/bir "keeper"
-    /// çağırabilir; sonucu kimin gönderdiği önemli değil çünkü sonuç zaten
-    /// `commit_slot + reveal_delay_slots` slot'unun hash'iyle DETERMİNİSTİK
-    /// olarak belirli, çağıran taraf hiçbir şeyi etkileyemez. Kazanç HER
-    /// ZAMAN `player_state.player`'a (gerçek cüzdana) ödenir, çağırana değil.
+    /// Settles a pending game (the "reveal" step). Permissionless — the player
+    /// themselves, their delegate, or anybody else (a "keeper") may call it; who
+    /// submits the result does not matter, because the result is already
+    /// DETERMINISTICALLY fixed by the hash of slot `commit_slot +
+    /// reveal_delay_slots` and the caller cannot influence anything. The prize is
+    /// ALWAYS paid to `player_state.player` (the real wallet), never to the caller.
     ///
-    /// Neden commit'ten `reveal_delay_slots` sonraki bir slot'un hash'i
-    /// kullanılıyor: `play()` anında bu slot henüz gerçekleşmediği için
-    /// hash'i kimse (biz dahil) bilemez/tahmin edemez. Eğer bunun yerine
-    /// `play()` anındaki GÜNCEL slot'un hash'i kullanılsaydı, bir oyuncu
-    /// işlemi imzalamadan önce cüzdanının/RPC'nin `simulateTransaction`
-    /// özelliğiyle sonucu ücretsiz önizleyip yalnızca kazandığında
-    /// gönderebilirdi — bu "commit sonra reveal" yapısı tam olarak bunu
-    /// engellemek için var (Onurproje'deki `reveal_winner`'ın "10 slot
-    /// sonra" yaklaşımıyla aynı mantık).
+    /// Why the hash of a slot `reveal_delay_slots` after the commit is used: at
+    /// the moment of `play()` that slot has not happened yet, so nobody (us
+    /// included) can know or predict its hash. If the hash of the CURRENT slot at
+    /// `play()` time were used instead, a player could preview the outcome for
+    /// free with their wallet's or RPC's `simulateTransaction` before signing, and
+    /// only submit when they won — this "commit then reveal" structure exists
+    /// precisely to prevent that.
     pub fn resolve(ctx: Context<Resolve>) -> Result<()> {
-        // `player` hesabının gerçekten bu player_state'in sahibi olduğunu
-        // burada, fonksiyon gövdesinde doğruluyoruz — `#[account(address =
-        // player_state.player)]` gibi bir makro kısıtı, seeds'i player'ın
-        // kendisine bağlı olan player_state'in (bkz. Resolve struct'ı)
-        // player'dan SONRA bildirilmiş olmasını gerektiriyor, bu da ters
-        // yönlü bir referansı imkansız kılıyor; bu yüzden sell-lock'taki
-        // `RegisterLaunch`'ın yaptığı gibi çalışma zamanı kontrolü kullanıyoruz.
+        // We verify here, in the function body, that the `player` account really is
+        // the owner of this player_state — a macro constraint such as
+        // `#[account(address = player_state.player)]` would require player_state
+        // (whose seeds are bound to the player itself, see the Resolve struct) to be
+        // declared AFTER player, which makes a backwards reference impossible; so we
+        // use a runtime check, the same way `RegisterLaunch` does in sell-lock.
         require_keys_eq!(
             ctx.accounts.player.key(),
             ctx.accounts.player_state.player,
@@ -628,9 +619,10 @@ pub mod luck_game {
             GameError::InvalidSlotHashesAccount
         );
         let sysvar_data = ctx.accounts.slot_hashes.try_borrow_data()?;
-        // Hedef slot atlanmış olabilir (lideri blok üretememiş olabilir); o
-        // durumda ondan SONRAKİ ilk üretilmiş slot kullanılıyor. Üst sınır
-        // resolve penceresinin kendisi — arama pencerenin dışına taşamaz.
+        // The target slot may have been skipped (its leader may have failed to
+        // produce a block); in that case the first slot produced AFTER it is used.
+        // The upper bound is the resolve window itself — the search cannot run past
+        // the end of the window.
         let (entropy_slot, target_hash) = find_slot_hash_at_or_after(
             &sysvar_data,
             target_slot,
@@ -639,58 +631,58 @@ pub mod luck_game {
         .ok_or(GameError::SlotHashNotFound)?;
         drop(sysvar_data);
 
-        // Rastgelelik: kullanılan slot'un hash'i + slot numarası + oyuncunun
-        // pubkey'i + oyun sayacı (nonce). Slot numarası preimage'a dahil:
-        // hangi slot'un kullanıldığı artık sabit değil (atlanma durumunda
-        // kayabiliyor), dolayısıyla sonucun hangi slot'a dayandığı da
-        // hash'in içinde kayıtlı olsun — böylece dışarıdan doğrulayan biri
-        // yanlış slot'la aynı sonucu üretemez. Nonce eklemek, aynı oyuncunun aynı slot'ta yanlışlıkla
-        // iki kez resolve edilmeye çalışılmasını (olmaması gerekir ama) veya
-        // farklı oyuncuların aynı hash'i paylaşmasını (pubkey zaten bunu
-        // engelliyor ama nonce ekstra güvenlik) anlamsız kılar.
+        // Randomness: the hash of the slot used + the slot number + the player's
+        // pubkey + the game counter (a nonce). The slot number is part of the
+        // preimage because which slot gets used is no longer fixed (it can shift when
+        // a slot is skipped), so the slot the result rests on is recorded inside the
+        // hash too — that way an outside verifier cannot reproduce the same result
+        // with the wrong slot. Adding the nonce makes it meaningless for the same
+        // player to be resolved twice by accident at the same slot (it should not
+        // happen, but still) or for different players to share the same hash (the
+        // pubkey already prevents that, but the nonce is extra safety).
         let mut preimage = Vec::with_capacity(32 + 8 + 32 + 4);
         preimage.extend_from_slice(&target_hash);
         preimage.extend_from_slice(&entropy_slot.to_le_bytes());
         preimage.extend_from_slice(ctx.accounts.player.key.as_ref());
         preimage.extend_from_slice(&player_state.plays_count.to_le_bytes());
         let digest = anchor_lang::solana_program::hash::hash(&preimage).to_bytes();
-        // Zarı 8 BAYTTAN üretiyoruz, 2 bayttan değil — sebebi modulo
-        // yanlılığı (modulo bias):
+        // The dice is derived from 8 BYTES, not 2 — the reason is modulo bias:
         //
-        // 2 bayt = 0..65535 arası 65536 değer. 65536, 10000'in tam katı
-        // değil (65536 = 6 × 10000 + 5536), dolayısıyla 0..5535 arası her
-        // sonuç 7 kez, 5536..9999 arası her sonuç 6 kez temsil ediliyordu.
-        // Kazanma eşiği hep aralığın BAŞINDA olduğu için (roll < win_bps)
-        // bu, ilan edilen oranların hepsini kasa aleyhine kaydırıyordu:
-        //   zor mod  %0,50 → %0,534   (göreli +%6,8)
-        //   kolay    %10,00 → %10,681 (göreli +%6,8)
-        //   jackpot  %30,00 → %32,043 (göreli +%6,8)
-        // Tek bir turda fark edilmez ama binlerce turda kasadan sistematik
-        // olarak sızar ve ilan ettiğimiz oranlar gerçeği yansıtmaz.
+        // 2 bytes = 65536 values in 0..65535. 65536 is not an exact multiple of
+        // 10000 (65536 = 6 x 10000 + 5536), so every outcome in 0..5535 was
+        // represented 7 times and every outcome in 5536..9999 only 6 times. Because
+        // the winning threshold always sits at the START of the range (roll <
+        // win_bps), this shifted every published rate against the house:
+        //   hard mode 0.50%  -> 0.534%   (+6.8% relative)
+        //   easy      10.00% -> 10.681%  (+6.8% relative)
+        //   jackpot   30.00% -> 32.043%  (+6.8% relative)
+        // Unnoticeable in a single round, but over thousands of rounds it leaks
+        // systematically out of the vault and the rates we publish do not match
+        // reality.
         //
-        // 8 baytta (0..2^64-1) aynı yanlılık ~5×10^-16 mertebesine düşüyor,
-        // yani ölçülemez hale geliyor.
+        // With 8 bytes (0..2^64-1) the same bias drops to the order of 5x10^-16 —
+        // that is, it becomes unmeasurable.
         let roll = (u64::from_le_bytes(
             digest[0..8].try_into().map_err(|_| GameError::MathOverflow)?,
         ) % BPS_DENOMINATOR as u64) as u32;
-        // İkinci, bağımsız bir zar: SADECE kazanıldığında hangi ödül
-        // katmanının (küçük/büyük) ödeneceğine karar verir. Aynı digest'in
-        // AYRI baytlarını kullanmak (0-7 win/lose için, 8-15 burada) ayrı
-        // bir hash hesaplamaya gerek bırakmıyor.
+        // A second, independent dice: it decides ONLY which prize tier (small/big)
+        // gets paid when the player wins. Using SEPARATE bytes of the same digest
+        // (0-7 for win/lose, 8-15 here) saves computing another hash.
         let tier_roll = (u64::from_le_bytes(
             digest[8..16].try_into().map_err(|_| GameError::MathOverflow)?,
         ) % BPS_DENOMINATOR as u64) as u32;
 
-        // BAHSİN KOYULDUĞU ANDAKİ KURALLAR — config'ten DEĞİL, player_state'ten.
+        // THE RULES AS THEY STOOD WHEN THE BET WAS PLACED — from player_state, NOT
+        // from config.
         //
-        // Eskiden burada güncel config okunuyordu; yani yetkili, bekleyen bir
-        // bahsi gördükten sonra oranı düşürüp o bahsi etkileyebilirdi.
-        // Doğrulanabilir adalet iddiasında bulunan bir oyunda bu kabul
-        // edilemezdi. play() artık bu değerleri donduruyor.
+        // This used to read the live config, meaning the authority could see a
+        // pending bet and then lower the odds to affect it. In a game that claims
+        // verifiable fairness that was unacceptable. play() now freezes these values.
         //
-        // Kasa BAKİYESİ dondurulmuyor ve dondurulmamalı: "kolay mod" kasanın
-        // o anki doluluğuna bağlı ve bu kasıtlı — kasa doldukça oranlar
-        // herkes için iyileşiyor. Dondurulan şey EŞİK, bakiye değil.
+        // The vault BALANCE is not frozen and must not be: "easy mode" depends on how
+        // full the vault is at that moment, and that is deliberate — as the vault
+        // fills, the odds improve for everyone. What is frozen is the THRESHOLD, not
+        // the balance.
         let rent_exempt = Rent::get()?.minimum_balance(0);
         let vault_balance = ctx
             .accounts
@@ -703,22 +695,22 @@ pub mod luck_game {
         } else {
             player_state.bet_normal_win_bps
         };
-        // `normal_win_bps` sıfırdan büyük ayarlanırsa (yani "zor modda" da
-        // küçük bir kazanma ihtimali varsa), kasa henüz `big_prize_lamports`
-        // kadar dolmamışken bile nadiren kazanma şartı tutabilir. Bu durumda
-        // ödemeyi REDDEDİP TÜM İŞLEMİ GERİ ALMAK yerine (ki bu, oyuncuyu
-        // kalıcı olarak `pending = true` durumunda, forfeit_stuck_play
-        // penceresi açılana kadar sıkıştırırdı) sessizce kayıp say —
-        // oyuncu parasını kaybeder ama en azından tekrar oynayabilir.
-        // Kasanın en büyük olası ÖDEMEYİ karşılayabildiğini burada kontrol
-        // ediyoruz ki hangi katman tutarsa tutsun ödeme garantili olsun:
-        // jackpot + onun üstüne eklenen operasyon payı. Payı bu hesaba dahil
-        // etmezsek, kasa tam jackpot kadar doluyken kazanan bir tur ödülü
-        // öder ama payı ödeyemez, TÜM işlem geri alınır ve oyuncu
-        // `pending = true` durumunda sıkışırdı. Eşik kontrolü
-        // (`vault_easy_threshold_lamports >= jackpot + pay`) zaten
-        // initialize/update_config'te zorunlu kılındığı için "kolay modda"
-        // bu dala hiç girilmemesi beklenir; bu tamamen savunma amaçlı.
+        // If `normal_win_bps` is set greater than zero (that is, there is a small
+        // chance of winning in "hard mode" too), the win condition can rarely hold
+        // even while the vault has not yet filled up to `big_prize_lamports`. In that
+        // case, rather than REFUSING to pay and REVERTING THE WHOLE TRANSACTION
+        // (which would leave the player permanently stuck at `pending = true` until
+        // the forfeit_stuck_play window opens), we quietly count it as a loss — the
+        // player loses their money but at least they can play again. We check here
+        // that the vault can cover the largest possible PAYOUT so that payment is
+        // guaranteed whichever tier comes up: the jackpot plus the operations fee
+        // added on top of it. If we left the fee out of this sum, a winning round
+        // with the vault holding exactly the jackpot would pay the prize but fail to
+        // pay the fee, the WHOLE transaction would revert and the player would be
+        // stuck at `pending = true`. Because the threshold check
+        // (`vault_easy_threshold_lamports >= jackpot + fee`) is already enforced in
+        // initialize/update_config, this branch is not expected to be reached at all
+        // in "easy mode"; it is purely defensive.
         let max_payout = player_state
             .bet_big_prize_lamports
             .checked_add(ops_fee_lamports(
@@ -755,10 +747,10 @@ pub mod luck_game {
                 prize_amount,
             )?;
 
-            // Operasyon payı: ödülün `treasury_fee_bps` kadarı, ödülden
-            // KESİLMEDEN, kasadan ayrıca hazineye. Oyuncu ilan edilen ödülün
-            // tamamını alır (0,5 SOL ödülde tam 0,5 SOL); kasadan çıkan
-            // toplam 0,6 SOL olur.
+            // Operations fee: `treasury_fee_bps` of the prize, NOT deducted from the
+            // prize but sent separately from the vault to the treasury. The player
+            // receives the full published prize (exactly 0.5 SOL on a 0.5 SOL prize);
+            // the total leaving the vault is 0.6 SOL.
             ops_fee_paid = ops_fee_lamports(prize_amount, player_state.bet_treasury_fee_bps)?;
             if ops_fee_paid > 0 {
                 system_program::transfer(
@@ -799,16 +791,15 @@ pub mod luck_game {
         Ok(())
     }
 
-    /// Bir oyuncu `resolve()`'u zamanında (kendi ya da bir başkası)
-    /// çağırtmayı unutur/başaramazsa ve `MAX_RESOLVE_WINDOW_SLOTS` penceresi
-    /// kapanırsa, hedef slot'un hash'i artık SlotHashes sysvar'ında
-    /// bulunamayacağı için o oyun SONSUZA DEK resolve edilemez hale gelir —
-    /// bu da oyuncunun `pending = true` durumunda sıkışıp bir daha
-    /// oynayamamasına yol açardı. Bu fonksiyon SADECE oyuncunun kendisi
-    /// tarafından, pencere gerçekten kapandıktan SONRA çağrılabilir; o
-    /// denemeyi kaybedilmiş sayıp (harcanan spin kredisi iade edilmez —
-    /// normal bir kayıp gibi muamele) `pending`'i temizler ve oyuncunun
-    /// tekrar oynamasına izin verir.
+    /// If a player forgets or fails to have `resolve()` called in time (by
+    /// themselves or by anybody else) and the `MAX_RESOLVE_WINDOW_SLOTS` window
+    /// closes, the target slot's hash can no longer be found in the SlotHashes
+    /// sysvar, so that game becomes impossible to resolve FOREVER — which would
+    /// leave the player stuck at `pending = true` and unable to play again. This
+    /// function can be called ONLY by the player themselves, and only AFTER the
+    /// window has really closed; it counts that attempt as lost (the spin credit
+    /// spent is not refunded — it is treated like an ordinary loss), clears
+    /// `pending` and lets the player play again.
     pub fn forfeit_stuck_play(ctx: Context<ForfeitStuckPlay>) -> Result<()> {
         let player_state = &mut ctx.accounts.player_state;
         require!(player_state.pending, GameError::NoPendingPlay);
@@ -830,10 +821,10 @@ pub mod luck_game {
     }
 }
 
-/// Bir PlayerState PDA'sının ilk kez dokunulduğu anda `player` alanını
-/// yazar; sonraki her çağrıda o alanın gerçekten aynı sahibe ait olduğunu
-/// doğrular. `play()`, `buy_spins()` ve `register_delegate()` arasından
-/// hangisi PDA'ya önce dokunursa dokunsun aynı davranışı garantiler.
+/// Writes the `player` field the first time a PlayerState PDA is touched;
+/// on every later call it verifies that the field really belongs to the same
+/// owner. It guarantees the same behaviour no matter which of `play()`,
+/// `buy_spins()` and `register_delegate()` touches the PDA first.
 fn ensure_owner(player_state: &mut PlayerState, owner: Pubkey) -> Result<()> {
     if !player_state.initialized {
         player_state.player = owner;
@@ -844,47 +835,20 @@ fn ensure_owner(player_state: &mut PlayerState, owner: Pubkey) -> Result<()> {
     Ok(())
 }
 
-/// SlotHashes sysvar'ında `target_slot`'tan itibaren blok ÜRETMİŞ ilk
-/// slot'un hash'ini bulur.
+/// Computes the operations fee added on top of a prize payout.
 ///
-/// Neden "tam olarak target_slot" değil: Solana'da slot'lar atlanabilir —
-/// o slot'un lideri blok üretemezse o slot SlotHashes'e hiç girmez.
-/// Eskiden burada tam eşleşme aranıyordu, dolayısıyla hedef slot
-/// atlandığında o oyun SONSUZA DEK sonuçlandırılamıyordu: oyuncu
-/// pencerenin kapanmasını bekleyip forfeit etmek ve spinini kaybetmek
-/// zorunda kalıyordu. Devnet'te atlanma oranı yer yer %5-15 olduğu için
-/// bu, her 10-20 spinde bir sessizce yaşanan gerçek bir para kaybıydı.
+/// The money flow of the game has a SINGLE "house share" rate:
+/// `treasury_fee_bps` (2000 = 20% by default). It is applied in two places —
+///   1. `buy_spins()`: 20% of the package paid goes straight to the treasury,
+///      80% goes into the vault.
+///   2. `resolve()`: on every prize won, an EXTRA amount equal to 20% of the
+///      prize is moved from the vault to the treasury — it is NOT deducted
+///      from the player's prize. So on a 0.5 SOL prize the player receives the
+///      full 0.5 SOL and the treasury separately receives 0.1 SOL; 0.6 SOL
+///      leaves the vault in total.
 ///
-/// İleri doğru arama rastgeleliği zayıflatmıyor: hangi slot'un
-/// atlanacağını oyuncu ne bilebiliyor ne etkileyebiliyor, ve seçilen slot
-/// bir kez ortaya çıktıktan sonra DEĞİŞMİYOR (daha büyük slot'lar
-/// eklendikçe "target'tan büyük en küçük slot" aynı kalır) — yani sonuç
-/// hâlâ deterministik ve herkesçe doğrulanabilir.
-///
-/// Ham hesap verisini elle çözümler. Bu sysvar
-/// "büyük" sysvar'lardan biri olduğu için (Clock/Rent gibi hızlı syscall'la
-/// değil) hesap verisi olarak geçirilip bincode formatına göre okunmalı:
-/// ilk 8 bayt = kayıt sayısı (u64, little-endian), ardından her kayıt için
-/// 8 bayt slot numarası + 32 bayt hash, en yeni slot en başta olacak şekilde
-/// azalan sırada. Kütüphanenin kendi `SlotHashes` tipini kullanmak yerine
-/// elle çözümlüyoruz çünkü bu ortamda `anchor build` çalıştırıp API'yi
-/// doğrulayamıyoruz (bkz. program/sell-lock/programs/sell-lock/Cargo.toml'daki
-/// aynı uyarı) — ham bayt formatı ise Solana runtime'ının dokümante edilmiş,
-/// kararlı bir parçası.
-/// Bir ödül ödemesinin üstüne eklenen operasyon payını hesaplar.
-///
-/// Oyunun para akışında TEK bir "ev payı" oranı var: `treasury_fee_bps`
-/// (varsayılan 2000 = %20). İki yerde birden uygulanıyor —
-///   1. `buy_spins()`: ödenen paketin %20'si doğrudan hazineye gider,
-///      %80'i kasaya (vault) girer.
-///   2. `resolve()`: kazanılan her ödülde, ödülün %20'si KADAR EK bir tutar
-///      kasadan hazineye aktarılır — oyuncunun ödülünden KESİLMEZ. Yani
-///      0,5 SOL'luk bir ödülde oyuncu tam 0,5 SOL alır, hazineye ayrıca
-///      0,1 SOL gider; kasadan toplam 0,6 SOL çıkar.
-///
-/// İkisinin tek orana bağlı olması kasıtlı: "biz %20 alıyoruz" cümlesi hem
-/// yatırmada hem ödülde aynı anlama gelsin, iki ayrı sayı takip etmek
-/// gerekmesin.
+/// Tying both to a single rate is deliberate: "we take 20%" should mean the
+/// same thing on a deposit and on a prize, with no second number to track.
 fn ops_fee_lamports(prize_lamports: u64, fee_bps: u16) -> Result<u64> {
     Ok((prize_lamports as u128)
         .checked_mul(fee_bps as u128)
@@ -893,6 +857,33 @@ fn ops_fee_lamports(prize_lamports: u64, fee_bps: u16) -> Result<u64> {
         .ok_or(GameError::MathOverflow)? as u64)
 }
 
+/// Finds the hash of the first slot at or after `target_slot` that actually
+/// PRODUCED a block, in the SlotHashes sysvar.
+///
+/// Why not "exactly target_slot": slots can be skipped on Solana — if that
+/// slot's leader fails to produce a block, the slot never enters SlotHashes at
+/// all. This used to look for an exact match, so whenever the target slot was
+/// skipped that game became impossible to settle FOREVER: the player had to
+/// wait for the window to close, forfeit, and lose their spin. With a skip
+/// rate that reaches 5-15% on devnet at times, that was a real loss of money,
+/// happening silently every 10-20 spins.
+///
+/// Searching forward does not weaken the randomness: the player can neither
+/// know nor influence which slot will be skipped, and once the chosen slot has
+/// appeared it DOES NOT CHANGE (as larger slots are added, "the smallest slot
+/// greater than the target" stays the same) — so the result is still
+/// deterministic and verifiable by anyone.
+///
+/// Parses the raw account data by hand. Because this is one of the "large"
+/// sysvars it has to be passed in as account data and read according to the
+/// bincode format (rather than through a fast syscall like Clock/Rent): the
+/// first 8 bytes are the record count (u64, little-endian), then, for each
+/// record, an 8-byte slot number and a 32-byte hash, in descending order with
+/// the newest slot first. We parse it by hand instead of using the library's
+/// own `SlotHashes` type because we cannot run `anchor build` in this
+/// environment to verify the API (see the same warning in
+/// program/sell-lock/programs/sell-lock/Cargo.toml) — whereas the raw byte
+/// format is a documented, stable part of the Solana runtime.
 fn find_slot_hash_at_or_after(
     sysvar_data: &[u8],
     target_slot: u64,
@@ -911,25 +902,25 @@ fn find_slot_hash_at_or_after(
         let slot = u64::from_le_bytes(sysvar_data[offset..offset + 8].try_into().ok()?);
         offset += 40;
 
-        // Sysvar en yeniden eskiye sıralı. Baştaki kayıtlar penceremizin
-        // ÜSTÜNDE kalıyor, atlıyoruz.
+        // The sysvar is ordered newest to oldest. The leading records sit ABOVE our
+        // window, so we skip them.
         if slot > max_slot {
             continue;
         }
-        // Hedefin altına düştük: sıralama azalan olduğu için bundan
-        // sonrakiler daha da küçük, bakmaya gerek yok. Bu erken çıkış
-        // taramayı kısa tutuyor — hedef her zaman yakın geçmişte olduğundan
-        // pratikte birkaç kayıt sonra duruyoruz. 512 kaydın tamamını her
-        // seferinde taramak, resolve() gibi her spinde çağrılan bir
-        // talimatta gereksiz işlem birimi (compute unit) maliyeti olurdu.
+        // We have dropped below the target: since the order is descending, everything
+        // after this is smaller still, so there is nothing left to look at. This early
+        // exit keeps the scan short — the target is always in the recent past, so in
+        // practice we stop after a handful of records. Scanning all 512 records every
+        // time would be a pointless compute-unit cost in an instruction like
+        // resolve(), which is called on every single spin.
         if slot < target_slot {
             break;
         }
-        // Pencerenin içindeyiz. Azalan sırada ilerlediğimiz için her yeni
-        // eşleşme bir öncekinden KÜÇÜK; döngü bittiğinde elimizde hedefe en
-        // yakın (en küçük uygun) slot kalıyor. Hedefe en yakını seçmek
-        // önemli: o slot bir kez ortaya çıktıktan sonra bir daha değişmiyor,
-        // dolayısıyla sonuç deterministik kalıyor.
+        // We are inside the window. Because we walk in descending order, every new
+        // match is SMALLER than the previous one; when the loop ends we hold the slot
+        // closest to the target (the smallest acceptable one). Picking the closest one
+        // matters: once that slot has appeared it never changes again, so the result
+        // stays deterministic.
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&sysvar_data[offset - 32..offset]);
         best = Some((slot, hash));
@@ -944,16 +935,16 @@ pub struct GameConfig {
     pub free_plays: u8,
     pub small_prize_lamports: u64,
     pub big_prize_lamports: u64,
-    // Kazanılan bir oyunda büyük (jackpot) ödülün ödenme ihtimali (bps);
-    // geri kalanı küçük ödül olarak ödenir.
+    // The chance (in bps) that a won game pays the big (jackpot) prize; the
+    // remainder is paid as the small prize.
     pub big_prize_bps: u16,
     pub vault_easy_threshold_lamports: u64,
     pub normal_win_bps: u16,
     pub easy_win_bps: u16,
     pub treasury_fee_bps: u16,
     pub reveal_delay_slots: u64,
-    // Spin paketi tarifesi: spin_tier_counts[i] adet spin, spin_tier_prices[i]
-    // lamport karşılığında satın alınır (bkz. buy_spins). Örn. varsayılan:
+    // The spin package tariff: spin_tier_counts[i] spins are bought for
+    // spin_tier_prices[i] lamports (see buy_spins). The defaults, for example:
     // 1/0.1 SOL, 5/0.3, 10/0.5, 20/0.8, 50/1.5, 100/2.5.
     pub spin_tier_counts: [u16; SPIN_TIERS],
     pub spin_tier_prices: [u64; SPIN_TIERS],
@@ -975,28 +966,28 @@ pub struct PlayerState {
     pub pending: bool,
     pub commit_slot: u64,
     pub bump: u8,
-    // `player` alanı yazıldı mı (play/buy_spins/register_delegate'tan hangisi
-    // önce dokunursa).
+    // Has the `player` field been written yet (by whichever of
+    // play/buy_spins/register_delegate touched it first).
     pub initialized: bool,
-    // Ücretsiz haklar spins_remaining'e yüklendi mi (ilk play() çağrısında).
+    // Have the free spins been loaded into spins_remaining (on the first play() call).
     pub spins_seeded: bool,
     pub spins_remaining: u32,
-    // Tarayıcıda saklanan, bu oyuncunun spin kredisini onun adına harcamaya
-    // yetkili yerel anahtar (bkz. register_delegate). Kayıtlı değilse
-    // Pubkey::default().
+    // The local key held in the browser that is allowed to spend this player's
+    // spin credit on their behalf (see register_delegate). Pubkey::default() when
+    // none is registered.
     pub delegate: Pubkey,
     pub total_won_lamports: u64,
-    // Ücretsiz haklar bitince verilen tek seferlik +1 bonus spin kullanıldı mı.
+    // Has the one-off +1 bonus spin, granted when the free spins run out, been used.
     pub bonus_granted: bool,
 
-    // --- BAHSİN KOYULDUĞU ANDAKİ KURALLAR ---------------------------------
-    // `play()` bunları config'ten kopyalıyor, `resolve()` config yerine
-    // bunları okuyor. Böylece oyuncu bahsini koyduğu andaki oranlarla
-    // sonuçlanıyor ve yetkilinin bekleyen bir bahsin kurallarını sonradan
-    // değiştirmesi mümkün olmuyor.
+    // --- THE RULES AS THEY STOOD WHEN THE BET WAS PLACED -------------------
+    // `play()` copies these from the config and `resolve()` reads them instead
+    // of the config. That way a game settles on the odds that applied when the
+    // player placed their bet, and the authority cannot change the rules of a
+    // pending bet after the fact.
     //
-    // Sıfır olmaları "henüz oynanmadı" demek; resolve zaten `pending`
-    // olmadan çalışmıyor, yani bu alanlar okunduğunda hep doludur.
+    // Zeros mean "not played yet"; resolve does not run without `pending`
+    // anyway, so these fields are always populated by the time they are read.
     pub bet_small_prize_lamports: u64,
     pub bet_big_prize_lamports: u64,
     pub bet_vault_easy_threshold_lamports: u64,
@@ -1008,7 +999,7 @@ pub struct PlayerState {
 
 impl PlayerState {
     // 8 (disc) + 32 + 4 + 4 + 1 + 8 + 1 + 1 + 1 + 4 + 32 + 8 + 1
-    //   + bahis anındaki kurallar: 8 + 8 + 8 + 2 + 2 + 2 + 2 = 32 bayt
+    //   + the rules at bet time: 8 + 8 + 8 + 2 + 2 + 2 + 2 = 32 bytes
     pub const LEN: usize =
         8 + 32 + 4 + 4 + 1 + 8 + 1 + 1 + 1 + 4 + 32 + 8 + 1 + 8 + 8 + 8 + 2 + 2 + 2 + 2;
 }
@@ -1027,8 +1018,8 @@ pub struct Initialize<'info> {
     )]
     pub config: Account<'info, GameConfig>,
 
-    /// CHECK: yalnızca adres olarak GameConfig'e kaydediliyor; ücret payı
-    /// buraya gönderilecek, tipi önemli değil (herhangi bir cüzdan olabilir).
+    /// CHECK: only recorded into GameConfig as an address; the fee share will be
+    /// sent here, and its type does not matter (it can be any wallet).
     pub treasury: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -1064,8 +1055,9 @@ pub struct BuySpins<'info> {
     )]
     pub player_state: Account<'info, PlayerState>,
 
-    /// CHECK: Sadece SOL tutan, veri içermeyen bir PDA (locked-pool'daki
-    /// pool_authority ile aynı desen) — ilk transferde kendiliğinden var olur.
+    /// CHECK: a PDA that only holds SOL and carries no data (the same pattern as
+    /// pool_authority in locked-pool) — it comes into existence on the first
+    /// transfer.
     #[account(
         mut,
         seeds = [VAULT_SEED, config.key().as_ref()],
@@ -1073,17 +1065,17 @@ pub struct BuySpins<'info> {
     )]
     pub vault: UncheckedAccount<'info>,
 
-    /// CHECK: yalnızca config.treasury ile eşleştiği doğrulanan, ücret
-    /// payının gönderildiği adres.
+    /// CHECK: the address the fee share is sent to, verified only by matching
+    /// config.treasury.
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
 
-    /// Arayanın kayıtlı delegesi (varsa) — sadece gaz tamponunu tazelemek
-    /// için gövdede `player_state.delegate` ile karşılaştırılıyor, kayıtlı
-    /// delege yoksa/eşleşmiyorsa top-up sessizce atlanır. Client, oyuncunun
-    /// yerel delege anahtarını her zaman buraya geçirir.
-    /// CHECK: kimliği gövdede karşılaştırılıyor, olası bir uyuşmazlıkta
-    /// sadece top-up atlanır, işlem başarısız olmaz.
+    /// The caller's registered delegate (if any) — compared against
+    /// `player_state.delegate` in the body purely to top the gas buffer back up;
+    /// if no delegate is registered, or it does not match, the top-up is silently
+    /// skipped. The client always passes the player's local delegate key here.
+    /// CHECK: its identity is compared in the body; on a mismatch only the top-up
+    /// is skipped, the transaction does not fail.
     #[account(mut)]
     pub delegate: UncheckedAccount<'info>,
 
@@ -1107,9 +1099,8 @@ pub struct RegisterDelegate<'info> {
     )]
     pub player_state: Account<'info, PlayerState>,
 
-    /// CHECK: Sadece SOL tutan, veri içermeyen bir PDA — ilk kasa
-    /// sponsorluğunun (ücretsiz denemenin gerçekten ücretsiz olması için)
-    /// kaynağı.
+    /// CHECK: a PDA that only holds SOL and carries no data — the source of the
+    /// first vault sponsorship (so that the free spin really is free).
     #[account(
         mut,
         seeds = [VAULT_SEED, config.key().as_ref()],
@@ -1117,10 +1108,10 @@ pub struct RegisterDelegate<'info> {
     )]
     pub vault: UncheckedAccount<'info>,
 
-    /// Yetkilendirilecek yerel delege anahtarı — ilk kayıtta kasa
-    /// sponsorluğunun hedefi.
-    /// CHECK: sadece SOL transferinin hedefi, program tarafından ayrıca
-    /// doğrulanmıyor (oyuncunun kendi seçimi, kendi imzasıyla).
+    /// The local delegate key to be authorized — the target of the vault
+    /// sponsorship on first registration.
+    /// CHECK: only the destination of a SOL transfer, not otherwise verified by
+    /// the program (it is the player's own choice, made with their own signature).
     #[account(mut)]
     pub delegate: UncheckedAccount<'info>,
 
@@ -1129,19 +1120,18 @@ pub struct RegisterDelegate<'info> {
 
 #[derive(Accounts)]
 pub struct Play<'info> {
-    /// Gerçek oyuncunun adresi — PlayerState PDA'sı bu adresten türetilir.
-    /// İmzalamak ZORUNDA değil; aşağıdaki `authority` (kendisi ya da
-    /// kayıtlı delegesi) imzalar. Gerçek kimlik eşleşmesi gövdede
-    /// (`ensure_owner`) ve `player_state.delegate` karşılaştırmasıyla
-    /// sağlanıyor.
-    /// CHECK: yalnızca PDA türetmek için kullanılan bir adres.
+    /// The real player's address — the PlayerState PDA is derived from it. It does
+    /// NOT have to sign; the `authority` below (the player themselves or their
+    /// registered delegate) signs. The real identity match is enforced in the body
+    /// (`ensure_owner`) and by the `player_state.delegate` comparison.
+    /// CHECK: an address used only to derive the PDA.
     pub owner: UncheckedAccount<'info>,
 
-    /// Bu işlemi gerçekten imzalayan taraf — oyuncunun kendisi ya da
-    /// `register_delegate()` ile kaydedilmiş yerel delegesi olabilir
-    /// (gövdede doğrulanıyor). PlayerState ilk kez bu çağrıda
-    /// oluşturuluyorsa (daha önce hiç buy_spins/register_delegate
-    /// çağrılmadıysa) rent bedelini de bu hesap öder.
+    /// The party that actually signs this transaction — it can be the player
+    /// themselves or the local delegate registered with `register_delegate()`
+    /// (verified in the body). If PlayerState is created for the first time by
+    /// this call (because buy_spins/register_delegate were never called before),
+    /// this account also pays the rent.
     #[account(mut)]
     pub authority: Signer<'info>,
 
@@ -1162,14 +1152,14 @@ pub struct Play<'info> {
 
 #[derive(Accounts)]
 pub struct Resolve<'info> {
-    /// Ücretsiz (permissionless) çağrı — kazanan/kaybeden zaten hedef
-    /// slot'un hash'iyle belirlendiği için burada imza kontrolü gerekmiyor.
-    /// Yine de ödül SADECE bu hesaba (oyunu başlatan cüzdana) gidiyor;
-    /// çağıranın kendisi olması şart değil. Bu hesabın gerçekten
-    /// `player_state.player` ile eşleştiği, seeds sırası yüzünden burada
-    /// makro kısıtıyla ifade edilemiyor — bkz. `resolve()` gövdesindeki
-    /// `require_keys_eq!` kontrolü.
-    /// CHECK: kimliği fonksiyon gövdesinde doğrulanıyor.
+    /// A permissionless call — no signature check is needed here, because win or
+    /// lose is already fixed by the target slot's hash. The prize still goes ONLY
+    /// to this account (the wallet that started the game); the caller does not
+    /// have to be the same party. That this account really matches
+    /// `player_state.player` cannot be expressed with a macro constraint here
+    /// because of the seed ordering — see the `require_keys_eq!` check in the
+    /// body of `resolve()`.
+    /// CHECK: its identity is verified in the function body.
     #[account(mut)]
     pub player: UncheckedAccount<'info>,
 
@@ -1190,13 +1180,13 @@ pub struct Resolve<'info> {
     )]
     pub vault: UncheckedAccount<'info>,
 
-    /// Kazanılan turlarda, ödülün üstüne eklenen operasyon payının gittiği
-    /// adres — `buy_spins()`'teki %20 payla aynı cüzdan.
-    /// CHECK: yalnızca `config.treasury` ile eşleştiği doğrulanan bir adres.
+    /// The address the operations fee added on top of the prize goes to on won
+    /// rounds — the same wallet as the 20% share in `buy_spins()`.
+    /// CHECK: an address verified only by matching `config.treasury`.
     #[account(mut, address = config.treasury)]
     pub treasury: UncheckedAccount<'info>,
 
-    /// CHECK: adresi elle `slot_hashes::ID` ile karşılaştırılıyor (require_keys_eq!).
+    /// CHECK: its address is compared by hand against `slot_hashes::ID` (require_keys_eq!).
     pub slot_hashes: UncheckedAccount<'info>,
 
     pub system_program: Program<'info, System>,
@@ -1243,36 +1233,36 @@ pub struct PlayResolved {
     pub prize_paid: u64,
     pub is_big_win: bool,
     pub easy_mode: bool,
-    // Ödülün üstüne, kasadan hazineye ayrıca aktarılan operasyon payı.
-    // Alanın SONA eklenmesi kasıtlı: önceki alanların bayt konumları
-    // değişmediği için eski istemciler olayı okumaya devam edebilir.
+    // The operations fee moved separately from the vault to the treasury on top of
+    // the prize. Appending the field at the END is deliberate: the byte positions
+    // of the earlier fields do not change, so older clients can still read the event.
     pub ops_fee_paid: u64,
 }
 
 #[error_code]
 pub enum GameError {
-    #[msg("Geçersiz parametre.")]
+    #[msg("Invalid parameter.")]
     InvalidParam,
-    #[msg("Matematik taşması.")]
+    #[msg("Arithmetic overflow.")]
     MathOverflow,
-    #[msg("Bu cüzdanın zaten sonuçlanmamış bir oyunu var — önce onu resolve edin.")]
+    #[msg("This wallet already has an unsettled game — resolve it first.")]
     PlayAlreadyPending,
-    #[msg("Bekleyen bir oyun yok.")]
+    #[msg("There is no pending game.")]
     NoPendingPlay,
-    #[msg("player hesabı bu player_state'in sahibiyle eşleşmiyor.")]
+    #[msg("The player account does not match the owner of this player_state.")]
     PlayerMismatch,
-    #[msg("Bu işlemi imzalayan ne oyuncunun kendisi ne de kayıtlı delegesi.")]
+    #[msg("The signer of this transaction is neither the player nor their registered delegate.")]
     UnauthorizedSigner,
-    #[msg("Kalan spin kredisi yok — önce buy_spins() ile paket satın alın.")]
+    #[msg("No spin credit left — buy a package with buy_spins() first.")]
     NoSpinsRemaining,
-    #[msg("Henüz resolve edilemez — hedef slot'a ulaşılmadı.")]
+    #[msg("Too early to resolve — the target slot has not been reached.")]
     TooEarlyToResolve,
-    #[msg("Resolve penceresi kapandı, bkz. forfeit_stuck_play.")]
+    #[msg("The resolve window has closed, see forfeit_stuck_play.")]
     ResolveWindowExpired,
-    #[msg("Resolve penceresi henüz kapanmadı — önce resolve() deneyin.")]
+    #[msg("The resolve window has not closed yet — try resolve() first.")]
     ResolveWindowStillOpen,
-    #[msg("Geçersiz SlotHashes sysvar hesabı.")]
+    #[msg("Invalid SlotHashes sysvar account.")]
     InvalidSlotHashesAccount,
-    #[msg("Hedef slot'un hash'i SlotHashes sysvar'ında bulunamadı.")]
+    #[msg("The target slot hash was not found in the SlotHashes sysvar.")]
     SlotHashNotFound,
 }
