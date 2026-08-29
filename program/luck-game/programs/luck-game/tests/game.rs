@@ -2,7 +2,7 @@
 // luck-game davranış testleri
 // ---------------------------------------------------------------------------
 // Öncelik sırası, paranın kaybolabileceği yerler:
-//   1. Oyuncu ilan edilen paket fiyatından FAZLA ödüyor mu
+//   1. Oyuncu published edilen package fiyatından FAZLA ödüyor mu
 //   2. Kasadan izinsiz para çıkabiliyor mu
 //   3. Bir spin hakkı sessizce yanabiliyor mu
 //   4. İlan edilen kazanma oranı gerçekleşen oranla tutuyor mu
@@ -19,10 +19,10 @@ use solana_sdk::{pubkey::Pubkey, signature::Signer, signer::keypair::Keypair};
 /// Kullanıcının bildirdiği asıl şikâyet buydu: 0,1 SOL'lük pakette Phantom
 /// -0,101622 SOL gösteriyordu. Fazlalık, player_state hesabının kira
 /// depozitosuydu. Artık kasa bunu geri ödüyor; oyuncunun cebinden çıkan
-/// TAM OLARAK paket fiyatı olmalı (işlem ücreti hariç — onu Solana alıyor,
+/// TAM OLARAK package fiyatı olmalı (işlem ücreti hariç — onu Solana alıyor,
 /// biz değil).
 #[tokio::test]
-async fn ilk_satin_alma_tam_paket_fiyati_kadar_kesiyor() {
+async fn the_first_purchase_charges_exactly_the_package_price() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
     let delegate = Keypair::new();
@@ -32,19 +32,19 @@ async fn ilk_satin_alma_tam_paket_fiyati_kadar_kesiyor() {
     g.send(&[ix], &[&player]).await.unwrap();
     let after = g.lamports(&player.pubkey()).await;
 
-    // İşlem ücretini payer (ctx.payer) ödüyor, oyuncu değil — dolayısıyla
-    // oyuncunun bakiyesindeki değişim tam olarak paket fiyatı olmalı.
+    // İşlem ücretini payer (ctx.payer) ödüyor, player değil — dolayısıyla
+    // oyuncunun bakiyesindeki değişim tam olarak package fiyatı olmalı.
     assert_eq!(
         before - after,
         TIER_PRICES[0],
-        "oyuncudan paket fiyatından farklı bir tutar çıktı"
+        "oyuncudan package fiyatından farklı bir tutar çıktı"
     );
 }
 
 /// Kira iadesi YALNIZCA ilk satın alımda olmalı. Olmazsa kasa her satın
 /// alımda 0,0016 SOL sızdırır.
 #[tokio::test]
-async fn ikinci_satin_almada_kira_iadesi_yok() {
+async fn no_rent_refund_on_a_second_purchase() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
     let delegate = Keypair::new();
@@ -60,10 +60,10 @@ async fn ikinci_satin_almada_kira_iadesi_yok() {
 }
 
 /// Kasa, oyuncuya iade ettiği ve delegeye gönderdiği tutarı KENDİ payından
-/// karşılamalı; oyuncu her zaman tam fiyatı ödediği için, kasa + hazine
-/// toplamı paket fiyatından katılım maliyeti kadar az artar.
+/// karşılamalı; player her zaman tam fiyatı ödediği için, kasa + hazine
+/// toplamı package fiyatından katılım maliyeti kadar az artar.
 #[tokio::test]
-async fn hazine_payi_katilim_maliyeti_dusuldukten_sonra_hesaplaniyor() {
+async fn the_house_share_is_computed_after_the_onboarding_cost_is_deducted() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
     let delegate = Keypair::new();
@@ -93,11 +93,11 @@ async fn hazine_payi_katilim_maliyeti_dusuldukten_sonra_hesaplaniyor() {
 /// izinsiz çağrılabildiği için boş cüzdanlarla art arda kayıt olup kasayı
 /// boşaltmak KÂRLI bir saldırıydı.
 #[tokio::test]
-async fn kayit_kasadan_para_cikarmiyor() {
+async fn registration_takes_no_money_out_of_the_vault() {
     let mut g = Game::start(50 * SOL).await;
     let vault_before = g.lamports(&g.vault.clone()).await;
 
-    // Yüz ayrı boş cüzdanla kayıt: eski davranışta bu 100 × 200_000 lamport
+    // Yüz ayrı boş cüzdanla kayıt: old davranışta bu 100 × 200_000 lamport
     // sızdırırdı.
     for _ in 0..25 {
         let attacker = new_player(&mut g.ctx, SOL).await;
@@ -116,9 +116,9 @@ async fn kayit_kasadan_para_cikarmiyor() {
 
 /// Kullanıcı 0,1 SOL'e 8 kere çevirebilmişti: zincir üstü free_plays,
 /// tarayıcıdaki ücretsiz denemelerin ÜSTÜNE ekleniyordu. free_plays = 0
-/// olduğunda 1 spinlik paket TAM OLARAK 1 spin vermeli.
+/// olduğunda 1 spinlik package TAM OLARAK 1 spin vermeli.
 #[tokio::test]
-async fn bir_spinlik_paket_tam_bir_spin_veriyor() {
+async fn a_one_spin_package_gives_exactly_one_spin() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
     let delegate = Keypair::new();
@@ -127,9 +127,9 @@ async fn bir_spinlik_paket_tam_bir_spin_veriyor() {
     g.send(&[ix], &[&player]).await.unwrap();
 
     let st = g.player_state(&player.pubkey()).await.unwrap();
-    assert_eq!(st.spins_remaining, 1, "paket beklenenden farklı spin verdi");
+    assert_eq!(st.spins_remaining, 1, "package beklenenden farklı spin verdi");
 
-    // Bir kez oyna → 0 kalmalı, ikincisi reddedilmeli.
+    // Bir kez play → 0 kalmalı, ikincisi reddedilmeli.
     g.send(&[g.play_ix(&player.pubkey(), &player.pubkey())], &[&player])
         .await
         .unwrap();
@@ -139,7 +139,7 @@ async fn bir_spinlik_paket_tam_bir_spin_veriyor() {
 }
 
 #[tokio::test]
-async fn spin_yokken_oynanamaz() {
+async fn cannot_play_without_a_spin() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
 
@@ -150,10 +150,10 @@ async fn spin_yokken_oynanamaz() {
     assert_game_error(&err, GameError::NoSpinsRemaining);
 }
 
-/// Bekleyen bir oyun varken ikinci kez oynanamaz — aksi halde oyuncu
+/// Bekleyen bir oyun varken ikinci kez oynanamaz — aksi halde player
 /// kaybettiğini gördüğü turu resolve etmeyip yenisini başlatabilirdi.
 #[tokio::test]
-async fn bekleyen_oyun_varken_tekrar_oynanamaz() {
+async fn cannot_play_again_while_a_game_is_pending() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
     let delegate = Keypair::new();
@@ -179,7 +179,7 @@ async fn bekleyen_oyun_varken_tekrar_oynanamaz() {
 
 /// Kayıtlı olmayan bir anahtar başkasının spinini harcayamaz.
 #[tokio::test]
-async fn yabanci_delege_baskasinin_spinini_harcayamaz() {
+async fn a_foreign_delegate_cannot_spend_somebody_elses_spin() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
     let delegate = Keypair::new();
@@ -206,8 +206,8 @@ async fn yabanci_delege_baskasinin_spinini_harcayamaz() {
 // 3. Resolve: zamanlama ve atlanan slot
 // ---------------------------------------------------------------------------
 
-/// Bir oyuncuyu "bekleyen oyun" durumuna getirir ve hedef slot'u döner.
-async fn oyna(g: &mut Game, player: &Keypair, delegate: &Pubkey, tier: u8) -> u64 {
+/// Bir oyuncuyu "bekleyen oyun" durumuna getirir ve target slot'u döner.
+async fn play(g: &mut Game, player: &Keypair, delegate: &Pubkey, tier: u8) -> u64 {
     g.send(&[g.buy_spins_ix(&player.pubkey(), delegate, tier)], &[player])
         .await
         .unwrap();
@@ -219,10 +219,10 @@ async fn oyna(g: &mut Game, player: &Keypair, delegate: &Pubkey, tier: u8) -> u6
 }
 
 #[tokio::test]
-async fn hedef_slota_ulasmadan_resolve_edilemez() {
+async fn cannot_resolve_before_reaching_the_target_slot() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 0).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 0).await;
 
     g.set_slot_hashes(&[(target, [7u8; 32])]);
     let err = g
@@ -234,14 +234,14 @@ async fn hedef_slota_ulasmadan_resolve_edilemez() {
 
 /// ASIL DÜZELTME. Hedef slot atlanmışsa (lideri blok üretememişse) o slot
 /// SlotHashes'e hiç girmez. Eskiden burada TAM EŞLEŞME aranıyordu, yani
-/// böyle bir oyun SONSUZA DEK sonuçlandırılamıyor, oyuncu spinini
+/// böyle bir oyun SONSUZA DEK sonuçlandırılamıyor, player spinini
 /// kaybediyordu. Devnet'te atlanma oranı yer yer %5-15 — yani her 10-20
 /// spinde bir sessizce yaşanan gerçek bir para kaybı.
 #[tokio::test]
-async fn hedef_slot_atlanmissa_sonraki_slotla_sonuclaniyor() {
+async fn a_skipped_target_slot_settles_with_the_next_slot() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 0).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 0).await;
 
     g.warp(target + 3);
     // Hedef slot ve ondan sonraki iki slot ATLANMIŞ; ilk üretilen slot
@@ -250,20 +250,20 @@ async fn hedef_slot_atlanmissa_sonraki_slotla_sonuclaniyor() {
 
     g.send(&[g.resolve_ix(&player.pubkey())], &[])
         .await
-        .expect("atlanan hedef slot yüzünden resolve düştü");
+        .expect("atlanan target slot yüzünden resolve düştü");
 
     let st = g.player_state(&player.pubkey()).await.unwrap();
     assert!(!st.pending, "oyun hâlâ bekliyor");
 }
 
 /// Pencerenin İÇİNDE hiç üretilmiş slot yoksa (gerçekte olmaz ama) resolve
-/// düşer ve oyuncu forfeit'e yönlendirilir — sessizce yanlış bir sonuç
+/// düşer ve player forfeit'e yönlendirilir — sessizce yanlış bir sonuç
 /// üretilmez.
 #[tokio::test]
-async fn pencerede_hic_slot_yoksa_resolve_dusuyor() {
+async fn resolve_fails_when_the_window_holds_no_slot() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 0).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 0).await;
 
     g.warp(target + 2);
     // Yalnızca hedeften ÖNCEKİ slot'lar var.
@@ -279,10 +279,10 @@ async fn pencerede_hic_slot_yoksa_resolve_dusuyor() {
 /// Aynı oyun iki kez sonuçlandırılamaz — aksi halde kazanan bir tur
 /// tekrar tekrar ödenirdi.
 #[tokio::test]
-async fn ayni_oyun_iki_kez_sonuclandirilamaz() {
+async fn the_same_game_cannot_be_settled_twice() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 1).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 1).await;
 
     g.warp(target + 1);
     g.set_slot_hashes(&[(target, [3u8; 32])]);
@@ -295,14 +295,14 @@ async fn ayni_oyun_iki_kez_sonuclandirilamaz() {
     assert_game_error(&err, GameError::NoPendingPlay);
 }
 
-/// Pencere kapanmadan forfeit edilemez — aksi halde oyuncu kaybettiğini
+/// Pencere kapanmadan forfeit edilemez — aksi halde player kaybettiğini
 /// gördüğü turu forfeit edip yeniden oynayabilirdi. (Spin iadesi
 /// olmadığı için kâr etmezdi ama kural yine de kapalı olmalı.)
 #[tokio::test]
-async fn pencere_acikken_forfeit_edilemez() {
+async fn cannot_forfeit_while_the_window_is_open() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 1).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 1).await;
 
     g.warp(target + 1);
     let err = g
@@ -313,14 +313,14 @@ async fn pencere_acikken_forfeit_edilemez() {
 }
 
 /// Forfeit spini İADE ETMEZ. Etseydi, kaybettiğini önceden hesaplayan bir
-/// oyuncu resolve etmeyip forfeit ederek bedava yeniden zar atardı —
+/// player resolve etmeyip forfeit ederek bedava yeniden dice atardı —
 /// commit-reveal'ın tüm anlamı buradan kaçardı.
 #[tokio::test]
-async fn forfeit_spin_iade_etmiyor() {
+async fn forfeit_does_not_refund_the_spin() {
     let mut g = Game::start(50 * SOL).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
-    // 5 spinlik paket: oynadıktan sonra 4 kalmalı, forfeit sonrası da 4.
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 1).await;
+    // 5 spinlik package: oynadıktan sonra 4 kalmalı, forfeit sonrası da 4.
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 1).await;
     let before = g.player_state(&player.pubkey()).await.unwrap().spins_remaining;
     assert_eq!(before, 4);
 
@@ -333,7 +333,7 @@ async fn forfeit_spin_iade_etmiyor() {
     assert!(!st.pending, "forfeit sonrası hâlâ bekliyor");
     assert_eq!(
         st.spins_remaining, before,
-        "forfeit spini iade etti — bedava yeniden zar atma açığı"
+        "forfeit spini iade etti — bedava yeniden dice atma açığı"
     );
 }
 
@@ -341,7 +341,7 @@ async fn forfeit_spin_iade_etmiyor() {
 /// izinsiz (permissionless) olduğu için bu kritik: aksi halde bir
 /// "keeper" başkalarının kazançlarını kendi cüzdanına toplardı.
 #[tokio::test]
-async fn odul_cagirana_degil_oyuncuya_odeniyor() {
+async fn the_prize_is_paid_to_the_player_not_the_caller() {
     // easy_win_bps = 10000: bu kurulumda her tur kazanır, ödemeyi
     // gözlemleyebiliyoruz.
     let mut g = Game::start_with(50 * SOL, 10_000, 10_000, 0).await;
@@ -350,7 +350,7 @@ async fn odul_cagirana_degil_oyuncuya_odeniyor() {
     // gönderen taraf test payer'ı, yani oyuncudan tamamen başka biri.
     let keeper = g.ctx.payer.pubkey();
 
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 1).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 1).await;
     g.warp(target + 1);
     g.set_slot_hashes(&[(target, [42u8; 32])]);
 
@@ -372,34 +372,34 @@ async fn odul_cagirana_degil_oyuncuya_odeniyor() {
         keeper_after < keeper_before,
         "resolve'u çağıran taraf para kazandı ({keeper_before} -> {keeper_after})          — yalnızca işlem ücreti ödemeliydi"
     );
-    let kazanc = player_after - player_before;
+    let winnings = player_after - player_before;
     assert!(
-        kazanc == SMALL_PRIZE || kazanc == BIG_PRIZE,
-        "ödenen tutar ilan edilen ödüllerden biri değil: {kazanc}"
+        winnings == SMALL_PRIZE || winnings == BIG_PRIZE,
+        "ödenen tutar published edilen ödüllerden biri değil: {winnings}"
     );
 }
 
 /// Kasa en büyük olası ÖDEMEYİ (jackpot + operasyon payı) karşılayamıyorsa
-/// kazanan tur bile ödenmez — ama işlem GERİ ALINMAZ, oyuncu sessizce
-/// kaybeder ve tekrar oynayabilir. Aksi halde oyuncu `pending = true`
+/// kazanan tur bile ödenmez — ama işlem GERİ ALINMAZ, player sessizce
+/// loses ve tekrar oynayabilir. Aksi halde player `pending = true`
 /// durumunda pencere kapanana kadar sıkışırdı.
 #[tokio::test]
-async fn kasa_odeyemiyorsa_oyuncu_sikismiyor() {
+async fn the_player_is_not_stuck_when_the_vault_cannot_pay() {
     // Kasa jackpot + payını karşılayamayacak kadar boş; kazanma oranı %100.
     let mut g = Game::start_with(BIG_PRIZE / 2, 10_000, 10_000, 0).await;
     let player = new_player(&mut g.ctx, 10 * SOL).await;
 
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 1).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 1).await;
     g.warp(target + 1);
     g.set_slot_hashes(&[(target, [5u8; 32])]);
 
     let before = g.lamports(&player.pubkey()).await;
     g.send(&[g.resolve_ix(&player.pubkey())], &[])
         .await
-        .expect("kasa boşken resolve tüm işlemi geri aldı — oyuncu sıkışırdı");
+        .expect("kasa boşken resolve tüm işlemi geri aldı — player sıkışırdı");
 
     let st = g.player_state(&player.pubkey()).await.unwrap();
-    assert!(!st.pending, "oyuncu bekleyen durumda kaldı");
+    assert!(!st.pending, "player bekleyen durumda kaldı");
     assert_eq!(
         g.lamports(&player.pubkey()).await,
         before,
@@ -413,17 +413,17 @@ async fn kasa_odeyemiyorsa_oyuncu_sikismiyor() {
 
 /// SlotHashes gerçekte 512 kayıt tutuyor. Yukarıdaki testler sysvar'ı bir
 /// iki kayıtla kurduğu için tarama mantığının asıl koşullarını
-/// zorlamıyorlar: penceremizin ÜSTÜNDE kalan (daha yeni) kayıtların
+/// zorlamıyorlar: penceremizin ÜSTÜNDE remaining (daha yeni) kayıtların
 /// atlanması, hedefin ALTINA düşünce durulması ve birden çok uygun aday
 /// varken hedefe EN YAKIN olanın seçilmesi.
 ///
 /// Hedefe en yakını seçmek keyfi bir tercih değil: o slot bir kez ortaya
 /// çıktıktan sonra bir daha değişmiyor (sonradan eklenen slot'lar hep daha
 /// büyük). "En yeni uygun slot" seçilseydi, sonuç resolve'un NE ZAMAN
-/// çağrıldığına göre değişirdi ve oyuncu kazanana kadar bekleyerek zar
+/// çağrıldığına göre değişirdi ve player kazanana kadar bekleyerek dice
 /// çevirebilirdi.
 #[tokio::test]
-async fn dolu_sysvarda_hedefe_en_yakin_slot_seciliyor() {
+async fn the_slot_closest_to_the_target_is_chosen_in_a_full_sysvar() {
     // Kazanma eşiği %50: iki aday slot'tan birinin kazandırdığı, diğerinin
     // kaybettirdiği bir hash çifti bulmak böylece kolay.
     let mut g = Game::start_with(50 * SOL, 5_000, 5_000, 0).await;
@@ -431,45 +431,45 @@ async fn dolu_sysvarda_hedefe_en_yakin_slot_seciliyor() {
     // Önce ileri sarıyoruz: sysvar'ı hedefin ALTINDA 509 kayıtla
     // doldurabilmek için slot numarasının o kadar büyük olması gerekiyor.
     g.warp(1_000);
-    let target = oyna(&mut g, &player, &Keypair::new().pubkey(), 1).await;
+    let target = play(&mut g, &player, &Keypair::new().pubkey(), 1).await;
 
     let st = g.player_state(&player.pubkey()).await.unwrap();
-    let oyun_sayaci = st.plays_count;
+    let plays_count = st.plays_count;
 
     // İki aday: hedefe YAKIN olan ve DAHA YENİ olan. Sonuçları ZITLAŞACAK
     // şekilde hash arıyoruz — ancak o zaman "hangisi seçildi" sorusunun
     // gözlenebilir bir cevabı oluyor. Aksi halde iki seçim de aynı sonucu
     // verir ve test hiçbir şey ayırt etmez.
-    let yakin_slot = target + 3;
-    let yeni_slot = target + 40;
-    let mut yakin_hash = [0u8; 32];
-    let mut yeni_hash = [0u8; 32];
-    let mut bulundu = false;
+    let near_slot = target + 3;
+    let new_slot = target + 40;
+    let mut near_hash = [0u8; 32];
+    let mut new_hash = [0u8; 32];
+    let mut found = false;
     for i in 0..5_000u32 {
-        let h1 = tur_hash(i);
-        let h2 = tur_hash(i + 5_000);
-        let kazanir = beklenen_zar(&h1, yakin_slot, &player.pubkey(), oyun_sayaci) < 5_000;
-        let kaybeder = beklenen_zar(&h2, yeni_slot, &player.pubkey(), oyun_sayaci) >= 5_000;
-        if kazanir && kaybeder {
-            yakin_hash = h1;
-            yeni_hash = h2;
-            bulundu = true;
+        let h1 = round_hash(i);
+        let h2 = round_hash(i + 5_000);
+        let wins = expected_dice(&h1, near_slot, &player.pubkey(), plays_count) < 5_000;
+        let loses = expected_dice(&h2, new_slot, &player.pubkey(), plays_count) >= 5_000;
+        if wins && loses {
+            near_hash = h1;
+            new_hash = h2;
+            found = true;
             break;
         }
     }
-    assert!(bulundu, "zıt sonuç veren hash çifti bulunamadı");
+    assert!(found, "zıt sonuç veren hash çifti bulunamadı");
 
     g.warp(target + 250);
 
     // 512 kayıtlık gerçekçi bir sysvar:
     //  - hedefin altında 509 kayıt (taramanın durması gereken bölge)
-    //  - pencerenin içinde 2 aday: yakin_slot ve yeni_slot
+    //  - pencerenin içinde 2 aday: near_slot ve new_slot
     //  - pencerenin üstünde 1 kayıt (atlanması gereken)
     let mut entries: Vec<(u64, [u8; 32])> = (1..=509u64)
         .map(|i| (target - i, [(i % 251) as u8; 32]))
         .collect();
-    entries.push((yakin_slot, yakin_hash));
-    entries.push((yeni_slot, yeni_hash));
+    entries.push((near_slot, near_hash));
+    entries.push((new_slot, new_hash));
     entries.push((target + MAX_RESOLVE_WINDOW_SLOTS_TEST + 1, [99u8; 32]));
     g.set_slot_hashes(&entries);
 
@@ -481,16 +481,16 @@ async fn dolu_sysvarda_hedefe_en_yakin_slot_seciliyor() {
     assert!(!st.pending, "oyun sonuçlanmadı");
     assert_eq!(
         st.wins_count, 1,
-        "sonuç, hedefe en yakın slot ({yakin_slot}) yerine daha yeni bir slot \
-         ({yeni_slot}) kullanılarak üretilmiş — resolve'un NE ZAMAN çağrıldığı \
-         sonucu değiştirebilir demektir, oyuncu kazanana kadar bekleyebilirdi"
+        "sonuç, hedefe en yakın slot ({near_slot}) yerine daha yeni bir slot \
+         ({new_slot}) kullanılarak üretilmiş — resolve'un NE ZAMAN çağrıldığı \
+         sonucu değiştirebilir demektir, player kazanana kadar bekleyebilirdi"
     );
 }
 
 /// resolve penceresinin uzunluğu (lib.rs'teki MAX_RESOLVE_WINDOW_SLOTS ile
 /// aynı olmalı). Sabit programda `pub` değil; testte kopyası tutuluyor ve
-/// `pencerede_hic_slot_yoksa_resolve_dusuyor` ile
-/// `forfeit_spin_iade_etmiyor` testleri ikisinin uyuştuğunu dolaylı olarak
+/// `resolve_fails_when_the_window_holds_no_slot` ile
+/// `forfeit_does_not_refund_the_spin` testleri ikisinin uyuştuğunu dolaylı olarak
 /// doğruluyor.
 const MAX_RESOLVE_WINDOW_SLOTS_TEST: u64 = 300;
 
@@ -502,13 +502,13 @@ const MAX_RESOLVE_WINDOW_SLOTS_TEST: u64 = 300;
 // reddedilir — ve bu, oyunun tamamen durması demek.
 //
 // Ayırıcılar sha256("global:<isim>")[0..8]'den geliyor, yani bir talimatın
-// ADI değişirse sessizce değişirler. Hesap sırası da struct alan sırasına
-// bağlı; araya alan eklemek yeter.
+// ADI değişirse sessizce değişirler. Hesap sırası da struct field sırasına
+// bağlı; araya field eklemek yeter.
 //
 // Aynı vektörler scripts/check-abi.mjs içinde, istemcinin GERÇEK
 // kurucuları çağrılarak yeniden üretiliyor.
 #[test]
-fn oyun_talimat_ayiricilari_altin_vektore_uyuyor() {
+fn game_instruction_discriminators_match_the_golden_vector() {
     use anchor_lang::InstructionData;
 
     let hex = |d: Vec<u8>| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -519,17 +519,17 @@ fn oyun_talimat_ayiricilari_altin_vektore_uyuyor() {
     assert_eq!(&buy[0..16], "1e71e289a75d2984", "buy_spins ayırıcısı değişti");
     assert_eq!(buy, "1e71e289a75d298403", "buy_spins verisi değişti (u8 tier)");
 
-    let kayit = hex(luck_game::instruction::RegisterDelegate {}.data());
-    println!("register     : {kayit}");
-    assert_eq!(kayit, "da2d0c21c35959d0", "register_delegate ayırıcısı değişti");
+    let registration = hex(luck_game::instruction::RegisterDelegate {}.data());
+    println!("register     : {registration}");
+    assert_eq!(registration, "da2d0c21c35959d0", "register_delegate ayırıcısı değişti");
 
-    let oyna = hex(luck_game::instruction::Play {}.data());
-    println!("play         : {oyna}");
-    assert_eq!(oyna, "d59dc18ee438f896", "play ayırıcısı değişti");
+    let play = hex(luck_game::instruction::Play {}.data());
+    println!("play         : {play}");
+    assert_eq!(play, "d59dc18ee438f896", "play ayırıcısı değişti");
 
-    let cozumle = hex(luck_game::instruction::Resolve {}.data());
-    println!("resolve      : {cozumle}");
-    assert_eq!(cozumle, "f696ecce6c3f3a0a", "resolve ayırıcısı değişti");
+    let decode = hex(luck_game::instruction::Resolve {}.data());
+    println!("resolve      : {decode}");
+    assert_eq!(decode, "f696ecce6c3f3a0a", "resolve ayırıcısı değişti");
 
     let forfeit = hex(luck_game::instruction::ForfeitStuckPlay {}.data());
     println!("forfeit      : {forfeit}");
@@ -540,7 +540,7 @@ fn oyun_talimat_ayiricilari_altin_vektore_uyuyor() {
 ///
 /// Oyunun sonucunu site zincirden OKUMUYOR; işlemin loglarındaki
 /// `PlayResolved` olayını ayrıştırıyor (parsePlayResolvedFromTx). Olayın
-/// alan SIRASI değişirse — araya bir alan eklemek yeter — TypeScript
+/// field SIRASI değişirse — araya bir field eklemek yeter — TypeScript
 /// tarafı aynı ofsetlerden okumaya devam eder ve hiçbir hata vermeden
 /// YANLIŞ değerleri gösterir: kaybeden tura "kazandın", 0,5 SOL ödüle
 /// başka bir rakam. İşlem reddedilmediği için ne zincirde ne logda bir
@@ -556,15 +556,15 @@ fn oyun_talimat_ayiricilari_altin_vektore_uyuyor() {
 /// ayrıştırıcılarına verilip geri okunuyor — yani iki taraf da aynı
 /// bağımsız gerçeğe bağlanmış oluyor.
 #[test]
-fn olay_baytlari_altin_vektore_uyuyor() {
+fn event_bytes_match_the_golden_vector() {
     use anchor_lang::Event;
 
     let hex = |d: Vec<u8>| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let oyuncu = anchor_lang::prelude::Pubkey::new_from_array([7u8; 32]);
+    let player = anchor_lang::prelude::Pubkey::new_from_array([7u8; 32]);
 
-    let cozuldu = hex(
+    let resolved = hex(
         luck_game::PlayResolved {
-            player: oyuncu,
+            player: player,
             won: true,
             prize_paid: 1_234_567_890,
             is_big_win: false,
@@ -573,9 +573,9 @@ fn olay_baytlari_altin_vektore_uyuyor() {
         }
         .data(),
     );
-    println!("PlayResolved   : {cozuldu}");
+    println!("PlayResolved   : {resolved}");
     assert_eq!(
-        cozuldu,
+        resolved,
         "8cb617b4df501e9d\
          0707070707070707070707070707070707070707070707070707070707070707\
          01\
@@ -586,9 +586,9 @@ fn olay_baytlari_altin_vektore_uyuyor() {
         "PlayResolved olayının bayt düzeni değişti — site sonucu YANLIŞ okur"
     );
 
-    let baslatildi = hex(
+    let committed = hex(
         luck_game::PlayCommitted {
-            player: oyuncu,
+            player: player,
             plays_count: 11,
             spins_remaining: 22,
             bonus_granted: true,
@@ -596,9 +596,9 @@ fn olay_baytlari_altin_vektore_uyuyor() {
         }
         .data(),
     );
-    println!("PlayCommitted  : {baslatildi}");
+    println!("PlayCommitted  : {committed}");
     assert_eq!(
-        baslatildi,
+        committed,
         "0f6a7973baf30b2c\
          0707070707070707070707070707070707070707070707070707070707070707\
          0b000000\
@@ -608,9 +608,9 @@ fn olay_baytlari_altin_vektore_uyuyor() {
         "PlayCommitted olayının bayt düzeni değişti"
     );
 
-    let satin = hex(
+    let purchase = hex(
         luck_game::SpinsPurchased {
-            player: oyuncu,
+            player: player,
             tier_index: 3,
             spin_count: 20,
             price_lamports: 800_000_000,
@@ -618,9 +618,9 @@ fn olay_baytlari_altin_vektore_uyuyor() {
         }
         .data(),
     );
-    println!("SpinsPurchased : {satin}");
+    println!("SpinsPurchased : {purchase}");
     assert_eq!(
-        satin,
+        purchase,
         "c39218f3ce200ed2\
          0707070707070707070707070707070707070707070707070707070707070707\
          03\
@@ -635,7 +635,7 @@ fn olay_baytlari_altin_vektore_uyuyor() {
 /// beklediği tip olduğunu bu 8 baytla doğruluyor. Kayarsa istemci
 /// "yapılandırılmamış" der ve oyun hiç açılmaz.
 #[test]
-fn hesap_ayiricilari_altin_vektore_uyuyor() {
+fn account_discriminators_match_the_golden_vector() {
     use anchor_lang::Discriminator;
 
     let hex = |d: &[u8]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -666,11 +666,11 @@ fn hesap_ayiricilari_altin_vektore_uyuyor() {
 /// Bu test o tarifi koda bağlıyor. Aynı vektör scripts/check-abi.mjs
 /// içinde JS tarafında da üretiliyor.
 #[test]
-fn altin_zar_vektoru() {
+fn golden_dice_vector() {
     let mut preimage = Vec::with_capacity(76);
     preimage.extend_from_slice(&(0u8..32).collect::<Vec<u8>>()); // slot_hash
     preimage.extend_from_slice(&488_699_073u64.to_le_bytes()); // entropy_slot
-    preimage.extend_from_slice(&[7u8; 32]); // oyuncu
+    preimage.extend_from_slice(&[7u8; 32]); // player
     preimage.extend_from_slice(&5u32.to_le_bytes()); // plays_count
     assert_eq!(preimage.len(), 76, "preimage düzeni değişti");
 
@@ -680,31 +680,31 @@ fn altin_zar_vektoru() {
     println!("digest: {hex}");
     assert_eq!(
         hex, "3d54d1715c5d05dcfc12bb5dd95b197b078f3135b04aab6ead91103c1233cc6d",
-        "zar hash'i değişti — GUVENLIK.md'deki tarif artık yanlış"
+        "dice hash'i değişti — GUVENLIK.md'deki tarif artık yanlış"
     );
 
-    let zar = u64::from_le_bytes(digest[0..8].try_into().unwrap()) % 10_000;
-    let katman = u64::from_le_bytes(digest[8..16].try_into().unwrap()) % 10_000;
-    assert_eq!(zar, 7_597, "zar türetimi değişti");
-    assert_eq!(katman, 4_556, "katman zarı türetimi değişti");
+    let dice = u64::from_le_bytes(digest[0..8].try_into().unwrap()) % 10_000;
+    let tier = u64::from_le_bytes(digest[8..16].try_into().unwrap()) % 10_000;
+    assert_eq!(dice, 7_597, "dice türetimi değişti");
+    assert_eq!(tier, 4_556, "tier zarı türetimi değişti");
 }
 
-/// Ücretsiz haklarını kullanmadan ÖNCE paket alan oyuncu da bonus spin'i
+/// Ücretsiz haklarını kullanmadan ÖNCE package field player da bonus spin'i
 /// alabilmeli.
 ///
 /// Eskiden alamıyordu ve bu bir eşitlik hatasıydı: koşul
 /// `plays_count == free_plays` idi, ama satın alınan spinler de aynı
 /// bakiyeye eklendiği için bakiye 3'te değil 4'te sıfırlanıyor ve eşitlik
-/// hiç tutmuyordu. Yani "önce paket al" davranışı bonusu sessizce yakıyordu.
+/// hiç tutmuyordu. Yani "önce package al" davranışı bonusu sessizce yakıyordu.
 #[tokio::test]
-async fn paket_once_alinsa_da_bonus_veriliyor() {
+async fn the_bonus_is_granted_even_if_a_package_was_bought_first() {
     let mut g = Game::start_with(50 * SOL, NORMAL_WIN_BPS, EASY_WIN_BPS, 3).await;
     let o = Keypair::new();
     let d = Keypair::new();
     fund(&mut g.ctx, &o.pubkey(), 20 * SOL).await;
     let k = o.pubkey();
 
-    // ÖNCE 1 spinlik paketi al, SONRA oyna: toplam 1 + 3 = 4 spin.
+    // ÖNCE 1 spinlik paketi al, SONRA play: toplam 1 + 3 = 4 spin.
     let ix = g.buy_spins_ix(&k, &d.pubkey(), 0);
     g.send(&[ix], &[&o]).await.unwrap();
 
@@ -726,7 +726,7 @@ async fn paket_once_alinsa_da_bonus_veriliyor() {
     assert_eq!(s.plays_count, 4, "4 spin oynanmalıydı");
     assert!(
         s.bonus_granted,
-        "önce paket alan oyuncu bonus spin'i alamadı — eşitlik hatası geri gelmiş"
+        "önce package field player bonus spin'i alamadı — eşitlik hatası geri gelmiş"
     );
     assert_eq!(s.spins_remaining, 1, "bonus spin bakiyeye eklenmedi");
 }
@@ -736,7 +736,7 @@ async fn paket_once_alinsa_da_bonus_veriliyor() {
 /// Bonus koşulu eşitlikten ">="e çevrildi; `free_plays > 0` şartı olmasaydı
 /// bu değişiklik HERKESE ilk oyunundan sonra bedava bir spin verirdi.
 #[tokio::test]
-async fn ucretsiz_hak_yokken_bonus_verilmiyor() {
+async fn no_bonus_is_granted_when_there_are_no_free_spins() {
     let mut g = Game::start_with(50 * SOL, NORMAL_WIN_BPS, EASY_WIN_BPS, 0).await;
     let o = Keypair::new();
     let d = Keypair::new();
@@ -767,10 +767,10 @@ async fn ucretsiz_hak_yokken_bonus_verilmiyor() {
 /// çekebilirdi. Kodu dışarıdan inceleyen biri bu tasarım riskini işaret
 /// etti; yayın öncesinde kapatıldı.
 ///
-/// Test şöyle kuruyor: oranlar %100 (her tur kazanır) iken oyuncu oynuyor,
+/// Test şöyle kuruyor: oranlar %100 (her tur kazanır) iken player oynuyor,
 /// SONRA yetkili oranı %0'a çekiyor. Bahis yine de KAZANMALI.
 #[tokio::test]
-async fn yetkili_bekleyen_bahsin_oranini_degistiremiyor() {
+async fn the_authority_cannot_change_the_odds_of_a_pending_bet() {
     // Her tur kazansın: normal ve kolay mod %100.
     let mut g = Game::start_with(50 * SOL, 10_000, 10_000, 0).await;
     let o = Keypair::new();
@@ -815,12 +815,12 @@ async fn yetkili_bekleyen_bahsin_oranini_degistiremiyor() {
 
     // --- Bekleyen bahis sonuçlansın. ---
     let commit = g.player_state(&k).await.unwrap().commit_slot;
-    let hedef = commit + REVEAL_DELAY;
-    slot = hedef + 3;
+    let target = commit + REVEAL_DELAY;
+    slot = target + 3;
     g.warp(slot);
     let mut h = [0u8; 32];
     h[0] = 42;
-    g.set_slot_hashes(&[(hedef, h)]);
+    g.set_slot_hashes(&[(target, h)]);
 
     let ix = g.resolve_ix(&k);
     g.send(&[ix], &[]).await.unwrap();
@@ -838,18 +838,18 @@ async fn yetkili_bekleyen_bahsin_oranini_degistiremiyor() {
 /// PlayerState'in TAM BAYT DÜZENİ.
 ///
 /// Bu hesabı site sabit ofsetlerle okuyor (decodePlayerState). Araya bir
-/// alan eklemek yeter: TypeScript aynı ofsetlerden okumaya devam eder ve
+/// field eklemek yeter: TypeScript aynı ofsetlerden okumaya devam eder ve
 /// hiçbir hata vermeden yanlış spin sayısı, yanlış kazanç gösterir.
 ///
 /// Düzen az önce genişledi (bahis anındaki kurallar eklendi). Yeni alanlar
 /// bilerek SONA eklendi ki mevcut ofsetler kaymasın; bu vektör de bunu
-/// kanıtlıyor. Aynı baytlar scripts/check-abi.mjs içinde SİTENİN GERÇEK
+/// kanıtlıyor. Aynı bytes scripts/check-abi.mjs içinde SİTENİN GERÇEK
 /// okuyucusuna verilip geri okunuyor.
 #[test]
-fn player_state_bayt_duzeni_altin_vektore_uyuyor() {
+fn player_state_byte_layout_matches_the_golden_vector() {
     use anchor_lang::{AnchorSerialize, Discriminator};
 
-    let durum = luck_game::PlayerState {
+    let state = luck_game::PlayerState {
         player: anchor_lang::prelude::Pubkey::new_from_array([9u8; 32]),
         plays_count: 11,
         wins_count: 3,
@@ -870,13 +870,13 @@ fn player_state_bayt_duzeni_altin_vektore_uyuyor() {
         bet_easy_win_bps: 1_000,
         bet_treasury_fee_bps: 2_000,
     };
-    let mut baytlar = luck_game::PlayerState::DISCRIMINATOR.to_vec();
-    durum.serialize(&mut baytlar).unwrap();
+    let mut bytes = luck_game::PlayerState::DISCRIMINATOR.to_vec();
+    state.serialize(&mut bytes).unwrap();
 
-    let hex = baytlar.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     println!("PlayerState: {hex}");
     assert_eq!(
-        baytlar.len(),
+        bytes.len(),
         luck_game::PlayerState::LEN,
         "PlayerState::LEN gerçek boyutla uyuşmuyor — hesap ya taşar ya yer israf eder"
     );

@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-// Test altyapısı
+// The test harness
 // ---------------------------------------------------------------------------
-// Testler zincire HİÇ bağlanmıyor: solana-program-test tüm çalışma zamanını
-// bellekte kuruyor. Bu sayede 91 günlük vesting takvimi, saati elle ileri
-// alarak saniyeler içinde baştan sona sınanabiliyor.
+// The tests never connect to the chain: solana-program-test builds the whole
+// runtime in memory. That is what lets a 91-day vesting schedule be exercised
+// end to end in seconds, by moving the clock forward by hand.
 #![allow(dead_code)]
 
 use anchor_lang::{InstructionData, ToAccountMetas};
@@ -21,12 +21,12 @@ use solana_sdk::{
     transport::TransportError,
 };
 
-/// Anchor'ın ürettiği `entry`, hesap dilimiyle AccountInfo'ların ömrünü
-/// aynı ('info) kabul ediyor; `solana-program-test` ise ikisini bağımsız
-/// ömürlerle çağırıyor, imzalar bu yüzden birebir tutmuyor. Standart çözüm:
-/// dilimi kopyalayıp test süreci boyunca yaşayacak şekilde sızdırmak.
-/// Testlerde kabul edilebilir (süreç her koşudan sonra kapanıyor) ve
-/// `unsafe` transmute'a göre çok daha güvenli.
+/// The `entry` Anchor generates treats the account slice and the AccountInfos as
+/// having the same ('info) lifetime; `solana-program-test` calls them with
+/// independent lifetimes, so the signatures do not match exactly. The standard
+/// solution: copy the slice and leak it so it lives for the duration of the test
+/// process. Acceptable in tests (the process exits after every run) and far
+/// safer than an `unsafe` transmute.
 pub fn entry_shim(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     let accounts = Box::leak(Box::new(accounts.to_vec()));
     luck_distributor::entry(program_id, accounts, data)
@@ -47,10 +47,10 @@ pub const PERIODS: u16 = 13;
 pub const WEEK: i64 = 7 * 24 * 60 * 60;
 
 // --- Merkle ------------------------------------------------------------------
-// Programdaki hash'lemenin BİREBİR aynısı. Kasıtlı olarak programdaki
-// fonksiyonları çağırmıyoruz: test, uygulamanın kendi kodunu doğru kabul
-// edip tekrarlamamalı. İkisi bağımsız yazıldığı için, birinde yapılan bir
-// değişiklik diğeriyle uyuşmazsa testler bunu yakalar.
+// EXACTLY the same hashing as in the program. We deliberately do not call the
+// program's functions: a test must not take the implementation's own code as
+// correct and repeat it. Because the two are written independently, the tests
+// catch a change in one that does not agree with the other.
 pub fn leaf_hash(claimant: &Pubkey, amount: u64) -> [u8; 32] {
     solana_sdk::keccak::hashv(&[&[0x00], claimant.as_ref(), &amount.to_le_bytes()]).0
 }
@@ -63,15 +63,15 @@ fn node_hash(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
     }
 }
 
-/// Basit merkle ağacı. Tek sayıda düğüm kalırsa son düğüm bir üst seviyeye
-/// olduğu gibi taşınır (yaygın "promote" yaklaşımı).
+/// A simple merkle tree. If an odd node is left over, the last node is promoted
+/// to the level above as it is (the common "promote" approach).
 pub struct MerkleTree {
     levels: Vec<Vec<[u8; 32]>>,
 }
 
 impl MerkleTree {
     pub fn new(leaves: Vec<[u8; 32]>) -> Self {
-        assert!(!leaves.is_empty(), "boş ağaç");
+        assert!(!leaves.is_empty(), "empty tree");
         let mut levels = vec![leaves];
         while levels.last().unwrap().len() > 1 {
             let prev = levels.last().unwrap();
@@ -107,15 +107,16 @@ impl MerkleTree {
     }
 }
 
-// --- Zincir yardımcıları -----------------------------------------------------
+// --- Chain helpers -----------------------------------------------------------
 
-/// Her işlemi BENZERSİZ yapar (bkz. luck-game'deki aynı yardımcı).
+/// Makes every transaction UNIQUE (see the same helper in luck-game).
 ///
-/// Aynı imzacı + aynı talimat + aynı blockhash = birebir aynı işlem; zincir
-/// onu tekrar İŞLEMİYOR ama hata da vermiyor, yani test "başarılı" görürken
-/// zincirde hiçbir şey olmuyor. Artan bir compute-budget limiti mesajı
-/// değiştiriyor; limit hiç bağlayıcı olmayacak kadar yüksek ve ek ücreti
-/// yok, dolayısıyla ölçtüğümüz token bakiyelerine dokunmuyor.
+/// The same signer + the same instruction + the same blockhash = a byte-identical
+/// transaction; the chain does NOT process it again but does not error either, so
+/// the test sees "success" while nothing happened on chain. An incrementing
+/// compute-budget limit changes the message; the limit is high enough never to
+/// bind and carries no extra fee, so it does not touch the token balances we
+/// measure.
 static TX_NONCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 pub async fn send(
@@ -187,20 +188,20 @@ pub async fn token_balance(ctx: &mut ProgramTestContext, account: &Pubkey) -> u6
     }
 }
 
-/// Zincirin saatini istenen ana kurar. Vesting takvimini gerçek zamanda
-/// beklemek imkânsız olduğu için testlerin bel kemiği bu.
+/// Sets the chain's clock to the requested moment. Waiting out a vesting
+/// schedule in real time is impossible, so this is the backbone of the tests.
 ///
-/// Mevcut Clock'u okuyup YALNIZCA zaman damgasını değiştiriyoruz: slot ve
-/// epoch alanlarını sıfırlamak, çalışma zamanının başka yerlerinde
-/// beklenmedik davranışlara yol açabilirdi.
+/// We read the current Clock and change ONLY the timestamp: zeroing the slot and
+/// epoch fields could cause unexpected behaviour elsewhere in the runtime.
 ///
-/// Zaman damgasından ÖNCE bir slot ilerliyoruz. Sebebi ince ama testleri
-/// kararsız yapacak kadar önemli: aynı imzacı, aynı talimatı, aynı
-/// blockhash'le iki kez gönderirse ortaya BİREBİR AYNI işlem çıkıyor ve
-/// zincir bunu "zaten işlendi" diye reddediyor. Haftalık çekim döngüsünde
-/// tam olarak bu oluyordu — test tek başına koşunca araya yeni bir blok
-/// girip geçiyor, diğer testlerle paralel koşunca giremeyip düşüyordu.
-/// Slot'u elle ilerletmek, sonucu zamanlamaya bağlı olmaktan çıkarıyor.
+/// We advance a slot BEFORE the timestamp. The reason is subtle but important
+/// enough to make the tests flaky: if the same signer sends the same instruction
+/// with the same blockhash twice, the result is a BYTE-IDENTICAL transaction and
+/// the chain rejects it as "already processed". That is exactly what happened in
+/// the weekly claim loop — run on its own the test passed because a new block
+/// slipped in between, and run in parallel with the others it did not and the
+/// test failed. Advancing the slot by hand takes the outcome out of the hands of
+/// timing.
 pub async fn set_time(ctx: &mut ProgramTestContext, unix_timestamp: i64) {
     let current: Clock = ctx.banks_client.get_sysvar::<Clock>().await.unwrap();
     ctx.warp_to_slot(current.slot + 1).unwrap();

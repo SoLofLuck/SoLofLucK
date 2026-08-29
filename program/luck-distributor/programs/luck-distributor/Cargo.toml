@@ -1,12 +1,12 @@
 [package]
 name = "luck-distributor"
 version = "0.1.0"
-description = "Merkle tabanlı $LUCK dağıtıcısı: presale vesting'i ve haftalık çekiliş ödemeleri tek bir hesap tipiyle, kimsenin elle müdahale edemeyeceği şekilde dağıtır."
+description = "The merkle-based $LUCK distributor: it distributes the presale vesting and the weekly raffle payouts through a single account type, in a way nobody can intervene in by hand."
 edition = "2021"
-# Gerekçesi luck-game/Cargo.toml'daki notla aynı: anchor-cli 0.30.1 build
-# sırasında rustc 1.75.0 bundle eden eski bir Solana aracı indiriyor ve
-# rust-version bildirilmezse cargo, transitive bağımlılıkları o derleyicinin
-# okuyamadığı edition2024 sürümlerine kilitliyor.
+# The reason is the same as the note in luck-game/Cargo.toml: during the build,
+# anchor-cli 0.30.1 downloads an old Solana tool that bundles rustc 1.75.0, and
+# unless rust-version is declared, cargo locks the transitive dependencies to
+# edition2024 releases that compiler cannot read.
 rust-version = "1.75.0"
 
 [lib]
@@ -24,24 +24,25 @@ default = []
 [dependencies]
 anchor-lang = { version = "0.30", features = ["init-if-needed"] }
 anchor-spl = "0.30"
-# Aşağıdaki pinlerin tamamı luck-game ile birebir aynı gerekçelere sahip
-# (blake3 → edition2024 zinciri, anchor-syn'in eski proc-macro2 API'si,
-# borsh-derive'ın yeni syn varyantı). Ayrıntılı açıklama için
-# program/luck-game/programs/luck-game/Cargo.toml'a bakınız — iki program
-# aynı araç zinciriyle derlendiği için pinleri ayrı tutmak, birinde
-# düzeltilen bir çakışmanın diğerinde geri gelmesi demek olurdu.
+# Every pin below has exactly the same reasons as in luck-game (the blake3 ->
+# edition2024 chain, anchor-syn's old proc-macro2 API, borsh-derive's newer syn
+# variant). For the detailed explanation see
+# program/luck-game/programs/luck-game/Cargo.toml — because both programs are
+# built with the same toolchain, keeping the pins apart would mean a conflict
+# fixed in one coming back in the other.
 blake3 = "~1.5"
 arrayref = ">=0.3.5, <0.3.10"
 proc-macro2 = "=1.0.81"
 borsh = "=1.5.1"
 borsh-derive = "=1.5.1"
 
-# Testler ZİNCİRE HİÇ BAĞLANMADAN, süreç içinde koşuyor: solana-program-test
-# tüm çalışma zamanını (BanksClient) belleğe kuruyor. Bu, "TGE'de hata
-# vermesin" gereksiniminin karşılanabilmesinin tek pratik yolu — devnet'e
-# deploy edip elle denemek yerine onlarca senaryoyu saniyeler içinde,
-# istendiği kadar tekrar koşturabiliyoruz. Zaman ilerletmek de aynı
-# sebeple mümkün: 91 günlük vesting takvimini beklemeden test edebiliyoruz.
+# The tests run in-process WITHOUT EVER CONNECTING TO THE CHAIN:
+# solana-program-test builds the entire runtime (BanksClient) in memory. That is
+# the only practical way to meet the "nothing may fail at TGE" requirement —
+# instead of deploying to devnet and trying things by hand, we can run dozens of
+# scenarios in seconds, as many times as we like. Advancing time works for the
+# same reason: the 91-day vesting schedule can be tested without waiting for
+# it.
 [dev-dependencies]
 solana-program-test = "~1.18"
 solana-sdk = "~1.18"

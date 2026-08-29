@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// luck-distributor senaryoları
+// luck-distributor scenarios
 // ---------------------------------------------------------------------------
-// TGE günü bu programa 271 milyon token kilitlenecek ve düzeltme şansı
-// olmayacak. Buradaki testler o yüzden "mutlu yol"u değil, esas olarak
-// PARANIN KAYBOLABİLECEĞİ ya da FAZLA DAĞITILABİLECEĞİ durumları hedefliyor:
-// takvimin %100'e ulaşmaması, çifte çekim, başkasının payını çekme, sahte
-// kanıt, yuvarlamadan artan toz.
+// On TGE day 271 million tokens will be locked into this program and there will
+// be no chance to correct it. So the tests here do not target the "happy path"
+// but mainly the situations WHERE MONEY COULD BE LOST or OVER-DISTRIBUTED: a
+// schedule that never reaches 100%, a double claim, claiming somebody else's
+// share, a forged proof, dust left over from rounding.
 mod common;
 
 use common::*;
@@ -14,9 +14,9 @@ use solana_sdk::{
     signer::signers::Signers,
 };
 
-const TGE: i64 = 1_800_000_000; // sabit, gerçekçi bir gelecek zaman damgası
+const TGE: i64 = 1_800_000_000; // a fixed, realistic future timestamp
 
-/// Presale turunu kurar, kasayı fonlar ve (alıcı, miktar) listesini döndürür.
+/// Sets up the presale round, funds the vault and returns the (recipient, amount) list.
 async fn setup_presale(
     ctx: &mut solana_program_test::ProgramTestContext,
     allocations: &[(Keypair, u64)],
@@ -60,8 +60,8 @@ async fn setup_presale(
     (mint, mint_authority, tree, total)
 }
 
-/// Alıcıya işlem ücreti için biraz SOL verir — claim, kendi ATA'sını ve
-/// claim_status hesabını açtığı için kira ödemek zorunda.
+/// Gives the recipient a little SOL for transaction fees — a claim has to pay
+/// rent, because it opens their own ATA and the claim_status account.
 async fn fund(ctx: &mut solana_program_test::ProgramTestContext, who: &Keypair) {
     let ix = solana_sdk::system_instruction::transfer(
         &ctx.payer.pubkey(),
@@ -90,14 +90,14 @@ async fn claim(
 }
 
 // -- 1 ----------------------------------------------------------------------
-/// Takvim tam bittiğinde alıcı payının SON KURUŞUNU alabiliyor mu?
-/// Yuvarlama yüzünden birkaç birim kasada kalsaydı, kimse fark etmeden
-/// tokenler sonsuza kadar kilitlenirdi.
+/// When the schedule ends completely, can the recipient claim the LAST UNIT of
+/// their share? If rounding left a few units in the vault, that money would sit
+/// tokenler sonsuza below kilitlenirdi.
 #[tokio::test]
 async fn full_schedule_pays_exactly_total() {
     let mut ctx = program_test().start_with_context().await;
     let alice = Keypair::new();
-    // 7 ile bölünmeyen, yuvarlamayı zorlayan bir sayı.
+    // A number that does not divide by 7, to force the rounding.
     let amount = 271_950_137u64;
     let allocs = vec![(alice.insecure_clone(), amount)];
     let (mint, _, tree, _) = setup_presale(&mut ctx, &allocs, CLIFF_BPS, PERIOD_BPS, PERIODS).await;
@@ -109,11 +109,11 @@ async fn full_schedule_pays_exactly_total() {
     assert_eq!(token_balance(&mut ctx, &ata(&alice.pubkey(), &mint)).await, amount);
     let (distributor, _) = distributor_pda(&mint, 0);
     let (vault, _) = vault_pda(&distributor);
-    assert_eq!(token_balance(&mut ctx, &vault).await, 0, "kasada toz kalmamalı");
+    assert_eq!(token_balance(&mut ctx, &vault).await, 0, "no dust may be left in the vault");
 }
 
 // -- 2 ----------------------------------------------------------------------
-/// TGE'den önce hiçbir şey çekilemez.
+/// Nothing can be claimed before TGE.
 #[tokio::test]
 async fn nothing_before_tge() {
     let mut ctx = program_test().start_with_context().await;
@@ -127,7 +127,7 @@ async fn nothing_before_tge() {
 }
 
 // -- 3 ----------------------------------------------------------------------
-/// TGE anında tam %9 açılıyor mu?
+/// Does exactly 9% unlock at the moment of TGE?
 #[tokio::test]
 async fn tge_unlocks_nine_percent() {
     let mut ctx = program_test().start_with_context().await;
@@ -143,13 +143,14 @@ async fn tge_unlocks_nine_percent() {
 }
 
 // -- 4 ----------------------------------------------------------------------
-/// Her hafta ayrı ayrı çekmekle sonda tek seferde çekmek AYNI toplamı
-/// vermeli. Aksi halde "erken çeken kaybeder" gibi sinsi bir hata olurdu.
+/// Claiming every week separately must give THE SAME total as claiming once at
+/// the end. Otherwise there would be a sneaky "claiming early loses you money"
+/// bug.
 #[tokio::test]
 async fn weekly_claims_equal_single_final_claim() {
     let amount = 271_950_137u64;
 
-    // (a) her hafta çeken
+    // (a) claiming every week
     let mut ctx = program_test().start_with_context().await;
     let alice = Keypair::new();
     let allocs = vec![(alice.insecure_clone(), amount)];
@@ -161,7 +162,7 @@ async fn weekly_claims_equal_single_final_claim() {
     }
     let weekly_total = token_balance(&mut ctx, &ata(&alice.pubkey(), &mint)).await;
 
-    // (b) yalnızca sonda çeken
+    // (b) claiming only at the end
     let mut ctx2 = program_test().start_with_context().await;
     let bob = Keypair::new();
     let allocs2 = vec![(bob.insecure_clone(), amount)];
@@ -177,7 +178,7 @@ async fn weekly_claims_equal_single_final_claim() {
 }
 
 // -- 5 ----------------------------------------------------------------------
-/// Aynı hafta içinde ikinci kez çekmek boşa çıkmalı (çifte ödeme yok).
+/// A second claim within the same week must come to nothing (no double payment).
 #[tokio::test]
 async fn double_claim_same_week_fails() {
     let mut ctx = program_test().start_with_context().await;
@@ -194,7 +195,7 @@ async fn double_claim_same_week_fails() {
 }
 
 // -- 6 ----------------------------------------------------------------------
-/// Hak ettiğinden fazlasını yazmak kanıtı geçersiz kılmalı.
+/// Writing more than they are owed must invalidate the proof.
 #[tokio::test]
 async fn inflated_amount_rejected() {
     let mut ctx = program_test().start_with_context().await;
@@ -209,7 +210,7 @@ async fn inflated_amount_rejected() {
 }
 
 // -- 7 ----------------------------------------------------------------------
-/// Başkasının payını, onun kanıtıyla kendi cüzdanına çekmeye çalışmak.
+/// Trying to claim somebody else's share into your own wallet with their proof.
 #[tokio::test]
 async fn cannot_claim_someone_elses_allocation() {
     let mut ctx = program_test().start_with_context().await;
@@ -223,12 +224,12 @@ async fn cannot_claim_someone_elses_allocation() {
     fund(&mut ctx, &mallory).await;
 
     set_time(&mut ctx, TGE).await;
-    // Alice'in kanıtı + Alice'in miktarı, ama imzayı Mallory atıyor.
+    // Alice's proof and Alice's amount, but Mallory signs.
     assert!(claim(&mut ctx, &mallory, &mint, 5_000_000, tree.proof(0)).await.is_err());
 }
 
 // -- 8 ----------------------------------------------------------------------
-/// Uydurma kanıt.
+/// A made-up proof.
 #[tokio::test]
 async fn forged_proof_rejected() {
     let mut ctx = program_test().start_with_context().await;
@@ -247,14 +248,14 @@ async fn forged_proof_rejected() {
 }
 
 // -- 9 ----------------------------------------------------------------------
-/// Çekiliş turu: vesting yok, tamamı anında.
+/// A raffle round: no vesting, everything at once.
 #[tokio::test]
 async fn raffle_round_pays_in_full_immediately() {
     let mut ctx = program_test().start_with_context().await;
     let winner = Keypair::new();
     let prize = 1_110_000u64;
     let allocs = vec![(winner.insecure_clone(), prize)];
-    // cliff %100, kademe yok — çekiliş turu bundan ibaret.
+    // A 100% cliff and no tiers — that is all a raffle round is.
     let (mint, _, tree, _) = setup_presale(&mut ctx, &allocs, 10_000, 0, 0).await;
     fund(&mut ctx, &winner).await;
 
@@ -264,9 +265,9 @@ async fn raffle_round_pays_in_full_immediately() {
 }
 
 // -- 10 ---------------------------------------------------------------------
-/// %100'e ulaşmayan takvim baştan reddedilmeli. Bu kontrol olmasaydı
-/// %7 × 14 = %98 gibi bir yapılandırma sessizce kabul edilir ve alıcıların
-/// son %2'si sonsuza kadar kilitli kalırdı.
+/// A schedule that never reaches 100% must be rejected up front. Without this
+/// check, a configuration such as 7% x 14 = 98% would be accepted silently and
+/// the recipients' last 2% would stay locked forever.
 #[tokio::test]
 async fn incomplete_schedule_rejected() {
     let mut ctx = program_test().start_with_context().await;
@@ -275,7 +276,7 @@ async fn incomplete_schedule_rejected() {
     let alice = Keypair::new();
     let tree = MerkleTree::new(vec![leaf_hash(&alice.pubkey(), 1_000)]);
 
-    // %7 × 14 = %98 — eksik.
+    // 7% x 14 = 98% — short.
     let payer = ctx.payer.pubkey();
     let res = send(
         &mut ctx,
@@ -298,12 +299,12 @@ async fn incomplete_schedule_rejected() {
 }
 
 // -- 11 ---------------------------------------------------------------------
-/// Çok alıcılı tur: herkes payını çektiğinde kasa TAM olarak boşalmalı —
+/// A round with many recipients: once everyone has claimed, the vault must empty EXACTLY —
 /// ne eksik ne fazla.
 #[tokio::test]
 async fn many_buyers_drain_vault_exactly() {
     let mut ctx = program_test().start_with_context().await;
-    // Kasıtlı olarak düzensiz, 7'ye bölünmeyen miktarlar.
+    // Deliberately irregular amounts that do not divide by 7.
     let amounts = [1u64, 2, 333, 4_999, 70_007, 271_950_137, 999_999_999];
     let buyers: Vec<(Keypair, u64)> =
         amounts.iter().map(|a| (Keypair::new(), *a)).collect();
@@ -319,20 +320,21 @@ async fn many_buyers_drain_vault_exactly() {
 
     let (distributor, _) = distributor_pda(&mint, 0);
     let (vault, _) = vault_pda(&distributor);
-    assert_eq!(token_balance(&mut ctx, &vault).await, 0, "kasa tam boşalmalı");
+    assert_eq!(token_balance(&mut ctx, &vault).await, 0, "the vault must empty exactly");
     assert_eq!(total, amounts.iter().sum::<u64>());
 }
 
 // -- 12 ---------------------------------------------------------------------
-/// JAVASCRIPT ÜRETİCİSİ İLE RUST DOĞRULAYICISI AYNI AĞACI Mİ ÜRETİYOR?
+/// DO THE JAVASCRIPT BUILDER AND THE RUST VERIFIER PRODUCE THE SAME TREE?
 ///
-/// Kanıtları siteye `scripts/build-merkle.mjs` üretecek, doğrulamayı ise bu
-/// program yapacak. İki uygulama arasında tek baytlık bir fark bile TGE günü
-/// HERKESİN kanıtının reddedilmesi demek — ve o noktada düzeltme şansı yok
-/// (kök değiştirilemiyor). Bu yüzden sabit girdilerle üretilmiş kökü buraya
-/// çakıyoruz: iki taraftan biri değişirse test düşer, üretimde değil.
+/// `scripts/build-merkle.mjs` will produce the proofs for the site, and this
+/// program will verify them. A single byte of difference between the two
+/// implementations means EVERYONE's proof is rejected on TGE day — and at that
+/// point there is no chance to fix it (the root cannot be changed). So the root
+/// produced from fixed inputs is pinned here: if either side changes, the test
+/// fails rather than production.
 ///
-/// Beklenen değer `node scripts/build-merkle.mjs --selftest` çıktısıdır.
+/// The expected value is the output of `node scripts/build-merkle.mjs --selftest`.
 #[tokio::test]
 async fn merkle_matches_javascript_builder() {
     use std::str::FromStr;
@@ -359,18 +361,18 @@ async fn merkle_matches_javascript_builder() {
 
     assert_eq!(
         root_hex, EXPECTED_ROOT_HEX,
-        "JS üreticisi ile Rust doğrulayıcısı farklı kök üretiyor — \
-         scripts/build-merkle.mjs ile lib.rs'teki hash mantığı ayrışmış olabilir"
+        "the JS builder and the Rust verifier produce different roots — \
+         the hash logic in scripts/build-merkle.mjs and lib.rs may have drifted apart"
     );
 }
 
 // -- 13 ---------------------------------------------------------------------
-/// Üretici ile doğrulayıcı arasındaki UÇTAN UCA kontrol.
+/// The END-TO-END check between the builder and the verifier.
 ///
-/// Test 12 yalnızca köklerin eşitliğine bakıyordu; bu test bir adım öteye
-/// gidiyor: `scripts/build-merkle.mjs`'in ürettiği GERÇEK kanıt baytlarını,
-/// programın KENDİ `verify_proof` fonksiyonuna veriyor. Yani üretimde
-/// çalışacak iki kod parçası birbirine burada, TGE'den önce bağlanıyor.
+/// Test 12 only compared the roots; this test goes one step further: it hands
+/// the REAL proof bytes produced by `scripts/build-merkle.mjs` to the program's
+/// OWN `verify_proof` function. That is, the two pieces of code that will run in
+/// production are wired together here, before TGE.
 #[tokio::test]
 async fn program_accepts_javascript_generated_proof() {
     use std::str::FromStr;
@@ -383,7 +385,7 @@ async fn program_accepts_javascript_generated_proof() {
         out
     }
 
-    // node scripts/build-merkle.mjs --selftest çıktısından, index 1.
+    // From the output of node scripts/build-merkle.mjs --selftest, index 1.
     let claimant =
         solana_sdk::pubkey::Pubkey::from_str("2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9")
             .unwrap();
@@ -395,18 +397,18 @@ async fn program_accepts_javascript_generated_proof() {
     ];
     let root = unhex("abff8a1bd922224e6f527248403472af927f30ba5dd3f30769631674efaa039f");
 
-    // Programın KENDİ yaprak hash'i ve KENDİ doğrulayıcısı.
+    // The program's OWN leaf hash and its OWN verifier.
     let leaf = luck_distributor::leaf_hash(&claimant, amount);
     assert!(
         luck_distributor::verify_proof(&proof, root, leaf),
-        "program, JS üreticisinin kanıtını reddetti — iki taraf ayrışmış"
+        "the program rejected the JS builder's proof — the two sides have drifted apart"
     );
 
-    // Miktar bir birim bile oynarsa kanıt geçersiz olmalı.
+    // If the amount moves by even one unit, the proof must be invalid.
     let tampered = luck_distributor::leaf_hash(&claimant, amount + 1);
     assert!(!luck_distributor::verify_proof(&proof, root, tampered));
 
-    // Başka bir adres için de geçersiz olmalı.
+    // It must be invalid for another address too.
     let other = solana_sdk::pubkey::Pubkey::new_unique();
     assert!(!luck_distributor::verify_proof(
         &proof,
@@ -416,19 +418,19 @@ async fn program_accepts_javascript_generated_proof() {
 }
 
 // ---------------------------------------------------------------------------
-// 14. ABI altın vektörü — istemci ile programın aynı baytları konuşması
+// 14. The ABI golden vector — the client and the program speaking the same bytes
 // ---------------------------------------------------------------------------
-// Claim talimatını SİTE (TypeScript) kuruyor, doğrulamayı PROGRAM (Rust)
-// yapıyor. Aradaki tek baytlık bir fark — yanlış discriminator, ters hesap
-// sırası, hatalı uzunluk alanı — TGE günü HERKESİN claim'inin reddedilmesi
-// demek. O noktada düzeltme şansı sınırlı ve itibar zaten gitmiş olur.
+// THE SITE (TypeScript) builds the claim instruction and THE PROGRAM (Rust)
+// verifies it. A single byte of difference between them — a wrong
+// discriminator, a swapped account order, a bad length field — means EVERYONE's
+// claim is rejected on TGE day. At that point the chance to fix it is limited
+// and the reputation is already gone.
 //
-// Bu test, programın kendi ürettiği talimat baytlarını sabit bir vektöre
-// bağlıyor. Aynı vektör scripts/check-abi.mjs içinde istemci
-// tarafından yeniden üretiliyor. İkisi ayrışırsa TGE'den önce, burada
-// yakalanır.
+// This test pins the instruction bytes the program itself produces to a fixed
+// vector. The same vector is reproduced on the client side inside
+// scripts/check-abi.mjs. If the two drift apart, it is caught here, before TGE.
 #[test]
-fn claim_talimat_baytlari_altin_vektore_uyuyor() {
+fn claim_instruction_bytes_match_golden_vector() {
     use anchor_lang::InstructionData;
 
     let proof: Vec<[u8; 32]> = vec![[0x11u8; 32], [0x22u8; 32]];
@@ -439,38 +441,39 @@ fn claim_talimat_baytlari_altin_vektore_uyuyor() {
     .data();
 
     let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
-    println!("claim ix baytları: {hex}");
+    println!("claim ix bytes: {hex}");
 
     // discriminator = sha256("global:claim")[0..8]
     assert_eq!(
         &hex[0..16],
         "3ec6d6c1d59f6cd2",
-        "claim discriminator değişti — istemci ile program artık farklı \
-         talimat çağırıyor"
+        "the claim discriminator changed — the client and the program now call \
+         different instructions"
     );
-    // u64 miktar (little-endian) + Vec uzunluğu (u32 LE) + 2 × 32 bayt düğüm
-    assert_eq!(data.len(), 8 + 8 + 4 + 64, "talimat verisi uzunluğu değişti");
+    // The u64 amount (little-endian) + the Vec length (u32 LE) + 2 x 32-byte nodes
+    assert_eq!(data.len(), 8 + 8 + 4 + 64, "the instruction data length changed");
     assert_eq!(
         &hex[16..32],
         "00e0aa8a1529c603",
-        "miktar kodlaması değişti (u64 little-endian olmalı)"
+        "the amount encoding changed (it must be u64 little-endian)"
     );
-    assert_eq!(&hex[32..40], "02000000", "kanıt uzunluğu u32 little-endian olmalı");
-    assert!(hex.ends_with(&"22".repeat(32)), "kanıt düğümleri sırası değişti");
+    assert_eq!(&hex[32..40], "02000000", "the proof length must be u32 little-endian");
+    assert!(hex.ends_with(&"22".repeat(32)), "the order of the proof nodes changed");
 }
 
 // ---------------------------------------------------------------------------
-// 15. initialize ABI altın vektörü
+// 15. The initialize ABI golden vector
 // ---------------------------------------------------------------------------
-// Turu açan ve tokenleri KİLİTLEYEN talimat bu. Yanlış kodlanırsa iki kötü
-// sonuçtan biri çıkar: ya işlem reddedilir (fark ederiz), ya da yanlış bir
-// takvim/kök sessizce zincire yazılır — ve program güncelleme talimatı
-// içermediği için o noktada geri dönüş yok.
+// This is the instruction that opens the round and LOCKS the tokens. If it is
+// encoded wrongly, one of two bad outcomes follows: either the transaction is
+// rejected (we notice), or a wrong schedule/root is silently written to the
+// chain — and because the program contains no update instruction, there is no
+// way back from that point.
 //
-// Aynı vektör scripts/check-abi.mjs içinde, TGE günü çalışacak GERÇEK
-// script çalıştırılarak yeniden üretiliyor.
+// The same vector is reproduced inside scripts/check-abi.mjs by running the
+// REAL script that will run on TGE day.
 #[test]
-fn initialize_talimat_baytlari_altin_vektore_uyuyor() {
+fn initialize_instruction_bytes_match_golden_vector() {
     use anchor_lang::InstructionData;
 
     let merkle_root = [
@@ -491,14 +494,14 @@ fn initialize_talimat_baytlari_altin_vektore_uyuyor() {
     .data();
 
     let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
-    println!("initialize ix baytları: {hex}");
+    println!("initialize ix bytes: {hex}");
 
     assert_eq!(
         &hex[0..16],
         "afaf6d1f0d989bed",
-        "initialize discriminator değişti"
+        "the initialize discriminator changed"
     );
-    // 8 disc + 8 id + 32 kök + 8 toplam + 8 zaman + 2 + 2 + 8 + 2
+    // 8 disc + 8 id + 32 root + 8 total + 8 time + 2 + 2 + 8 + 2
     assert_eq!(data.len(), 8 + 8 + 32 + 8 + 8 + 2 + 2 + 8 + 2);
     assert_eq!(
         hex,
@@ -511,30 +514,30 @@ fn initialize_talimat_baytlari_altin_vektore_uyuyor() {
          bc02\
          803a090000000000\
          0d00",
-        "initialize alan kodlaması değişti"
+        "the initialize field encoding changed"
     );
 }
 
 // ---------------------------------------------------------------------------
-// 16. Açılma takvimi altın vektörü — arayüzle programın aynı sayıyı vermesi
+// 16. The unlock-schedule golden vector — the interface and the program agreeing
 // ---------------------------------------------------------------------------
-// `unlocked_amount` formülü İKİ KEZ yazılmış durumda: burada (Rust) ve
-// arayüzde (src/lib/luckClaim.ts). Bu bilinçli — arayüzün zincire sormadan
-// doğru sayıyı gösterebilmesi gerekiyor. Ama ikisi ayrışırsa kullanıcı
-// "çekilebilir" görüp imza atar ve işlem reddedilir; ya da tersine, hak
-// ettiği tutarı hiç göremez.
+// The `unlocked_amount` formula is written TWICE: here (Rust) and in the
+// interface (src/lib/luckClaim.ts). That is deliberate — the interface has to be
+// able to show the right number without asking the chain. But if the two drift
+// apart, a user sees something as "claimable", signs, and the transaction is
+// rejected; or conversely never sees the amount they are owed.
 //
-// Aşağıdaki tablo scripts/check-abi.mjs içinde de aynen bulunuyor ve orada
-// arayüzün fonksiyonuyla üretiliyor.
+// The table below also appears verbatim inside scripts/check-abi.mjs, where it
+// is produced with the interface's own function.
 #[test]
-fn acilma_takvimi_altin_vektore_uyuyor() {
+fn unlock_schedule_matches_golden_vector() {
     use luck_distributor::Distributor;
     use solana_sdk::pubkey::Pubkey;
 
-    const BASLANGIC: i64 = 1_788_264_000; // 2026-09-01T12:00:00Z
-    const HAFTA: i64 = 604_800;
-    // Presale payı: 271.950.000 $LUCK, 9 ondalık.
-    const TOPLAM: u64 = 271_950_000_000_000_000;
+    const START: i64 = 1_788_264_000; // 2026-09-01T12:00:00Z
+    const WEEK: i64 = 604_800;
+    // The presale share: 271,950,000 $LUCK at 9 decimals.
+    const TOTAL: u64 = 271_950_000_000_000_000;
 
     let d = Distributor {
         id: 0,
@@ -542,90 +545,91 @@ fn acilma_takvimi_altin_vektore_uyuyor() {
         mint: Pubkey::default(),
         vault: Pubkey::default(),
         merkle_root: [1u8; 32],
-        total_allocated: TOPLAM,
+        total_allocated: TOTAL,
         total_claimed: 0,
-        start_ts: BASLANGIC,
+        start_ts: START,
         cliff_bps: 900,
         period_bps: 700,
-        period_seconds: HAFTA,
+        period_seconds: WEEK,
         periods: 13,
         bump: 255,
     };
 
-    // (saniye, beklenen açılmış miktar)
-    let vektor: &[(i64, u64)] = &[
-        (BASLANGIC - 1, 0),                          // TGE'den 1 sn önce
-        (BASLANGIC, 24_475_500_000_000_000),         // TGE: %9
-        (BASLANGIC + HAFTA - 1, 24_475_500_000_000_000), // 1. haftanın son sn'si
-        (BASLANGIC + HAFTA, 43_512_000_000_000_000), // 1. hafta: %16
-        (BASLANGIC + 6 * HAFTA, 138_694_500_000_000_000), // 6. hafta: %51
-        (BASLANGIC + 13 * HAFTA, TOPLAM),            // 13. hafta: %100
-        (BASLANGIC + 99 * HAFTA, TOPLAM),            // çok sonra: hâlâ %100
+    // (seconds, the expected unlocked amount)
+    let vector: &[(i64, u64)] = &[
+        (START - 1, 0),                          // 1 s before TGE
+        (START, 24_475_500_000_000_000),         // TGE: 9%
+        (START + WEEK - 1, 24_475_500_000_000_000), // the last second of week 1
+        (START + WEEK, 43_512_000_000_000_000), // week 1: 16%
+        (START + 6 * WEEK, 138_694_500_000_000_000), // week 6: 51%
+        (START + 13 * WEEK, TOTAL),            // week 13: 100%
+        (START + 99 * WEEK, TOTAL),            // long afterwards: still 100%
     ];
 
-    for (t, beklenen) in vektor {
-        let gercek = luck_distributor::unlocked_amount(&d, TOPLAM, *t).unwrap();
+    for (t, expected) in vector {
+        let actual = luck_distributor::unlocked_amount(&d, TOTAL, *t).unwrap();
         assert_eq!(
-            gercek, *beklenen,
-            "t = başlangıç + {} sn: beklenen {beklenen}, gelen {gercek}",
-            t - BASLANGIC
+            actual, *expected,
+            "t = start + {} s: expected {expected}, got {actual}",
+            t - START
         );
     }
 
-    // YUVARLAMA YÖNÜ. Yukarıdaki vektörde her adım tam bölündüğü için
-    // yuvarlamanın yönünü hiç sınamıyor — bu körlük, formülü bilerek yukarı
-    // yuvarlayacak şekilde bozup testin GEÇMESİYLE ortaya çıktı.
+    // THE ROUNDING DIRECTION. Because every step in the vector above divides
+    // exactly, it never tests the direction of the rounding — that blind spot came
+    // to light when the formula was deliberately broken to round up and the test
+    // STILL PASSED.
     //
-    // Yön kritik: yukarı yuvarlansaydı tek tek payların toplamı
-    // total_allocated'ı aşabilir ve SON ALICININ çekimi kasada para
-    // kalmadığı için düşerdi. Aşağı yuvarlamada en kötü ihtimalle birkaç
-    // birim kasada kalır.
-    let bolunmeyen: u64 = 1_000_000_007;
-    for (bps_hedefi, beklenen) in [(900u64, 90_000_000u64), (1_600, 160_000_001), (5_100, 510_000_003)] {
-        let kademe = ((bps_hedefi - 900) / 700) as i64;
-        let gercek =
-            luck_distributor::unlocked_amount(&d, bolunmeyen, BASLANGIC + kademe * HAFTA).unwrap();
+    // The direction is critical: rounding up, the sum of the individual shares
+    // could exceed total_allocated and THE LAST RECIPIENT's claim would fail
+    // because the vault had run out. Rounding down, at worst a few units stay in
+    // the vault.
+    let indivisible: u64 = 1_000_000_007;
+    for (bps_target, expected) in [(900u64, 90_000_000u64), (1_600, 160_000_001), (5_100, 510_000_003)] {
+        let tier = ((bps_target - 900) / 700) as i64;
+        let actual =
+            luck_distributor::unlocked_amount(&d, indivisible, START + tier * WEEK).unwrap();
         assert_eq!(
-            gercek, beklenen,
-            "bölünmeyen miktarda yuvarlama yönü değişmiş (bps {bps_hedefi})"
+            actual, expected,
+            "the rounding direction changed on an indivisible amount (bps {bps_target})"
         );
     }
 
-    // Takvimin sonunda kasada TOZ KALMAMALI. Yuvarlama aşağı yapıldığı için
-    // ara adımlarda birkaç birim eksik kalabilir; sonda tam kapanması,
-    // "geri çekme talimatı yok" tasarımının doğru çalışmasının şartı.
+    // At the end of the schedule NO DUST may be left in the vault. Because the
+    // rounding is down, intermediate steps can fall a few units short; closing
+    // exactly at the end is what makes the "no withdraw instruction" design work.
     assert_eq!(
-        luck_distributor::unlocked_amount(&d, TOPLAM, BASLANGIC + 13 * HAFTA).unwrap(),
-        TOPLAM
+        luck_distributor::unlocked_amount(&d, TOTAL, START + 13 * WEEK).unwrap(),
+        TOTAL
     );
 }
 
 // ---------------------------------------------------------------------------
-// HESAPLARIN BAYT DÜZENİ — Claim sekmesinin okuduğu her sayı buradan geliyor
+// THE ACCOUNTS' BYTE LAYOUT — every number the Claim tab reads comes from here
 // ---------------------------------------------------------------------------
-// Claim sekmesi zincirdeki Distributor hesabını IDL kullanmadan, sabit
-// ofsetlerle okuyor (fetchDistributor). Struct'a araya bir alan eklemek
-// yeter: TypeScript aynı ofsetlerden okumaya devam eder ve HİÇBİR HATA
-// VERMEDEN yanlış değerleri gösterir —
-//   * merkle_root kayarsa herkese "listede değilsin" der,
-//   * total_allocated kayarsa yüzdeler saçmalar,
-//   * start_ts kayarsa takvim yanlış çıkar ve "henüz başlamadı" ya da
-//     "hepsi açıldı" der.
-// Hepsi TGE gününde, düzeltme şansının en dar olduğu anda.
+// The Claim tab reads the on-chain Distributor account with fixed offsets,
+// without an IDL (fetchDistributor). Inserting one field into the struct is
+// enough: TypeScript keeps reading from the same offsets and shows wrong values
+// WITHOUT ANY ERROR —
+//   * if merkle_root shifts, everyone is told "you are not on the list",
+//   * if total_allocated shifts, the percentages are nonsense,
+//   * if start_ts shifts, the schedule comes out wrong and it says either "not
+//     started yet" or "everything has unlocked".
+// All of it on TGE day, at the moment when the chance to fix it is narrowest.
 //
-// Vektörler programın çıktısı kopyalanarak değil, Anchor'ın kurallarından
-// bağımsız türetildi:
-//   ayırıcı = sha256("account:<İsim>")[0..8]
-//   gövde   = Borsh: alanlar sırayla, sayılar little-endian
-// Aynı baytlar scripts/check-abi.mjs içinde SİTENİN GERÇEK okuyucularına
-// verilip geri okunuyor.
+// The vectors were derived independently of Anchor's rules rather than copied
+// from the program's output:
+//   the discriminator = sha256("account:<Name>")[0..8]
+//   the body          = Borsh: fields in order, numbers little-endian
+// The same bytes are handed to THE SITE'S REAL readers inside
+// scripts/check-abi.mjs and read back.
 #[test]
-fn hesap_baytlari_altin_vektore_uyuyor() {
+fn account_bytes_match_the_golden_vector() {
     use anchor_lang::{AnchorSerialize, Discriminator};
 
     let hex = |d: &[u8]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
 
-    let dagitici = luck_distributor::Distributor {
+    let distributor_out = luck_distributor::Distributor {
         id: 7,
         authority: anchor_lang::prelude::Pubkey::new_from_array([1u8; 32]),
         mint: anchor_lang::prelude::Pubkey::new_from_array([2u8; 32]),
@@ -640,11 +644,11 @@ fn hesap_baytlari_altin_vektore_uyuyor() {
         periods: 13,
         bump: 254,
     };
-    let mut baytlar = luck_distributor::Distributor::DISCRIMINATOR.to_vec();
-    dagitici.serialize(&mut baytlar).unwrap();
-    println!("Distributor : {}", hex(&baytlar));
+    let mut bytes = luck_distributor::Distributor::DISCRIMINATOR.to_vec();
+    distributor_out.serialize(&mut bytes).unwrap();
+    println!("Distributor : {}", hex(&bytes));
     assert_eq!(
-        hex(&baytlar),
+        hex(&bytes),
         "5a5ad99306208704\
          0700000000000000\
          0101010101010101010101010101010101010101010101010101010101010101\
@@ -659,21 +663,21 @@ fn hesap_baytlari_altin_vektore_uyuyor() {
          803a090000000000\
          0d00\
          fe",
-        "Distributor hesabının bayt düzeni değişti — Claim sekmesi YANLIŞ okur"
+        "the Distributor account's byte layout changed — the Claim tab would read it WRONG"
     );
 
-    let durum = luck_distributor::ClaimStatus {
+    let state = luck_distributor::ClaimStatus {
         claimed: 4_725_000_000_000,
         bump: 253,
     };
-    let mut baytlar = luck_distributor::ClaimStatus::DISCRIMINATOR.to_vec();
-    durum.serialize(&mut baytlar).unwrap();
-    println!("ClaimStatus : {}", hex(&baytlar));
+    let mut bytes = luck_distributor::ClaimStatus::DISCRIMINATOR.to_vec();
+    state.serialize(&mut bytes).unwrap();
+    println!("ClaimStatus : {}", hex(&bytes));
     assert_eq!(
-        hex(&baytlar),
+        hex(&bytes),
         "16b7f99df75f9660\
          0052f21f4c040000\
          fd",
-        "ClaimStatus hesabının bayt düzeni değişti — çekilen tutar YANLIŞ okunur"
+        "the ClaimStatus account's byte layout changed — the claimed amount would be read WRONG"
     );
 }

@@ -693,7 +693,7 @@ for (const v of oyunVektorleri) {
   check('dice vector: the tier', Number(digest.readBigUInt64LE(8) % 10_000n), 4_556)
 
   // Does the description in the document use the same hash function as the code.
-  const guvenlik = readFileSync(`${repoRoot}GUVENLIK.md`, 'utf8')
+  const guvenlik = readFileSync(`${repoRoot}SECURITY.md`, 'utf8')
   const rust = readFileSync(
     `${repoRoot}program/luck-game/programs/luck-game/src/lib.rs`,
     'utf8',

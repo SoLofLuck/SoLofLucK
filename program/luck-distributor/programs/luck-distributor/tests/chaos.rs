@@ -1,40 +1,44 @@
 // ---------------------------------------------------------------------------
-// KAOS TESTİ — dağıtıcı
+// CHAOS TEST — the distributor
 // ---------------------------------------------------------------------------
-// Presale'in TÜM tokenları bu programın kasasında duruyor. Oyundaki bir hata
-// bir turluk ödül kadar; buradaki bir hata herkesin payı kadar. O yüzden
-// rastgele senaryo taraması burada daha da gerekli.
+// ALL of the presale's tokens sit in this program's vault. A bug in the game
+// costs one round's prize; a bug here costs everyone's share. So a random
+// scenario sweep matters even more here.
 //
-// Yöntem oyun tarafındakiyle aynı: rastgele alıcı × rastgele eylem ×
-// rastgele zaman sıçraması, HER İŞLEMDEN SONRA değişmez kontrolü, sabit
-// tohum (düşen bir koşu birebir tekrar üretilebilsin).
+// The method is the same as on the game side: random recipient x random action
+// x random time jump, an invariant check AFTER EVERY TRANSACTION, and a fixed
+// seed (so a failing run can be reproduced exactly).
 //
-// DEĞİŞMEZLER:
-//   E1. Token korunumu — kasa + tüm alıcı hesapları = basılan toplam.
-//   E2. Kimse hakkından fazlasını alamaz.
-//   E3. Çekilen tutar hiç azalmaz (ClaimStatus geri saymaz).
-//   E4. ClaimStatus.claimed ile alıcının gerçek bakiyesi birebir eşit.
-//   E5. distributor.total_claimed = tüm ClaimStatus.claimed toplamı.
-//   E6. Çekilen, O ANDA açılmış olan miktarı geçemez — takvim BAĞIMSIZ
-//       hesaplanıyor (programın kendi fonksiyonu çağrılmıyor).
-//   E7. Yanlış miktarla ya da BAŞKASININ kanıtıyla çekim REDDEDİLMELİ.
-//   E8. Takvim bittiğinde herkes payının TAMAMINI çekebilmeli ve kasada
-//       toz kalmamalı.
+// THE INVARIANTS:
+//   E1. Token conservation — the vault plus every recipient account = the total
+//       minted.
+//   E2. Nobody can take more than they are owed.
+//   E3. The claimed amount never decreases (ClaimStatus does not count back).
+//   E4. ClaimStatus.claimed and the recipient's real balance are exactly equal.
+//   E5. distributor.total_claimed = the sum of every ClaimStatus.claimed.
+//   E6. The claimed amount cannot exceed what has unlocked AT THAT MOMENT — the
+//       schedule is computed INDEPENDENTLY (the program's own function is not
+//       called).
+//   E7. A claim with the wrong amount or with SOMEBODY ELSE'S proof MUST BE
+//       REJECTED.
+//   E8. Once the schedule ends everyone must be able to claim their share IN
+//       FULL, and no dust may be left in the vault.
 //
-// E6'daki bağımsızlık kasıtlı: takvimi programın `unlocked_amount`'ıyla
-// doğrulasaydım, test programın kendisiyle değil kendi kopyasıyla
-// uyuştuğunu kanıtlardı. Aynı hatayı iki yerde yaparsam ikisi de yeşil kalır.
+// E6's independence is deliberate: had I verified the schedule with the
+// program's own `unlocked_amount`, the test would prove that the program agrees
+// with my copy rather than with itself. If I make the same mistake in both, both
+// stay green.
 
 mod common;
 
 use common::*;
 use solana_sdk::signature::{Keypair, Signer};
 
-/// xorshift64* — deterministik.
-struct Zar(u64);
-impl Zar {
-    fn yeni(tohum: u64) -> Self {
-        Zar(if tohum == 0 { 0x9E3779B97F4A7C15 } else { tohum })
+/// xorshift64* — deterministic.
+struct Rng(u64);
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Rng(if seed == 0 { 0x9E3779B97F4A7C15 } else { seed })
     }
     fn next(&mut self) -> u64 {
         let mut x = self.0;
@@ -44,25 +48,26 @@ impl Zar {
         self.0 = x;
         x.wrapping_mul(0x2545F4914F6CDD1D)
     }
-    fn kadar(&mut self, n: u64) -> u64 {
+    fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
 }
 
-/// Takvimin BAĞIMSIZ hesabı — programın `unlocked_amount`'ı çağrılmıyor.
+/// The schedule computed INDEPENDENTLY — the program's `unlocked_amount` is not
+/// called.
 ///
-/// Kural: başlangıçtan önce sıfır; sonra cliff + (geçen tam dönem sayısı ×
-/// dönem payı), %100'de tavanlanmış. Yuvarlama AŞAĞI — yukarı yuvarlansaydı
-/// tek tek payların toplamı toplam tahsisi aşabilir ve son alıcının çekimi
-/// kasada para kalmadığı için düşerdi.
-fn acilmis(toplam: u64, simdi: i64, baslangic: i64) -> u64 {
-    if simdi < baslangic {
+/// The rule: zero before the start; then cliff + (whole periods elapsed x the
+/// period share), capped at 100%. Rounding is DOWN — rounding up could make the
+/// sum of the individual shares exceed the total allocation, and the last
+/// recipient's claim would fail because the vault had run out.
+fn unlocked(total: u64, now: i64, start: i64) -> u64 {
+    if now < start {
         return 0;
     }
-    let gecen = (simdi - baslangic) as u64;
-    let donem = (gecen / WEEK as u64).min(PERIODS as u64);
-    let bps = (CLIFF_BPS as u64 + donem * PERIOD_BPS as u64).min(10_000);
-    ((toplam as u128 * bps as u128) / 10_000u128) as u64
+    let elapsed = (now - start) as u64;
+    let period = (elapsed / WEEK as u64).min(PERIODS as u64);
+    let bps = (CLIFF_BPS as u64 + period * PERIOD_BPS as u64).min(10_000);
+    ((total as u128 * bps as u128) / 10_000u128) as u64
 }
 
 struct Alici {
@@ -71,160 +76,160 @@ struct Alici {
     kanit: Vec<[u8; 32]>,
 }
 
-async fn kaos_kos(tohum: u64, adim_sayisi: u32) {
-    let mut zar = Zar::yeni(tohum);
+async fn run_chaos(seed: u64, step_count: u32) {
+    let mut rng = Rng::new(seed);
     let mut ctx = program_test().start_with_context().await;
     let payer = ctx.payer.pubkey();
     let payer_kp = ctx.payer.insecure_clone();
 
-    // Alıcı payları KASITLI OLARAK ÇEŞİTLİ: bazıları 10.000'e tam bölünüyor,
-    // bazıları bölünmüyor. Bölünmeyenler yuvarlama yönünü ortaya çıkarıyor —
-    // hepsi tam bölünseydi yanlış yönde yuvarlayan bir sürüm de testi
-    // geçerdi (bu, daha önce başka bir denetimde tam olarak yaşandı).
-    let ham: Vec<u64> = (0..5)
+    // The recipient shares are DELIBERATELY VARIED: some divide exactly by 10,000
+    // and some do not. The indivisible ones expose the rounding direction — had
+    // they all divided exactly, a version that rounded the wrong way would also
+    // have passed (which is exactly what happened in another audit before).
+    let raw: Vec<u64> = (0..5)
         .map(|i| match i {
             0 => 7_000_000_000_000,
             1 => 17_500_000_000_000,
-            2 => 1_000_000_007, // 10.000'e bölünmüyor
+            2 => 1_000_000_007, // does not divide by 10,000
             3 => 28_000_000_000_001,
-            _ => 3,             // aşırı küçük: cliff bile 0'a yuvarlanır
+            _ => 3,             // extremely small: even the cliff rounds to 0
         })
         .collect();
 
-    let mut aliciler: Vec<Alici> = Vec::new();
-    let mut yapraklar = Vec::new();
+    let mut recipients: Vec<Alici> = Vec::new();
+    let mut leaves_out = Vec::new();
     let mut kps = Vec::new();
-    for hak in &ham {
+    for hak in &raw {
         let kp = Keypair::new();
-        yapraklar.push(leaf_hash(&kp.pubkey(), *hak));
+        leaves_out.push(leaf_hash(&kp.pubkey(), *hak));
         kps.push((kp, *hak));
     }
-    let agac = MerkleTree::new(yapraklar);
+    let tree_out = MerkleTree::new(leaves_out);
     for (i, (kp, hak)) in kps.into_iter().enumerate() {
-        aliciler.push(Alici {
+        recipients.push(Alici {
             kp,
             hak,
-            kanit: agac.proof(i),
+            kanit: tree_out.proof(i),
         });
     }
-    let toplam: u64 = ham.iter().sum();
+    let total: u64 = raw.iter().sum();
 
-    // Alıcıların işlem ücreti ödeyebilmesi için SOL gerekiyor.
-    for a in &aliciler {
+    // The recipients need SOL so they can pay transaction fees.
+    for a in &recipients {
         let ix = solana_sdk::system_instruction::transfer(&payer, &a.kp.pubkey(), 100_000_000);
         send(&mut ctx, &[ix], &[]).await.unwrap();
     }
 
     let mint = create_mint(&mut ctx, &payer).await;
-    let (dagitici, _) = distributor_pda(&mint, 0);
-    let (kasa, _) = vault_pda(&dagitici);
+    let (distributor_out, _) = distributor_pda(&mint, 0);
+    let (vault, _) = vault_pda(&distributor_out);
 
-    // Takvim ŞİMDİDEN biraz sonra başlıyor ki "henüz açılmadı" dalı da
-    // sınansın.
-    let simdi_ts = ctx
+    // The schedule starts a little after NOW, so that the "not unlocked yet"
+    // branch is exercised too.
+    let now_ts = ctx
         .banks_client
         .get_sysvar::<solana_sdk::sysvar::clock::Clock>()
         .await
         .unwrap()
         .unix_timestamp;
-    let baslangic = simdi_ts + WEEK / 2;
+    let start = now_ts + WEEK / 2;
 
     let ix = initialize_ix(
-        &payer, &mint, 0, agac.root(), toplam, baslangic,
+        &payer, &mint, 0, tree_out.root(), total, start,
         CLIFF_BPS, PERIOD_BPS, WEEK, PERIODS,
     );
     send(&mut ctx, &[ix], &[]).await.unwrap();
-    mint_to(&mut ctx, &mint, &kasa, &payer_kp, toplam).await;
+    mint_to(&mut ctx, &mint, &vault, &payer_kp, total).await;
 
-    let mut zaman = simdi_ts;
-    let mut basarili_cekim = 0u32;
-    let mut reddedilen_sahte = 0u32;
+    let mut time = now_ts;
+    let mut successful_claims = 0u32;
+    let mut rejected_forgeries = 0u32;
 
-    for adim in 0..adim_sayisi {
-        let etiket = format!("tohum={tohum} adım={adim}");
-        let eylem = zar.kadar(100);
+    for step in 0..step_count {
+        let label = format!("seed={seed} step={step}");
+        let action = rng.below(100);
 
-        if eylem < 55 {
-            // --- normal çekim ---
-            let i = zar.kadar(aliciler.len() as u64) as usize;
-            let a = &aliciler[i];
+        if action < 55 {
+            // --- an ordinary claim ---
+            let i = rng.below(recipients.len() as u64) as usize;
+            let a = &recipients[i];
             let ix = claim_ix(&a.kp.pubkey(), &mint, 0, a.hak, a.kanit.clone());
             let kp = a.kp.insecure_clone();
             if send(&mut ctx, &[ix], &[&kp]).await.is_ok() {
-                basarili_cekim += 1;
+                successful_claims += 1;
             }
-        } else if eylem < 70 {
-            // --- E7: YANLIŞ MİKTARLA çekim — reddedilmeli ---
-            let i = zar.kadar(aliciler.len() as u64) as usize;
-            let a = &aliciler[i];
-            let sahte = a.hak.saturating_add(1 + zar.kadar(1_000_000));
-            let ix = claim_ix(&a.kp.pubkey(), &mint, 0, sahte, a.kanit.clone());
+        } else if action < 70 {
+            // --- E7: a claim with THE WRONG AMOUNT — must be rejected ---
+            let i = rng.below(recipients.len() as u64) as usize;
+            let a = &recipients[i];
+            let forged = a.hak.saturating_add(1 + rng.below(1_000_000));
+            let ix = claim_ix(&a.kp.pubkey(), &mint, 0, forged, a.kanit.clone());
             let kp = a.kp.insecure_clone();
-            let sonuc = send(&mut ctx, &[ix], &[&kp]).await;
+            let result = send(&mut ctx, &[ix], &[&kp]).await;
             assert!(
-                sonuc.is_err(),
-                "E7 BOZULDU ({etiket}): {} yerine {sahte} isteyen çekim GEÇTİ",
+                result.is_err(),
+                "E7 BROKEN ({label}): a claim asking for {forged} instead of {} WENT THROUGH",
                 a.hak
             );
-            reddedilen_sahte += 1;
-        } else if eylem < 80 {
-            // --- E7: BAŞKASININ KANITIYLA çekim — reddedilmeli ---
-            let i = zar.kadar(aliciler.len() as u64) as usize;
-            let j = (i + 1 + zar.kadar(aliciler.len() as u64 - 1) as usize) % aliciler.len();
+            rejected_forgeries += 1;
+        } else if action < 80 {
+            // --- E7: a claim with SOMEBODY ELSE'S PROOF — must be rejected ---
+            let i = rng.below(recipients.len() as u64) as usize;
+            let j = (i + 1 + rng.below(recipients.len() as u64 - 1) as usize) % recipients.len();
             let ix = claim_ix(
-                &aliciler[i].kp.pubkey(),
+                &recipients[i].kp.pubkey(),
                 &mint,
                 0,
-                aliciler[j].hak,
-                aliciler[j].kanit.clone(),
+                recipients[j].hak,
+                recipients[j].kanit.clone(),
             );
-            let kp = aliciler[i].kp.insecure_clone();
-            let sonuc = send(&mut ctx, &[ix], &[&kp]).await;
+            let kp = recipients[i].kp.insecure_clone();
+            let result = send(&mut ctx, &[ix], &[&kp]).await;
             assert!(
-                sonuc.is_err(),
-                "E7 BOZULDU ({etiket}): {i}. alıcı, {j}. alıcının kanıtıyla çekim yaptı"
+                result.is_err(),
+                "E7 BROKEN ({label}): recipient {i} claimed with recipient {j}'s proof"
             );
-            reddedilen_sahte += 1;
+            rejected_forgeries += 1;
         } else {
-            // --- zaman sıçraması --- (bazen tam dönem, bazen dönem ortası)
-            let sicrama = if zar.kadar(3) == 0 {
-                WEEK + zar.kadar(WEEK as u64) as i64
+            // --- a time jump --- (sometimes a whole period, sometimes mid-period)
+            let jump = if rng.below(3) == 0 {
+                WEEK + rng.below(WEEK as u64) as i64
             } else {
-                (zar.kadar(WEEK as u64 / 2) + 1) as i64
+                (rng.below(WEEK as u64 / 2) + 1) as i64
             };
-            zaman += sicrama;
-            set_time(&mut ctx, zaman).await;
+            time += jump;
+            set_time(&mut ctx, time).await;
             continue;
         }
 
-        // ------------------- DEĞİŞMEZLER -------------------
-        let mut cekilen_toplam: u64 = 0;
-        let kasada = token_balance(&mut ctx, &kasa).await;
-        let mut alicilarda: u64 = 0;
+        // ------------------- THE INVARIANTS -------------------
+        let mut total_claimed: u64 = 0;
+        let in_vault = token_balance(&mut ctx, &vault).await;
+        let mut held_by_recipients: u64 = 0;
 
-        for a in &aliciler {
-            let bakiye = token_balance(&mut ctx, &ata(&a.kp.pubkey(), &mint)).await;
-            alicilarda += bakiye;
+        for a in &recipients {
+            let balance = token_balance(&mut ctx, &ata(&a.kp.pubkey(), &mint)).await;
+            held_by_recipients += balance;
 
-            // E2 — hakkından fazlasını alamaz
+            // E2 — cannot take more than they are owed
             assert!(
-                bakiye <= a.hak,
-                "E2 BOZULDU ({etiket}): alıcı hakkı {} iken {bakiye} almış",
+                balance <= a.hak,
+                "E2 BROKEN ({label}): the recipient is owed {} but received {balance}",
                 a.hak
             );
 
-            // E6 — o anda açılmış olandan fazlasını çekemez
-            let tavan = acilmis(a.hak, zaman, baslangic);
+            // E6 — cannot claim more than has unlocked at that moment
+            let cap = unlocked(a.hak, time, start);
             assert!(
-                bakiye <= tavan,
-                "E6 BOZULDU ({etiket}): zaman {zaman}, açılmış olan {tavan}, \
-                 çekilen {bakiye} (hak {})",
+                balance <= cap,
+                "E6 BROKEN ({label}): time {time}, unlocked {cap}, \
+                 claimed {balance} (owed {})",
                 a.hak
             );
 
-            // E4 — ClaimStatus ile gerçek bakiye eşit
-            let (durum_pda, _) = claim_status_pda(&dagitici, &a.kp.pubkey());
-            let kayitli = match ctx.banks_client.get_account(durum_pda).await.unwrap() {
+            // E4 — ClaimStatus and the real balance are equal
+            let (durum_pda, _) = claim_status_pda(&distributor_out, &a.kp.pubkey());
+            let registered = match ctx.banks_client.get_account(durum_pda).await.unwrap() {
                 Some(acc) => {
                     let d: luck_distributor::ClaimStatus =
                         anchor_lang::AccountDeserialize::try_deserialize(&mut acc.data.as_slice())
@@ -234,81 +239,82 @@ async fn kaos_kos(tohum: u64, adim_sayisi: u32) {
                 None => 0,
             };
             assert_eq!(
-                kayitli, bakiye,
-                "E4 BOZULDU ({etiket}): ClaimStatus {kayitli} ama cüzdanda {bakiye}"
+                registered, balance,
+                "E4 BROKEN ({label}): ClaimStatus says {registered} but the wallet holds {balance}"
             );
-            cekilen_toplam += kayitli;
+            total_claimed += registered;
         }
 
         // E1 — token korunumu
         assert_eq!(
-            kasada + alicilarda,
-            toplam,
-            "E1 BOZULDU ({etiket}): kasa {kasada} + alıcılar {alicilarda} != basılan {toplam}"
+            in_vault + held_by_recipients,
+            total,
+            "E1 BROKEN ({label}): vault {in_vault} + recipients {held_by_recipients} != minted {total}"
         );
 
-        // E5 — dağıtıcının sayacı bireysel kayıtlarla tutuyor
-        let acc = ctx.banks_client.get_account(dagitici).await.unwrap().unwrap();
+        // E5 — the distributor's counter agrees with the individual records
+        let acc = ctx.banks_client.get_account(distributor_out).await.unwrap().unwrap();
         let d: luck_distributor::Distributor =
             anchor_lang::AccountDeserialize::try_deserialize(&mut acc.data.as_slice()).unwrap();
         assert_eq!(
-            d.total_claimed, cekilen_toplam,
-            "E5 BOZULDU ({etiket}): dağıtıcı {} diyor, kayıtların toplamı {cekilen_toplam}",
+            d.total_claimed, total_claimed,
+            "E5 BROKEN ({label}): the distributor says {}, the records sum to {total_claimed}",
             d.total_claimed
         );
     }
 
-    // --- E3 kontrolü koşu boyunca örtük: bakiye asla azalmadı (E4 + E1) ---
+    // --- E3 is implicit across the run: the balance never decreased (E4 + E1) ---
 
-    // --- E8: takvim bitince herkes payının TAMAMINI alabilmeli ---
-    zaman = baslangic + (PERIODS as i64 + 2) * WEEK;
-    set_time(&mut ctx, zaman).await;
-    for a in &aliciler {
+    // --- E8: once the schedule ends everyone must be able to claim IN FULL ---
+    time = start + (PERIODS as i64 + 2) * WEEK;
+    set_time(&mut ctx, time).await;
+    for a in &recipients {
         let ix = claim_ix(&a.kp.pubkey(), &mint, 0, a.hak, a.kanit.clone());
         let kp = a.kp.insecure_clone();
-        // Payının tamamını zaten almış olabilir; o durumda çekilecek bir şey
-        // yoktur ve işlem reddedilir. Önemli olan SONUÇTAKİ bakiye.
+        // They may already have claimed their whole share; in that case there is
+        // nothing to claim and the transaction is rejected. What matters is the
+        // RESULTING balance.
         let _ = send(&mut ctx, &[ix], &[&kp]).await;
-        let bakiye = token_balance(&mut ctx, &ata(&a.kp.pubkey(), &mint)).await;
+        let balance = token_balance(&mut ctx, &ata(&a.kp.pubkey(), &mint)).await;
         assert_eq!(
-            bakiye, a.hak,
-            "E8 BOZULDU (tohum={tohum}): takvim bittiği hâlde alıcı payının \
-             tamamını alamadı ({bakiye}/{})",
+            balance, a.hak,
+            "E8 BROKEN (seed={seed}): the schedule has ended but the recipient could \
+             not claim their share in full ({balance}/{})",
             a.hak
         );
     }
-    let kalan = token_balance(&mut ctx, &kasa).await;
+    let remaining = token_balance(&mut ctx, &vault).await;
     assert_eq!(
-        kalan, 0,
-        "E8 BOZULDU (tohum={tohum}): takvim bitti ama kasada {kalan} token kaldı — \
-         çekme talimatı olmadığı için bu para SONSUZA DEK kilitli kalırdı"
+        remaining, 0,
+        "E8 BROKEN (seed={seed}): the schedule ended but {remaining} tokens are left \
+         in the vault — with no withdraw instruction that money would stay locked FOREVER"
     );
 
-    // Koşunun anlamlı olduğunu kanıtlıyoruz: hiçbir çekim geçmediyse bu test
-    // "her şeyi reddeden" bozuk bir programı da yeşil gösterirdi.
+    // We prove the run was meaningful: if no claim had gone through, this test
+    // would show a broken "reject everything" program as green too.
     assert!(
-        basarili_cekim >= 5,
-        "tohum={tohum}: yalnızca {basarili_cekim} çekim geçti — koşu anlamlı değil"
+        successful_claims >= 5,
+        "seed={seed}: only {successful_claims} claims went through — the run is not meaningful"
     );
     assert!(
-        reddedilen_sahte >= 5,
-        "tohum={tohum}: yalnızca {reddedilen_sahte} sahte çekim denendi — \
-         E7 yeterince sınanmamış"
+        rejected_forgeries >= 5,
+        "seed={seed}: only {rejected_forgeries} forged claims were attempted — \
+         E7 was not exercised enough"
     );
     println!(
-        "tohum={tohum} · {basarili_cekim} çekim geçti · {reddedilen_sahte} sahte \
-         çekim reddedildi · sonda kasa boş"
+        "seed={seed} · {successful_claims} claims went through · {rejected_forgeries} forged \
+         claims rejected · the vault is empty at the end"
     );
 }
 
 #[tokio::test]
-async fn kaos_dagitim() {
-    kaos_kos(0xC0FFEE, 220).await;
+async fn chaos_distribution() {
+    run_chaos(0xC0FFEE, 220).await;
 }
 
 #[tokio::test]
-async fn kaos_dagitim_ek_tohumlar() {
-    for tohum in [0xA11CEu64, 0xBEEF, 0x1337] {
-        kaos_kos(tohum, 180).await;
+async fn chaos_distribution_extra_seeds() {
+    for seed in [0xA11CEu64, 0xBEEF, 0x1337] {
+        run_chaos(seed, 180).await;
     }
 }

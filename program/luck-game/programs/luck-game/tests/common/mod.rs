@@ -6,7 +6,7 @@
 //
 // Buradaki asıl kazanç, devnet'te ancak ŞANSA BAĞLI olarak karşılaşılan
 // durumları doğrudan kurabilmek:
-//   - hedef slot atlanmış (lideri blok üretememiş)
+//   - target slot atlanmış (lideri blok üretememiş)
 //   - resolve penceresi kapanmış
 //   - kasa jackpot'u karşılayamayacak kadar boş
 // Devnet'te bunları beklemek saatler sürer ve tekrarlanamaz; burada her
@@ -265,7 +265,7 @@ impl Game {
     /// SlotHashes sysvar'ını doğrudan kurar.
     ///
     /// resolve() testlerinin bel kemiği: hangi slot'ların blok ÜRETTİĞİNİ
-    /// burada biz belirliyoruz, dolayısıyla "hedef slot atlanmış" senaryosu
+    /// burada biz belirliyoruz, dolayısıyla "target slot atlanmış" senaryosu
     /// şansa bırakılmadan, her koşuda aynı şekilde kurulabiliyor.
     pub fn set_slot_hashes(&mut self, entries: &[(u64, [u8; 32])]) {
         let mut list: Vec<(u64, solana_sdk::hash::Hash)> = entries
@@ -323,7 +323,7 @@ impl Game {
 /// Aynı imzacı, aynı talimatı, aynı blockhash'le gönderirse ortaya birebir
 /// aynı işlem (aynı imza) çıkıyor. Zincir bunu tekrar İŞLEMİYOR ve
 /// process_transaction hata da vermiyor — çağıran taraf "başarılı" görüyor
-/// ama ZİNCİRDE HİÇBİR ŞEY OLMUYOR. `ikinci_satin_almada_kira_iadesi_yok`
+/// ama ZİNCİRDE HİÇBİR ŞEY OLMUYOR. `no_rent_refund_on_a_second_purchase`
 /// tam olarak buna kurban gitti: ikinci satın alma hiç koşmadığı için
 /// bakiye değişimi 0 çıkıyor, test 10 koşunun 8'inde düşüyordu. Tersi daha
 /// tehlikeliydi: gerçekten bozuk bir kontrol de, ikinci işlem hiç
@@ -377,7 +377,7 @@ pub async fn fund(ctx: &mut ProgramTestContext, key: &Pubkey, lamports: u64) {
     send(ctx, &[ix], &[]).await.unwrap();
 }
 
-/// Yeni bir oyuncu cüzdanı: anahtar + bakiye.
+/// Yeni bir player cüzdanı: anahtar + bakiye.
 pub async fn new_player(ctx: &mut ProgramTestContext, lamports: u64) -> Keypair {
     let kp = Keypair::new();
     fund(ctx, &kp.pubkey(), lamports).await;
@@ -405,32 +405,32 @@ pub fn assert_game_error(err: &TransportError, expected: luck_game::GameError) {
 ///
 /// `u64::from_le_bytes(b) % 10000` ile aynı sonucu verir ama bambaşka bir
 /// yoldan: sayıyı hiç kurmadan, en anlamlı bayttan başlayarak her adımda
-/// `kalan = (kalan * 256 + bayt) % 10000` yürütüyor. Programdaki ifadenin
+/// `remaining = (remaining * 256 + bayt) % 10000` yürütüyor. Programdaki ifadenin
 /// kopyası olmadığı için, o ifade yanlış yazılmış olsaydı bu test
 /// yakalardı.
-pub fn kalan_10000(bytes: &[u8]) -> u32 {
-    let mut kalan: u64 = 0;
+pub fn remainder_10000(bytes: &[u8]) -> u32 {
+    let mut remaining: u64 = 0;
     for b in bytes.iter().rev() {
-        kalan = (kalan * 256 + *b as u64) % 10_000;
+        remaining = (remaining * 256 + *b as u64) % 10_000;
     }
-    kalan as u32
+    remaining as u32
 }
 
 /// Zarı spesifikasyondan yeniden üretir:
-///   digest = sha256(slot_hash ‖ slot_le ‖ oyuncu ‖ oyun_sayaci_le)
+///   digest = sha256(slot_hash ‖ slot_le ‖ player ‖ oyun_sayaci_le)
 ///   roll   = digest[0..8]  (little-endian u64) mod 10000
-pub fn beklenen_zar(slot_hash: &[u8; 32], slot: u64, oyuncu: &Pubkey, oyun_sayaci: u32) -> u32 {
+pub fn expected_dice(slot_hash: &[u8; 32], slot: u64, player: &Pubkey, plays_count: u32) -> u32 {
     let mut preimage = Vec::new();
     preimage.extend_from_slice(slot_hash);
     preimage.extend_from_slice(&slot.to_le_bytes());
-    preimage.extend_from_slice(oyuncu.as_ref());
-    preimage.extend_from_slice(&oyun_sayaci.to_le_bytes());
+    preimage.extend_from_slice(player.as_ref());
+    preimage.extend_from_slice(&plays_count.to_le_bytes());
     let digest = solana_sdk::hash::hash(&preimage).to_bytes();
-    kalan_10000(&digest[0..8])
+    remainder_10000(&digest[0..8])
 }
 
 /// Tur numarasından deterministik ama birbirinden bağımsız hash'ler.
-pub fn tur_hash(tur: u32) -> [u8; 32] {
+pub fn round_hash(tur: u32) -> [u8; 32] {
     solana_sdk::hash::hash(&tur.to_le_bytes()).to_bytes()
 }
 

@@ -1,76 +1,78 @@
 // ---------------------------------------------------------------------------
-// luck-distributor — $LUCK dağıtımı
+// luck-distributor — the $LUCK distribution
 // ---------------------------------------------------------------------------
-// TEK BİR HESAP TİPİ iki işi birden yapıyor:
+// ONE ACCOUNT TYPE does two jobs at once:
 //
-//   * PRESALE VESTING — alıcı payını tek seferde değil, ilan edilen takvime
-//     göre kademeli çeker (TGE'de %9, sonra 13 hafta boyunca haftada %7).
-//   * ÇEKİLİŞ ÖDEMELERİ — haftalık çekiliş kazananları paylarını hemen çeker.
+//   * PRESALE VESTING — a recipient claims their share in stages according to
+//     the published schedule rather than all at once (9% at TGE, then 7% a week
+//     for 13 weeks).
+//   * RAFFLE PAYOUTS — the weekly raffle winners claim their share immediately.
 //
-// İkisi ayrı kod yolu DEĞİL: çekiliş, "vesting'i %100 peşin olan bir
-// dağıtıcı"dan ibaret (cliff_bps = 10000). Böylece test edilecek, gözden
-// geçirilecek ve hata yapılabilecek tek bir mantık var. Bu program TGE günü
-// 271 milyon token tutacak; buradaki en büyük risk karmaşıklığın kendisi.
+// These are NOT two code paths: a raffle is simply "a distributor whose vesting
+// is 100% up front" (cliff_bps = 10000). That leaves a single piece of logic to
+// test, to review, and to get wrong. This program will hold 271 million tokens
+// on TGE day; the biggest risk here is complexity itself.
 //
-// NEDEN MERKLE: alıcı sayısı birkaç yüz olacak. Her alıcı için zincirde
-// hesap açmak hem pahalı hem yavaş olurdu. Bunun yerine zincirde tek bir
-// 32 baytlık kök duruyor; alıcı, payını kanıtlayan "kardeş düğüm" listesini
-// (proof) getiriyor. Liste ve ağaç sitede yayınlanıyor, herkes kendi
-// kanıtını üretip doğrulayabiliyor.
+// WHY MERKLE: there will be a few hundred recipients. Opening an on-chain
+// account for each of them would be both expensive and slow. Instead a single
+// 32-byte root sits on chain and the recipient brings the list of sibling nodes
+// (the proof) that proves their share. The list and the tree are published on
+// the site, so anyone can produce and verify their own proof.
 //
-// KASIT: PARAYI GERİ ÇEKME TALİMATI YOK.
-// Hiç talep edilmeyen tokenler sonsuza kadar burada kilitli kalır — yani
-// fiilen yakılmış olur. "Ekip kalanı geri alabilir" diyen bir talimat
-// eklemek, dağıtımın tamamını tek bir imzaya bağımlı hale getirirdi;
-// alıcının "bunu bizden kimse geri alamaz" diyebilmesi bundan daha
-// değerli. Bunun bedeli şu: kilitlenen miktar yanlış hesaplanırsa fazlası
-// da kilitli kalır. Bu yüzden `initialize` içindeki toplam kontrolü sıkı.
+// DELIBERATE: THERE IS NO INSTRUCTION TO WITHDRAW THE MONEY BACK.
+// Tokens that are never claimed stay locked here forever — that is, they are
+// effectively burned. Adding an instruction saying "the team can take the
+// remainder back" would make the whole distribution depend on a single
+// signature; a recipient being able to say "nobody can take this back from us"
+// is worth more than that. The price is this: if the locked amount is computed
+// wrongly, the excess stays locked too. Which is why the total check inside
+// `initialize` is strict.
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::keccak;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-// Geçici adres — gerçek Program ID, deploy sırasında `anchor keys sync`
-// tarafından keypair'e göre yazılıyor (bkz. deploy workflow'u). Burada
-// sistem programının adresini (111...) bırakmak testlerde çakışma
-// yaratırdı, o yüzden geçerli ama kullanılmayan bir adres duruyor.
+// A placeholder address — the real program ID is written according to the
+// keypair by `anchor keys sync` during deploy (see the deploy workflow).
+// Leaving the system program's address (111...) here would clash in the tests,
+// so a valid but unused address sits here instead.
 declare_id!("G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e");
 
 const DISTRIBUTOR_SEED: &[u8] = b"distributor";
 const VAULT_SEED: &[u8] = b"vault";
 const CLAIM_SEED: &[u8] = b"claim";
 
-/// Basis point tabanı (10000 = %100).
+/// The basis-point base (10000 = 100%).
 const BPS_DENOMINATOR: u64 = 10_000;
 
-/// Merkle ağacında yaprak ile iç düğümü ayıran ön ekler.
+/// The prefixes that separate a leaf from an inner node in the merkle tree.
 ///
-/// Aynı hash fonksiyonu hem yaprak hem düğüm için ön eksiz kullanılsaydı,
-/// bir saldırgan var olan bir iç düğümü "yaprak" gibi sunup kendi
-/// uydurduğu (alıcı, miktar) çiftini doğrulatabilirdi (ikinci ön görüntü
-/// saldırısı). Ön ek, iki alan adını birbirinden ayırıyor.
+/// If the same hash function were used without a prefix for both leaves and
+/// nodes, an attacker could present an existing inner node as a "leaf" and get
+/// their own invented (recipient, amount) pair verified (a second-preimage
+/// attack). The prefix separates the two domains.
 const LEAF_PREFIX: &[u8] = &[0x00];
 const NODE_PREFIX: &[u8] = &[0x01];
 
-/// Bir proof'ta kabul edilen en fazla kardeş düğüm sayısı.
+/// The maximum number of sibling nodes accepted in a proof.
 ///
-/// 32 seviye, 2^32 (dört milyardan fazla) alıcıyı kapsar — yani pratikte
-/// hiç bağlayıcı değil. Sınırın kendisi, işlem boyutunu ve hesaplama
-/// birimini kasıtlı olarak şişiren bir çağrıya karşı üst sınır koyuyor.
+/// 32 levels covers 2^32 (more than four billion) recipients — so in practice it
+/// never binds. The limit itself is an upper bound against a call that
+/// deliberately inflates the transaction size and the compute budget.
 const MAX_PROOF_LEN: usize = 32;
 
 #[program]
 pub mod luck_distributor {
     use super::*;
 
-    /// Yeni bir dağıtım turu açar ve kasasını oluşturur.
+    /// Opens a new distribution round and creates its vault.
     ///
-    /// `id`, aynı mint için birden çok turu ayırt ediyor: 0 = presale,
-    /// 1..14 = haftalık çekilişler. Tur açıldıktan sonra kökü, takvimi ve
-    /// toplamı DEĞİŞTİRİLEMEZ — güncelleme talimatı bilerek yok. Yanlış bir
-    /// kökle açılan tur, düzeltilmek yerine terk edilip yenisi açılır;
-    /// böylece "ekip kökü değiştirip payları yeniden yazabilir" diye bir
-    /// ihtimal hiç doğmuyor.
+    /// `id` distinguishes several rounds for the same mint: 0 = the presale,
+    /// 1..14 = the weekly raffles. Once a round is open its root, schedule and
+    /// total CANNOT BE CHANGED — there is deliberately no update instruction. A
+    /// round opened with the wrong root is abandoned and a new one opened rather
+    /// than corrected; that way the possibility of "the team changed the root and
+    /// rewrote the shares" never arises.
     pub fn initialize(
         ctx: Context<Initialize>,
         id: u64,
@@ -86,17 +88,18 @@ pub mod luck_distributor {
         require!(start_ts > 0, DistributorError::InvalidParam);
         require!(merkle_root != [0u8; 32], DistributorError::InvalidParam);
 
-        // Takvim MUTLAKA tam %100'e ulaşmalı. Bu kontrol olmasaydı, ör.
-        // %7 × 14 = %98 gibi bir yapılandırma sessizce kabul edilir ve
-        // alıcıların son %2'si sonsuza kadar kasada kilitli kalırdı — hem
+        // The schedule MUST reach exactly 100%. Without this check a configuration
+        // such as 7% x 14 = 98% would be accepted silently and the recipients' last
+        // 2% would stay locked in the vault forever — both a loss and
         // de kimse fark etmeden, aylar sonra.
         let total_bps = (cliff_bps as u64)
             .checked_add((periods as u64).checked_mul(period_bps as u64).ok_or(DistributorError::MathOverflow)?)
             .ok_or(DistributorError::MathOverflow)?;
         require!(total_bps == BPS_DENOMINATOR, DistributorError::ScheduleNotComplete);
 
-        // Kademe varsa aralık sıfır olamaz; yoksa "geçen süre / aralık"
-        // hesabı sıfıra bölme olurdu ve tüm kademeler ilk saniyede açılırdı.
+        // If there are tiers the interval cannot be zero; otherwise the "elapsed /
+        // interval" computation would divide by zero and every tier would unlock in
+        // the first second.
         if periods > 0 {
             require!(period_seconds > 0, DistributorError::InvalidParam);
         }
@@ -131,16 +134,17 @@ pub mod luck_distributor {
         Ok(())
     }
 
-    /// Alıcının, o an açılmış olan payını çeker.
+    /// Claims the part of the recipient's share that has unlocked.
     ///
-    /// `total_amount`, alıcının TÜM tur boyunca hak ettiği toplam — merkle
-    /// yaprağında yazan sayı. Program bundan "şu ana kadar açılan"ı
-    /// hesaplayıp, daha önce çekilenin farkını gönderiyor. Yani alıcı
-    /// isterse her hafta, isterse en sonda tek seferde çeker; sonuç aynı.
+    /// `total_amount` is the total the recipient is owed across the WHOLE round —
+    /// the number written in the merkle leaf. The program computes "how much has
+    /// unlocked so far" from it and sends the difference against what has already
+    /// been claimed. So the recipient can claim every week or once at the end; the
+    /// result is the same.
     ///
-    /// İzinsiz (permissionless) DEĞİL: imzayı alıcının kendisi atmak
-    /// zorunda ve token hesabı da onun. Başkası adına çağırıp parayı
-    /// başka yere yönlendirmek mümkün değil.
+    /// It is NOT permissionless: the recipient has to sign themselves and the token
+    /// account is theirs. Calling it on somebody else's behalf and redirecting the
+    /// money elsewhere is not possible.
     pub fn claim(ctx: Context<Claim>, total_amount: u64, proof: Vec<[u8; 32]>) -> Result<()> {
         require!(proof.len() <= MAX_PROOF_LEN, DistributorError::ProofTooLong);
         require!(total_amount > 0, DistributorError::InvalidParam);
@@ -148,28 +152,28 @@ pub mod luck_distributor {
         let claimant = ctx.accounts.claimant.key();
         let distributor = &ctx.accounts.distributor;
 
-        // 1) Bu (alıcı, miktar) çifti gerçekten ağaçta mı?
+        // 1) Is this (recipient, amount) pair really in the tree?
         let leaf = leaf_hash(&claimant, total_amount);
         require!(
             verify_proof(&proof, distributor.merkle_root, leaf),
             DistributorError::InvalidProof
         );
 
-        // 2) Şu ana kadar ne kadarı açıldı?
+        // 2) How much has unlocked so far?
         let now = Clock::get()?.unix_timestamp;
         let unlocked = unlocked_amount(distributor, total_amount, now)?;
 
-        // 3) Daha önce çekilenin farkı kadar gönder.
+        // 3) Send the difference against what was already claimed.
         let status = &mut ctx.accounts.claim_status;
         require!(unlocked > status.claimed, DistributorError::NothingToClaim);
         let amount = unlocked
             .checked_sub(status.claimed)
             .ok_or(DistributorError::MathOverflow)?;
 
-        // Kasada gerçekten var mı? Olmayan parayı "çekildi" diye
-        // işaretlememek için transferden ÖNCE bakıyoruz — aksi halde
-        // yetersiz bakiye hatası tüm işlemi geri alır ama kafa karıştırıcı
-        // bir hata mesajıyla.
+        // Is it really in the vault? We look BEFORE the transfer so we never mark
+        // money as "claimed" when it is not there — otherwise an insufficient
+        // balance error would revert the whole transaction, but with a confusing
+        // message.
         require!(
             ctx.accounts.vault.amount >= amount,
             DistributorError::InsufficientVaultBalance
@@ -183,10 +187,10 @@ pub mod luck_distributor {
             .total_claimed
             .checked_add(amount)
             .ok_or(DistributorError::MathOverflow)?;
-        // Turun tamamından fazlası dağıtılamaz. Merkle kökü doğru
-        // kurulduysa bu zaten imkânsız; yine de kontrol ediyoruz çünkü
-        // kökü biz üretiyoruz ve bir üretim hatası burada durdurulmalı,
-        // kasa boşaldıktan sonra değil.
+        // No more than the round's total may be distributed. If the merkle root was
+        // built correctly this is already impossible; we check anyway, because we
+        // produce the root ourselves and a production mistake has to be stopped here,
+        // not after the vault has been emptied.
         require!(
             d.total_claimed <= d.total_allocated,
             DistributorError::ExceedsAllocation
@@ -227,18 +231,18 @@ pub mod luck_distributor {
 }
 
 // ---------------------------------------------------------------------------
-// Vesting hesabı
+// The vesting calculation
 // ---------------------------------------------------------------------------
 
-/// Verilen ana kadar açılmış toplam miktar.
+/// The total amount unlocked as of a given moment.
 ///
-/// Kademe sayısı tavanlandığı ve `initialize` toplam bps'in tam 10000
-/// olmasını zorladığı için, takvim bittiğinde sonuç `total`'a TAM eşit
-/// olur — yuvarlamadan artan toz kalmaz.
-/// `pub` yalnızca doğrulanabilirlik için: aynı formül arayüzde de
-/// (src/lib/luckClaim.ts) yeniden yazıldı ve testler ikisinin birebir aynı
-/// sonucu verdiğini altın vektörle bağlıyor. İkisi ayrışırsa kullanıcı
-/// "çekilebilir" görüp işlemi reddedilir.
+/// Because the tier count is capped and `initialize` forces the total bps to be
+/// exactly 10000, the result is EXACTLY equal to `total` once the schedule ends.
+///
+/// It is `pub` purely for verifiability: the same formula is rewritten in the
+/// interface (src/lib/luckClaim.ts), and the tests pin the two to a golden
+/// vector to show they give identical results. If they drift apart, a user sees
+/// something as "claimable" and has their transaction rejected.
 pub fn unlocked_amount(d: &Distributor, total: u64, now: i64) -> Result<u64> {
     if now < d.start_ts {
         return Ok(0);
@@ -260,7 +264,7 @@ pub fn unlocked_amount(d: &Distributor, total: u64, now: i64) -> Result<u64> {
         .ok_or(DistributorError::MathOverflow)?
         .min(BPS_DENOMINATOR);
 
-    // u128 üzerinden: total 64 bit'e yakın olsa bile çarpım taşmaz.
+    // Computed in u128: even with total close to 64 bits the product cannot overflow.
     let unlocked = (total as u128)
         .checked_mul(bps as u128)
         .ok_or(DistributorError::MathOverflow)?
@@ -270,22 +274,22 @@ pub fn unlocked_amount(d: &Distributor, total: u64, now: i64) -> Result<u64> {
 }
 
 // ---------------------------------------------------------------------------
-// Merkle doğrulama
+// Merkle verification
 // ---------------------------------------------------------------------------
 
-/// Yaprak hash'i: keccak(0x00 || alıcı || miktar_le).
+/// The leaf hash: keccak(0x00 || recipient || amount_le).
 ///
-/// Bu üç fonksiyon bilerek `pub`: testler, sitenin kanıt üreticisinin
-/// (scripts/build-merkle.mjs) ürettiği GERÇEK baytları doğrudan bu
-/// doğrulayıcıya verip uyuştuklarını sınıyor. Aksi halde iki uygulamanın
-/// ayrışması ancak TGE günü, kullanıcının ekranında fark edilirdi.
+/// These three functions are deliberately `pub`: the tests hand the REAL bytes
+/// produced by the site's proof builder (scripts/build-merkle.mjs) straight to
+/// this verifier and check that they agree. Otherwise a divergence between the
+/// two implementations would only be noticed on TGE day, on a user's screen.
 pub fn leaf_hash(claimant: &Pubkey, amount: u64) -> [u8; 32] {
     keccak::hashv(&[LEAF_PREFIX, claimant.as_ref(), &amount.to_le_bytes()]).0
 }
 
-/// İç düğüm hash'i. İki çocuğu bayt sırasına göre sıralayıp hash'liyoruz
-/// ("sorted pair"): böylece proof'ta hangi kardeşin sağda hangisinin solda
-/// olduğunu ayrıca taşımaya gerek kalmıyor.
+/// The inner-node hash. The two children are sorted by byte order before
+/// hashing (a "sorted pair"), which removes the need to carry which sibling was
+/// on the left and which on the right in the proof.
 pub fn node_hash(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
     if a <= b {
         keccak::hashv(&[NODE_PREFIX, a, b]).0
@@ -323,9 +327,9 @@ pub struct Initialize<'info> {
     )]
     pub distributor: Account<'info, Distributor>,
 
-    /// Turun tokenlarını tutan kasa. Sahibi dağıtıcı PDA'sının kendisi —
-    /// yani buradan token çıkarmanın TEK yolu `claim`. Ekibin elinde bu
-    /// hesabı boşaltabilecek bir anahtar yok.
+    /// The vault holding the round's tokens. Its owner is the distributor PDA
+    /// itself — so the ONLY way tokens leave here is `claim`. The team holds no key
+    /// that could empty this account.
     #[account(
         init,
         payer = authority,
@@ -360,8 +364,8 @@ pub struct Claim<'info> {
     #[account(mut)]
     pub vault: Account<'info, TokenAccount>,
 
-    /// Alıcı başına tek hesap: aynı turdan iki kez tam pay çekilemez.
-    /// `init_if_needed` — ilk çekişte oluşur, sonrakilerde okunur.
+    /// One account per recipient: the full share cannot be claimed twice from the
+    /// same round. `init_if_needed` — created on the first claim, read afterwards.
     #[account(
         init_if_needed,
         payer = claimant,
@@ -371,9 +375,10 @@ pub struct Claim<'info> {
     )]
     pub claim_status: Account<'info, ClaimStatus>,
 
-    /// Ödemenin gideceği token hesabı. `associated_token::authority`
-    /// kısıtı sayesinde bu hesap MUTLAKA imzalayanın kendi ATA'sı —
-    /// başkasının payını kendi cüzdanına yönlendirmek mümkün değil.
+    /// The token account the payment goes to. Thanks to the
+    /// `associated_token::authority` constraint this account MUST be the signer's
+    /// own ATA — redirecting somebody else's share into your own wallet is not
+    /// possible.
     #[account(
         init_if_needed,
         payer = claimant,
@@ -415,7 +420,7 @@ impl Distributor {
 
 #[account]
 pub struct ClaimStatus {
-    /// Bu alıcının bu turdan bugüne kadar çektiği TOPLAM.
+    /// The TOTAL this recipient has claimed from this round to date.
     pub claimed: u64,
     pub bump: u8,
 }
@@ -452,25 +457,25 @@ pub struct Claimed {
 }
 
 // ---------------------------------------------------------------------------
-// Hatalar
+// Errors
 // ---------------------------------------------------------------------------
 
 #[error_code]
 pub enum DistributorError {
-    #[msg("Geçersiz parametre.")]
+    #[msg("Invalid parameter.")]
     InvalidParam,
-    #[msg("Açılış takvimi %100'e ulaşmıyor — cliff_bps + periods * period_bps tam 10000 olmalı.")]
+    #[msg("The unlock schedule does not reach 100% — cliff_bps + periods * period_bps must be exactly 10000.")]
     ScheduleNotComplete,
-    #[msg("Merkle kanıtı çok uzun.")]
+    #[msg("The merkle proof is too long.")]
     ProofTooLong,
-    #[msg("Merkle kanıtı geçersiz — bu adres ve miktar listede yok.")]
+    #[msg("The merkle proof is invalid — this address and amount are not in the list.")]
     InvalidProof,
-    #[msg("Şu an çekilebilecek yeni bir miktar yok.")]
+    #[msg("There is nothing new to claim right now.")]
     NothingToClaim,
     #[msg("Kasada yeterli token yok.")]
     InsufficientVaultBalance,
-    #[msg("Tur için ayrılan toplamdan fazlası dağıtılamaz.")]
+    #[msg("No more than the total allocated to the round may be distributed.")]
     ExceedsAllocation,
-    #[msg("Sayısal taşma.")]
+    #[msg("Numeric overflow.")]
     MathOverflow,
 }

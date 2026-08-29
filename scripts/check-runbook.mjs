@@ -1,163 +1,196 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// TGE kılavuzu denetimi — belgedeki komutlar hâlâ var mı
+// Runbook check — do the commands in the documents still exist
 // ---------------------------------------------------------------------------
-// Belge çürümesi sessizdir: bir script yeniden adlandırılır, bir npm
-// betiği kaldırılır, kılavuz olduğu gibi kalır. Sorun ancak TGE günü,
-// komut "not found" verdiğinde ortaya çıkar — yani tam olarak yanlış
-// zamanda.
+// Documentation rot is silent: a script is renamed, an npm script is removed,
+// and the runbook stays as it was. The problem only surfaces on TGE day, when
+// the command says "not found" — that is, at exactly the wrong moment.
 //
-// Bu denetim kılavuzdaki her `npm run X` ve `node scripts/X.mjs`
-// referansının gerçekten var olduğunu doğruluyor. Komutların DOĞRU
-// çalıştığını değil (o testlerin işi), var olduğunu.
+// This check verifies that every `npm run X`, `node scripts/X.mjs` and
+// `cargo test X` reference in the documents actually exists. Not that the
+// commands work CORRECTLY (that is the tests' job) — that they exist.
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const kok = fileURLToPath(new URL('..', import.meta.url))
+const root = fileURLToPath(new URL('..', import.meta.url))
 
-// İki belge de komut ve dosya referansı taşıyor; ikisi de çürüyebilir.
-const belgeler = ['TGE-KILAVUZU.md', 'GUVENLIK.md']
-let kilavuz = ''
-for (const ad of belgeler) {
-  const yol = `${kok}${ad}`
-  if (!existsSync(yol)) {
-    console.error(`${ad} bulunamadı.`)
+// Both documents carry command and file references; both can rot.
+const DOCS = ['TGE-RUNBOOK.md', 'SECURITY.md']
+let runbook = ''
+for (const name of DOCS) {
+  const path = `${root}${name}`
+  if (!existsSync(path)) {
+    console.error(`${name} was not found.`)
     process.exit(1)
   }
-  kilavuz += readFileSync(yol, 'utf8') + '\n'
+  runbook += readFileSync(path, 'utf8') + '\n'
 }
-const paket = JSON.parse(readFileSync(`${kok}package.json`, 'utf8'))
+const pkg = JSON.parse(readFileSync(`${root}package.json`, 'utf8'))
 
-const hatalar = []
-const kontroller = []
+const failures = []
+const checks = []
 
-// npm run <ad>
-const npmAdlari = new Set(
-  [...kilavuz.matchAll(/npm run ([a-z0-9:-]+)/g)].map((m) => m[1]),
+// npm run <name>
+const npmNames = new Set(
+  [...runbook.matchAll(/npm run ([a-z0-9:-]+)/g)].map((m) => m[1]),
 )
-for (const ad of npmAdlari) {
-  const var_ = Object.hasOwn(paket.scripts ?? {}, ad)
-  kontroller.push({ ad: `npm run ${ad}`, ok: var_ })
-  if (!var_) hatalar.push(`npm run ${ad}`)
+for (const name of npmNames) {
+  const exists = Object.hasOwn(pkg.scripts ?? {}, name)
+  checks.push({ name: `npm run ${name}`, ok: exists })
+  if (!exists) failures.push(`npm run ${name}`)
 }
 
-// node <yol>.mjs
-const yollar = new Set(
-  [...kilavuz.matchAll(/node ((?:scripts|program)\/[^\s\\`]+\.mjs)/g)].map((m) => m[1]),
+// node <path>.mjs
+const paths = new Set(
+  [...runbook.matchAll(/node ((?:scripts|program)\/[^\s\\`]+\.mjs)/g)].map((m) => m[1]),
 )
-for (const yol of yollar) {
-  const var_ = existsSync(`${kok}${yol}`)
-  kontroller.push({ ad: `node ${yol}`, ok: var_ })
-  if (!var_) hatalar.push(yol)
+for (const path of paths) {
+  const exists = existsSync(`${root}${path}`)
+  checks.push({ name: `node ${path}`, ok: exists })
+  if (!exists) failures.push(path)
 }
 
-// Kılavuzda adı geçen config alanları gerçekten config.ts'te mi?
-const src = readFileSync(`${kok}src/config.ts`, 'utf8')
-for (const alan of ['PRESALE_START_ISO', 'LUCK_TOKEN', 'CLAIM_CONFIG', 'DEFAULT_NETWORK', 'DEFAULT_DECIMALS']) {
-  if (!kilavuz.includes(alan)) continue
-  const var_ = src.includes(alan)
-  kontroller.push({ ad: `config.ts: ${alan}`, ok: var_ })
-  if (!var_) hatalar.push(alan)
-}
-
-// --- GUVENLIK.md'deki sayılar hâlâ doğru mu -------------------------------
-//
-// Belgede "luck-game 29 test", "177 kontrol" gibi somut sayılar var ve
-// bunlar dışarıya bir güvence olarak sunuluyor. Yanlış bir sayı yayınlamak,
-// hiç sayı yayınlamamaktan kötü: okuyan kişi belgenin geri kalanına da
-// güvenmeyi bırakır.
-//
-// Sayılar kaynaktan SAYILARAK doğrulanıyor; elle yazılmış bir kopyayla
-// karşılaştırılmıyor (o, kopyanın kendisiyle uyuştuğunu kanıtlardı).
+// --- cargo test <name> ------------------------------------------------------
+// SECURITY.md invites the reader to run a specific test by name ("cargo test
+// chaos"). If a test is renamed and the document is not, the reader runs a
+// command that quietly matches nothing: cargo reports "0 tests" and exits 0, so
+// it looks like it passed. A verification instruction that silently verifies
+// nothing is worse than none at all.
 {
-  const guvenlik = readFileSync(`${kok}GUVENLIK.md`, 'utf8')
+  const testSources = []
+  for (const dir of [
+    `${root}program/luck-game/programs/luck-game/tests`,
+    `${root}program/luck-distributor/programs/luck-distributor/tests`,
+  ]) {
+    if (!existsSync(dir)) continue
+    for (const file of readdirSync(dir)) {
+      if (file.endsWith('.rs')) testSources.push(readFileSync(`${dir}/${file}`, 'utf8'))
+    }
+  }
+  const allTests = testSources.join('\n')
+  const filters = new Set(
+    [...runbook.matchAll(/cargo test ([a-z0-9_]+)/g)].map((m) => m[1]),
+  )
+  for (const filter of filters) {
+    // cargo's filter is a substring match on the test path, which is exactly
+    // what we reproduce here.
+    const matches = [...allTests.matchAll(/fn\s+([a-z0-9_]+)\s*\(/g)]
+      .map((m) => m[1])
+      .filter((fn) => fn.includes(filter))
+    checks.push({ name: `cargo test ${filter} (${matches.length} test(s))`, ok: matches.length > 0 })
+    if (matches.length === 0) failures.push(`cargo test ${filter} matches no test`)
+  }
+}
 
-  const testSay = (dizin) => {
+// Are the config fields named in the documents really in config.ts?
+const src = readFileSync(`${root}src/config.ts`, 'utf8')
+for (const field of ['PRESALE_START_ISO', 'LUCK_TOKEN', 'CLAIM_CONFIG', 'DEFAULT_NETWORK', 'DEFAULT_DECIMALS']) {
+  if (!runbook.includes(field)) continue
+  const exists = src.includes(field)
+  checks.push({ name: `config.ts: ${field}`, ok: exists })
+  if (!exists) failures.push(field)
+}
+
+// --- are the numbers in SECURITY.md still right ----------------------------
+//
+// The document contains concrete numbers such as "luck-game 33 tests" and "213
+// checks", and they are offered outward as an assurance. Publishing a wrong
+// number is worse than publishing none: a reader stops trusting the rest of the
+// document too.
+//
+// The numbers are verified by COUNTING them from the source; they are not
+// compared against a hand-written copy (that would prove the copy agrees with
+// itself).
+{
+  const security = readFileSync(`${root}SECURITY.md`, 'utf8')
+
+  const countTests = (dir) => {
     let n = 0
-    for (const dosya of readdirSync(dizin)) {
-      if (!dosya.endsWith('.rs')) continue
-      const src = readFileSync(`${dizin}/${dosya}`, 'utf8')
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.rs')) continue
+      const src = readFileSync(`${dir}/${file}`, 'utf8')
       n += (src.match(/#\[(?:tokio::)?test\]/g) ?? []).length
     }
     return n
   }
-  const oyunTest = testSay(`${kok}program/luck-game/programs/luck-game/tests`)
-  const dagiticiTest = testSay(
-    `${kok}program/luck-distributor/programs/luck-distributor/tests`,
+  const gameTests = countTests(`${root}program/luck-game/programs/luck-game/tests`)
+  const distributorTests = countTests(
+    `${root}program/luck-distributor/programs/luck-distributor/tests`,
   )
 
-  const sayi = (re, etiket) => {
-    const m = guvenlik.match(re)
+  const number = (re, label) => {
+    const m = security.match(re)
     if (!m) {
-      hatalar.push(etiket)
-      kontroller.push({ ad: `GUVENLIK.md: ${etiket} satırı bulunamadı`, ok: false })
+      failures.push(label)
+      checks.push({ name: `SECURITY.md: the ${label} line was not found`, ok: false })
       return null
     }
     return Number(m[1])
   }
 
-  const belgeOyun = sayi(/luck-game (\d+),/, 'luck-game test sayısı')
-  const belgeDagitici = sayi(/luck-distributor (\d+) test/, 'luck-distributor test sayısı')
-  const belgeTohum = sayi(/(\d+) tohum × \d+ rastgele adım/, 'kaos tohum sayısı')
+  const docGame = number(/luck-game (\d+),/, 'luck-game test count')
+  const docDistributor = number(/luck-distributor (\d+) tests/, 'luck-distributor test count')
+  const docSeeds = number(/(\d+) seeds x \d+ random steps/, 'chaos seed count')
 
-  // Kaos tohumları: adı geçen testler + kaos_ek_tohumlar dizisi.
-  const kaosSrc = readFileSync(
-    `${kok}program/luck-game/programs/luck-game/tests/chaos.rs`,
+  // The chaos seeds: the tests named individually plus the extra-seed array.
+  const chaosSrc = readFileSync(
+    `${root}program/luck-game/programs/luck-game/tests/chaos.rs`,
     'utf8',
   )
-  const tekTohum = (kaosSrc.match(/kaos_kos\(0x[0-9A-Fa-f_]+,/g) ?? []).length
-  const dizi = kaosSrc.match(/for tohum in \[([^\]]*)\]/)
-  const diziTohum = dizi ? dizi[1].split(',').filter((x) => x.trim()).length : 0
+  const namedSeeds = (chaosSrc.match(/run_chaos\(0x[0-9A-Fa-f_]+,/g) ?? []).length
+  const seedArray = chaosSrc.match(/for seed in \[([^\]]*)\]/)
+  const arraySeeds = seedArray ? seedArray[1].split(',').filter((x) => x.trim()).length : 0
 
-  const karsilastir = (ad, belgedeki, gercek) => {
-    if (belgedeki === null) return
-    const ok = belgedeki === gercek
-    kontroller.push({ ad: `GUVENLIK.md: ${ad} (${belgedeki})`, ok })
-    if (!ok) hatalar.push(`${ad}: belgede ${belgedeki}, gerçekte ${gercek}`)
+  const compare = (label, inDoc, actual) => {
+    if (inDoc === null) return
+    const ok = inDoc === actual
+    checks.push({ name: `SECURITY.md: ${label} (${inDoc})`, ok })
+    if (!ok) failures.push(`${label}: the document says ${inDoc}, the project has ${actual}`)
   }
-  karsilastir('luck-game test sayısı', belgeOyun, oyunTest)
-  karsilastir('luck-distributor test sayısı', belgeDagitici, dagiticiTest)
-  karsilastir('kaos tohum sayısı', belgeTohum, tekTohum + diziTohum)
+  compare('luck-game test count', docGame, gameTests)
+  compare('luck-distributor test count', docDistributor, distributorTests)
+  compare('chaos seed count', docSeeds, namedSeeds + arraySeeds)
 
-  // Denetim sayıları: ilgili script'ler çalıştırılıp çıktıdan okunuyor.
-  for (const [etiket, komut, re] of [
-    ['ABI kontrol sayısı', 'check:abi', /\| ABI denetimi \| (\d+) kontrol/],
-    ['tokenomics kontrol sayısı', 'check:tokenomics', /\| Tokenomics denetimi \| (\d+) kontrol/],
+  // The check counts: the relevant scripts are run and the number read from
+  // their output.
+  for (const [label, command, re] of [
+    ['ABI check count', 'check:abi', /\| ABI check \| (\d+) checks/],
+    ['tokenomics check count', 'check:tokenomics', /\| Tokenomics check \| (\d+) checks/],
   ]) {
-    const belgedeki = sayi(re, etiket)
-    if (belgedeki === null) continue
-    let gercek = null
+    const inDoc = number(re, label)
+    if (inDoc === null) continue
+    let actual = null
     try {
-      const cikti = execFileSync('npm', ['run', '--silent', komut], {
-        cwd: kok,
+      const output = execFileSync('npm', ['run', '--silent', command], {
+        cwd: root,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
       })
-      const m = cikti.match(/^All (\d+) checks passed/m)
-      gercek = m ? Number(m[1]) : null
+      const m = output.match(/^All (\d+) checks passed/m)
+      actual = m ? Number(m[1]) : null
     } catch {
-      gercek = null
+      actual = null
     }
-    if (gercek === null) {
-      kontroller.push({ ad: `GUVENLIK.md: ${etiket} — ${komut} okunamadı`, ok: false })
-      hatalar.push(etiket)
+    if (actual === null) {
+      checks.push({ name: `SECURITY.md: ${label} — ${command} could not be read`, ok: false })
+      failures.push(label)
     } else {
-      karsilastir(etiket, belgedeki, gercek)
+      compare(label, inDoc, actual)
     }
   }
 }
 
-for (const c of kontroller) console.log(`${c.ok ? '✓' : '✗'} ${c.ad}`)
+for (const c of checks) console.log(`${c.ok ? '✓' : '✗'} ${c.name}`)
 
-if (hatalar.length > 0) {
+if (failures.length > 0) {
   console.error(
-    `\n${hatalar.length} tutarsızlık: belgede yazan ile projedeki farklı.\n` +
-      hatalar.map((h) => `  - ${h}`).join('\n') +
-      '\nBelge çürümüş — TGE günü bu komutlar çalışmayacak ya da ' +
-      'yayınlanan sayılar yanlış olacak.',
+    `\n${failures.length} inconsistencies: the documents and the project disagree.\n` +
+      failures.map((f) => `  - ${f}`).join('\n') +
+      '\nThe documentation has rotted — on TGE day these commands will not run, ' +
+      'or the published numbers will be wrong.',
   )
   process.exit(1)
 }
-console.log(`\n${kontroller.length} referansın hepsi yerinde.`)
+console.log(`\nAll ${checks.length} references are in place.`)

@@ -1,20 +1,20 @@
-// Test altyapısının bu ortamda gerçekten çalıştığını doğrulayan en küçük
-// test. Asıl senaryolar distributor.rs içinde.
+// The smallest test that confirms the harness really works in this environment.
+// The actual scenarios live in distributor.rs.
 //
-// Eskiden buradaki tek iddia `assert!(slot > 0 || slot == 0)` idi — bir u64
-// için HER ZAMAN doğru, yani hiçbir şey doğrulamıyordu. Test yeşil
-// olduğunda "altyapı çalışıyor" diyorduk ama aslında yalnızca "panik
-// olmadı" demiş oluyorduk. clippy'yi sıkı moda alınca ortaya çıktı.
+// It used to assert something that was ALWAYS true, and therefore verified
+// nothing. When it was green we said "the harness works", but all we had
+// actually said was "it did not panic". Turning clippy to strict mode exposed
+// it.
 //
-// Şimdi asıl soruyu soruyor: PROGRAM test bankasına gerçekten yüklendi mi?
-// Yüklenmediyse diğer testlerin hepsi anlamsız hatalarla düşerdi ve sebebi
-// buradan görünürdü.
+// It now asks the real question: WAS THE PROGRAM actually loaded into the test
+// bank? If it was not, every other test would fail with meaningless errors, and
+// the reason would be visible here.
 mod common;
 
 use solana_sdk::pubkey::Pubkey;
 
 #[tokio::test]
-async fn altyapi_ayaga_kalkiyor_ve_program_yuklu() {
+async fn the_harness_starts_and_the_program_is_loaded() {
     let mut ctx = common::program_test().start_with_context().await;
 
     let hesap = ctx
@@ -22,26 +22,26 @@ async fn altyapi_ayaga_kalkiyor_ve_program_yuklu() {
         .get_account(luck_distributor::ID)
         .await
         .unwrap()
-        .expect("program hesabı test bankasında yok — program hiç yüklenmemiş");
+        .expect("the program account is not in the test bank — the program was never loaded");
 
     assert!(
         hesap.executable,
-        "program hesabı var ama çalıştırılabilir değil"
+        "the program account exists but is not executable"
     );
     assert_ne!(
         hesap.owner,
         Pubkey::default(),
-        "program hesabının sahibi yok — yükleme yarım kalmış"
+        "the program account has no owner — the load was left half-finished"
     );
 
-    // Sistem programı da yerinde olmalı; olmazsa hesap oluşturan her test
-    // sebebi anlaşılmaz bir hatayla düşer.
+    // The system program must be in place too; without it every test that creates
+    // an account fails with an incomprehensible error.
     assert!(
         ctx.banks_client
             .get_account(solana_sdk::system_program::ID)
             .await
             .unwrap()
             .is_some(),
-        "sistem programı test bankasında yok"
+        "the system program is not in the test bank"
     );
 }
