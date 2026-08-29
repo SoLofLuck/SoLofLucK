@@ -1,175 +1,175 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// Zincire giren bağımlılıklar — sabitlenmiş küme + açık kontrolü
+// On-chain dependencies — the pinned set plus an advisory check
 // ---------------------------------------------------------------------------
-// `cargo audit` Cargo.lock'u tarıyor. Cargo.lock ise testler için gelen TÜM
-// Solana validator/TLS yığınını içeriyor: h2, quinn (QUIC), rustls-webpki,
-// ring, tokio, curve25519-dalek... İlk CI koşusunda 10 "güvenlik açığı"
-// çıktı ve hepsi bu yığındandı. Hiçbiri zincire yüklenen programın içinde
-// değil.
+// `cargo audit` scans Cargo.lock. Cargo.lock contains the ENTIRE Solana
+// validator/TLS stack pulled in for tests: h2, quinn (QUIC), rustls-webpki,
+// ring, tokio, curve25519-dalek and so on. On the first CI run 10
+// "vulnerabilities" appeared and every one of them came from that stack. None
+// of them is inside the program uploaded to the chain.
 //
-// Cargo.lock'u zincirdeki programmış gibi denetlemek bir KATEGORİ HATASI.
-// Doğru soru: SBF derlemesine hangi paketler giriyor?
+// Auditing Cargo.lock as if it were the on-chain program is a CATEGORY ERROR.
+// The right question is: which packages enter the SBF build?
 //
-// Bu denetim o soruyu cevaplıyor (bkz. scripts/lib/sbf-deps.mjs — cfg
-// koşulları SBF hedefi için değerlendirilip grafik yürünüyor) ve iki şey
-// yapıyor:
+// This check answers that question (see scripts/lib/sbf-deps.mjs — the cfg
+// conditions are evaluated for the SBF target and the graph is walked) and does
+// two things:
 //
-//   1. Zincire giren küme SABİTLENMİŞ listeyle aynı mı. Yeni bir paket
-//      girerse denetim düşüyor ve birinin "bu paket ne, denetimden temiz
-//      mi" sorusunu sorması gerekiyor.
+//   1. Is the on-chain set identical to the PINNED list? If a new package
+//      enters, the check fails and somebody has to ask "what is this package,
+//      and is it clean?".
 //
-//   2. AUDIT_JSON verilmişse (CI veriyor), cargo-audit'in bulduğu açıkların
-//      hiçbiri bu kümede DEĞİL mi. Kümedeki bir paketin açığı çıkarsa
-//      denetim düşüyor — asıl sert kapı burası.
+//   2. If AUDIT_JSON is provided (CI provides it), is NONE of the advisories
+//      cargo-audit found in that set? If a package in the set has an advisory,
+//      the check fails — this is the hard gate.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { cfgDogruMu, kenarGecerli, sbfBagimliliklari } from './lib/sbf-deps.mjs'
+import { cfgIsTrue, edgeApplies, sbfDependencies } from './lib/sbf-deps.mjs'
 
-const kok = fileURLToPath(new URL('..', import.meta.url))
-const PROGRAMLAR = ['luck-game', 'luck-distributor']
-const KILIT_DOSYASI = `${kok}scripts/zincir-bagimliliklari.json`
+const root = fileURLToPath(new URL('..', import.meta.url))
+const PROGRAMS = ['luck-game', 'luck-distributor']
+const PIN_FILE = `${root}scripts/onchain-dependencies.json`
 
-// --- selftest: cfg değerlendiricisi ----------------------------------------
-// Bu değerlendirici bir GÜVENLİK kararını taşıyor: yanlış çalışırsa ya
-// zincirdeki bir paketi gözden kaçırırız (tehlikeli), ya da olmayan bir
-// paketi varmış sanarız (gürültü). O yüzden kendi testleri var.
+// --- selftest: the cfg evaluator -------------------------------------------
+// This evaluator carries a SECURITY decision: if it is wrong we either miss a
+// package that is on chain (dangerous) or believe in a package that is not
+// (noise). So it has its own tests.
 if (process.argv.includes('--selftest')) {
-  let dustu = 0
-  const k = (ad, gercek, beklenen) => {
-    const ok = gercek === beklenen
-    if (!ok) dustu++
-    console.log(`${ok ? 'GEÇTİ' : 'DÜŞTÜ'}  ${ad}`)
-    if (!ok) console.log(`   beklenen ${beklenen}, gelen ${gercek}`)
+  let failed = 0
+  const t = (name, actual, expected) => {
+    const ok = actual === expected
+    if (!ok) failed++
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`)
+    if (!ok) console.log(`   expected ${expected}, got ${actual}`)
   }
 
-  k('target_os = "solana" doğru', cfgDogruMu('target_os = "solana"'), true)
-  k('not(target_os = "solana") yanlış', cfgDogruMu('not(target_os = "solana")'), false)
-  k('target_os = "linux" yanlış', cfgDogruMu('target_os = "linux"'), false)
-  k('unix yanlış', cfgDogruMu('unix'), false)
-  k('windows yanlış', cfgDogruMu('windows'), false)
-  k('any(unix, windows) yanlış', cfgDogruMu('any(unix, windows)'), false)
-  k('not(any(unix, windows)) doğru', cfgDogruMu('not(any(unix, windows))'), true)
-  k('target_pointer_width = "64" doğru', cfgDogruMu('target_pointer_width = "64"'), true)
-  k('target_arch = "wasm32" yanlış', cfgDogruMu('target_arch = "wasm32"'), false)
-  k(
-    'all(target_os = "solana", target_endian = "little") doğru',
-    cfgDogruMu('all(target_os = "solana", target_endian = "little")'),
+  t('target_os = "solana" is true', cfgIsTrue('target_os = "solana"'), true)
+  t('not(target_os = "solana") is false', cfgIsTrue('not(target_os = "solana")'), false)
+  t('target_os = "linux" is false', cfgIsTrue('target_os = "linux"'), false)
+  t('unix is false', cfgIsTrue('unix'), false)
+  t('windows is false', cfgIsTrue('windows'), false)
+  t('any(unix, windows) is false', cfgIsTrue('any(unix, windows)'), false)
+  t('not(any(unix, windows)) is true', cfgIsTrue('not(any(unix, windows))'), true)
+  t('target_pointer_width = "64" is true', cfgIsTrue('target_pointer_width = "64"'), true)
+  t('target_arch = "wasm32" is false', cfgIsTrue('target_arch = "wasm32"'), false)
+  t(
+    'all(target_os = "solana", target_endian = "little") is true',
+    cfgIsTrue('all(target_os = "solana", target_endian = "little")'),
     true,
   )
-  k(
-    'iç içe: not(all(any(unix, windows), target_os = "linux")) doğru',
-    cfgDogruMu('not(all(any(unix, windows), target_os = "linux"))'),
+  t(
+    'nested: not(all(any(unix, windows), target_os = "linux")) is true',
+    cfgIsTrue('not(all(any(unix, windows), target_os = "linux"))'),
     true,
   )
-  // Bilinmeyen derleme bayrakları kapalı sayılmalı; açık sayılırsa
-  // grafikte olmaması gereken paketler görünür.
-  k('bilinmeyen bayrak (miri) yanlış', cfgDogruMu('miri'), false)
-  k('rustix_use_libc yanlış', cfgDogruMu('rustix_use_libc'), false)
+  // Unknown build flags must count as off; counting them as on would surface
+  // packages that should not be in the graph.
+  t('an unknown flag (miri) is false', cfgIsTrue('miri'), false)
+  t('rustix_use_libc is false', cfgIsTrue('rustix_use_libc'), false)
 
-  k('koşulsuz kenar geçerli', kenarGecerli(null), true)
-  k('düz üçlü geçersiz', kenarGecerli('aarch64-linux-android'), false)
-  k('cfg(not(target_os="solana")) geçersiz', kenarGecerli('cfg(not(target_os = "solana"))'), false)
-  k('cfg(target_os="solana") geçerli', kenarGecerli('cfg(target_os = "solana")'), true)
+  t('an unconditional edge applies', edgeApplies(null), true)
+  t('a plain triple does not apply', edgeApplies('aarch64-linux-android'), false)
+  t('cfg(not(target_os="solana")) does not apply', edgeApplies('cfg(not(target_os = "solana"))'), false)
+  t('cfg(target_os="solana") applies', edgeApplies('cfg(target_os = "solana")'), true)
 
-  // Gerçeklikle sağlama: hesaplanan küme mantıklı mı.
-  const kume = new Set(sbfBagimliliklari(`${kok}program/luck-game`, 'luck-game'))
-  const ad = (x) => [...kume].some((p) => p.startsWith(x + '@'))
-  k('solana-program kümede', ad('solana-program'), true)
-  k('anchor-lang kümede', ad('anchor-lang'), true)
-  k('blake3 kümede', ad('blake3'), true)
-  // Bunların HİÇBİRİ zincire girmemeli. Girerlerse ya değerlendirici
-  // bozuk, ya gerçekten bir sorun var — ikisi de bakılmalı.
-  for (const disarida of ['tokio', 'h2', 'quinn-proto', 'rustls-webpki', 'ring', 'im', 'sized-chunks', 'curve25519-dalek', 'ed25519-dalek']) {
-    k(`${disarida} kümede DEĞİL`, ad(disarida), false)
+  // A sanity check against reality: is the computed set plausible?
+  const set = new Set(sbfDependencies(`${root}program/luck-game`, 'luck-game'))
+  const has = (x) => [...set].some((p) => p.startsWith(x + '@'))
+  t('solana-program is in the set', has('solana-program'), true)
+  t('anchor-lang is in the set', has('anchor-lang'), true)
+  t('blake3 is in the set', has('blake3'), true)
+  // NONE of these should enter the chain. If they do, either the evaluator is
+  // broken or there is a real problem — both need looking at.
+  for (const outside of ['tokio', 'h2', 'quinn-proto', 'rustls-webpki', 'ring', 'im', 'sized-chunks', 'curve25519-dalek', 'ed25519-dalek']) {
+    t(`${outside} is NOT in the set`, has(outside), false)
   }
 
-  console.log(dustu === 0 ? '\nTüm kontroller geçti.' : `\n${dustu} kontrol DÜŞTÜ.`)
-  process.exit(dustu === 0 ? 0 : 1)
+  console.log(failed === 0 ? '\nAll checks passed.' : `\n${failed} check(s) FAILED.`)
+  process.exit(failed === 0 ? 0 : 1)
 }
 
-// --- asıl denetim -----------------------------------------------------------
-const hatalar = []
-const kontroller = []
+// --- the check itself -------------------------------------------------------
+const problems = []
+const checks = []
 
-const guncelle = process.argv.includes('--guncelle')
-const sabit = existsSync(KILIT_DOSYASI)
-  ? JSON.parse(readFileSync(KILIT_DOSYASI, 'utf8'))
+const update = process.argv.includes('--update')
+const pinned = existsSync(PIN_FILE)
+  ? JSON.parse(readFileSync(PIN_FILE, 'utf8'))
   : {}
 
-const hesaplanan = {}
-for (const program of PROGRAMLAR) {
-  hesaplanan[program] = sbfBagimliliklari(`${kok}program/${program}`, program)
+const computed = {}
+for (const program of PROGRAMS) {
+  computed[program] = sbfDependencies(`${root}program/${program}`, program)
 }
 
-if (guncelle) {
-  writeFileSync(KILIT_DOSYASI, JSON.stringify(hesaplanan, null, 2) + '\n')
-  console.log('zincir-bagimliliklari.json güncellendi. Değişikliği GÖZDEN GEÇİRİN:')
-  for (const p of PROGRAMLAR) console.log(`  ${p}: ${hesaplanan[p].length} paket`)
+if (update) {
+  writeFileSync(PIN_FILE, JSON.stringify(computed, null, 2) + '\n')
+  console.log('onchain-dependencies.json was updated. REVIEW the change:')
+  for (const p of PROGRAMS) console.log(`  ${p}: ${computed[p].length} package(s)`)
   process.exit(0)
 }
 
-for (const program of PROGRAMLAR) {
-  const gercek = hesaplanan[program]
-  const bek = sabit[program]
-  if (!bek) {
-    hatalar.push(`${program}: sabitlenmiş liste yok — 'node scripts/check-onchain-deps.mjs --guncelle' çalıştırın`)
-    kontroller.push({ ad: `${program}: sabitlenmiş liste var`, ok: false })
+for (const program of PROGRAMS) {
+  const actual = computed[program]
+  const expected = pinned[program]
+  if (!expected) {
+    problems.push(`${program}: no pinned list — run 'node scripts/check-onchain-deps.mjs --update'`)
+    checks.push({ name: `${program}: has a pinned list`, ok: false })
     continue
   }
-  const eksik = bek.filter((d) => !gercek.includes(d))
-  const fazla = gercek.filter((d) => !bek.includes(d))
-  const ok = eksik.length === 0 && fazla.length === 0
-  kontroller.push({ ad: `${program}: zincire giren ${gercek.length} paket`, ok })
-  if (fazla.length) {
-    hatalar.push(
-      `${program}: zincire YENİ giren paket(ler): ${fazla.join(', ')}\n` +
-        '      Bu paketler deploy edilen bytecode\'un içine giriyor. RustSec\n' +
-        '      kaydını kontrol edip listeyi --guncelle ile bilerek tazeleyin.',
+  const missing = expected.filter((d) => !actual.includes(d))
+  const added = actual.filter((d) => !expected.includes(d))
+  const ok = missing.length === 0 && added.length === 0
+  checks.push({ name: `${program}: ${actual.length} package(s) enter the chain`, ok })
+  if (added.length) {
+    problems.push(
+      `${program}: package(s) NEWLY entering the chain: ${added.join(', ')}\n` +
+        "      These packages go inside the deployed bytecode. Check their RustSec\n" +
+        '      record and refresh the list deliberately with --update.',
     )
   }
-  if (eksik.length) {
-    hatalar.push(`${program}: listede olup artık girmeyen: ${eksik.join(', ')} — --guncelle ile tazeleyin`)
+  if (missing.length) {
+    problems.push(`${program}: in the list but no longer entering: ${missing.join(', ')} — refresh with --update`)
   }
 }
 
-// --- cargo-audit çıktısıyla çapraz kontrol ---------------------------------
-// AUDIT_JSON, `cargo audit --json` çıktısının yolu. CI veriyor; yerelde
-// yoksa bu bölüm atlanıyor (sandbox'ta crates.io'ya erişim yok).
-const auditYolu = process.env.AUDIT_JSON
-if (auditYolu) {
-  if (!existsSync(auditYolu)) {
-    hatalar.push(`AUDIT_JSON verildi ama dosya yok: ${auditYolu}`)
-    kontroller.push({ ad: 'audit çıktısı okunabildi', ok: false })
+// --- cross-check against the cargo-audit output ----------------------------
+// AUDIT_JSON is the path to the `cargo audit --json` output. CI provides it;
+// without it this section is skipped (the sandbox has no crates.io access).
+const auditPath = process.env.AUDIT_JSON
+if (auditPath) {
+  if (!existsSync(auditPath)) {
+    problems.push(`AUDIT_JSON was given but the file does not exist: ${auditPath}`)
+    checks.push({ name: 'the audit output could be read', ok: false })
   } else {
-    let rapor
+    let report
     try {
-      rapor = JSON.parse(readFileSync(auditYolu, 'utf8'))
+      report = JSON.parse(readFileSync(auditPath, 'utf8'))
     } catch (e) {
-      hatalar.push(`audit JSON ayrıştırılamadı: ${e.message}`)
-      rapor = null
+      problems.push(`the audit JSON could not be parsed: ${e.message}`)
+      report = null
     }
-    // Şema değişmişse SESSİZCE GEÇMEK en kötü sonuç: denetim koşmamış olur
-    // ama yeşil görünür.
-    const liste = rapor?.vulnerabilities?.list
-    if (!Array.isArray(liste)) {
-      hatalar.push(
-        'audit JSON içinde vulnerabilities.list bulunamadı — cargo-audit şeması değişmiş olabilir',
+    // PASSING SILENTLY when the schema has changed is the worst outcome: the
+    // check would not have run at all, yet it would look green.
+    const list = report?.vulnerabilities?.list
+    if (!Array.isArray(list)) {
+      problems.push(
+        'vulnerabilities.list was not found in the audit JSON — the cargo-audit schema may have changed',
       )
-      kontroller.push({ ad: 'audit şeması tanındı', ok: false })
+      checks.push({ name: 'the audit schema was recognised', ok: false })
     } else {
-      kontroller.push({ ad: `audit raporu okundu (${liste.length} açık, tüm kilit dosyası)`, ok: true })
-      const tumKume = new Set(PROGRAMLAR.flatMap((p) => hesaplanan[p]))
-      const zincirdekiler = liste.filter((v) =>
-        tumKume.has(`${v.package?.name}@${v.package?.version}`),
+      checks.push({ name: `audit report read (${list.length} advisories, whole lockfile)`, ok: true })
+      const wholeSet = new Set(PROGRAMS.flatMap((p) => computed[p]))
+      const onChain = list.filter((v) =>
+        wholeSet.has(`${v.package?.name}@${v.package?.version}`),
       )
-      const ok = zincirdekiler.length === 0
-      kontroller.push({ ad: 'zincire giren paketlerde açık yok', ok })
+      const ok = onChain.length === 0
+      checks.push({ name: 'no advisories in the packages that enter the chain', ok })
       if (!ok) {
-        hatalar.push(
-          'ZİNCİRDEKİ PROGRAMDA GÜVENLİK AÇIĞI:\n' +
-            zincirdekiler
+        problems.push(
+          'A SECURITY ADVISORY IN THE ON-CHAIN PROGRAM:\n' +
+            onChain
               .map(
                 (v) =>
                   `      - ${v.package.name} ${v.package.version}: ` +
@@ -178,20 +178,20 @@ if (auditYolu) {
               .join('\n'),
         )
       }
-      const disaridakiler = liste.length - zincirdekiler.length
-      if (disaridakiler > 0) {
+      const offChain = list.length - onChain.length
+      if (offChain > 0) {
         console.log(
-          `  (${disaridakiler} açık yalnızca test/ana-makine yığınında — zincire girmiyor)`,
+          `  (${offChain} advisories are in the test/host stack only — they do not enter the chain)`,
         )
       }
     }
   }
 }
 
-for (const c of kontroller) console.log(`${c.ok ? '✓' : '✗'} ${c.ad}`)
+for (const c of checks) console.log(`${c.ok ? '✓' : '✗'} ${c.name}`)
 
-if (hatalar.length > 0) {
-  console.error(`\n${hatalar.length} sorun:\n` + hatalar.map((h) => `  - ${h}`).join('\n'))
+if (problems.length > 0) {
+  console.error(`\n${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join('\n'))
   process.exit(1)
 }
-console.log('\nZincire giren bağımlılıklar sabitlenmiş listeyle aynı.')
+console.log('\nThe dependencies entering the chain match the pinned list.')

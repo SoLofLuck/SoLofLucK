@@ -1,33 +1,33 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// Merkle ağacı üreticisi — claim programının girdisi
+// The merkle tree builder — the claim program's input
 // ---------------------------------------------------------------------------
-// Alıcı listesini alır, zincire yazılacak 32 baytlık kökü ve her alıcının
-// kendi payını kanıtlayan "proof"u üretir.
+// Takes the recipient list and produces the 32-byte root that goes on chain,
+// plus the "proof" with which each recipient proves their own share.
 //
-// ÇIKTININ TAMAMI YAYINLANIR. Merkle'ın buradaki değeri gizlilik değil,
-// DOĞRULANABİLİRLİK: zincirde tek bir kök duruyor, alıcı da kanıtını
-// getiriyor. Liste yayınlandığı için herkes kendi payını görebiliyor,
-// kimse listeye sonradan eklenemiyor (kök değişirdi) ve biz de kimsenin
-// payını sessizce değiştiremiyoruz.
+// THE WHOLE OUTPUT IS PUBLISHED. The value of merkle here is not privacy but
+// VERIFIABILITY: a single root sits on chain and the recipient brings their
+// proof. Because the list is published, everyone can see their own share,
+// nobody can be added to the list afterwards (the root would change), and we
+// cannot silently alter anyone's share either.
 //
-// HASH'LEME, programdaki (program/luck-distributor/src/lib.rs) mantığın
-// birebir aynısı olmak ZORUNDA. Bir baytlık fark, TGE günü herkesin
-// kanıtının reddedilmesi demek. Bu yüzden aşağıdaki `--selftest` modu var:
-// sabit girdilerle üretilen kök, Rust tarafındaki testte de kontrol
-// ediliyor (bkz. merkle_matches_javascript_builder). İki bağımsız
-// uygulama aynı sonucu vermezse testler bunu TGE'den önce yakalar.
+// THE HASHING must be byte-for-byte identical to the logic in the program
+// (program/luck-distributor/src/lib.rs). A single byte of difference means
+// everyone's proof is rejected on TGE day. That is why the `--selftest` mode
+// below exists: the root produced from fixed inputs is also checked in the Rust
+// test (see merkle_matches_javascript_builder). If the two independent
+// implementations disagree, the tests catch it before TGE.
 //
-// Kullanım:
-//   # presale (buyers.json → presale-merkle.json)
+// Usage:
+//   # presale (buyers.json -> presale-merkle.json)
 //   node scripts/build-merkle.mjs buyers.json > presale-merkle.json
 //
-//   # çekiliş turu (kazanan adresleri, herkese eşit ödül)
-//   # DİKKAT: --amount EN KÜÇÜK BİRİM, tam token değil.
-//   # 1.110.000 $LUCK, 9 ondalıkta = 1110000 × 10^9 = 1110000000000000
+//   # a raffle round (winner addresses, an equal prize for everyone)
+//   # CAREFUL: --amount is in THE SMALLEST UNIT, not whole tokens.
+//   # 1,110,000 $LUCK at 9 decimals = 1110000 x 10^9 = 1110000000000000
 //   node scripts/build-merkle.mjs --amount 1110000000000000 winners.txt > round-1.json
 //
-//   # iki uygulamanın uyuştuğunu doğrula
+//   # verify that the two implementations agree
 //   node scripts/build-merkle.mjs --selftest
 
 import { readFileSync } from 'node:fs'
@@ -59,13 +59,13 @@ function u64le(value) {
   return out
 }
 
-/** keccak(0x00 || alıcı(32) || miktar_le(8)) */
+/** keccak(0x00 || recipient(32) || amount_le(8)) */
 export function leafHash(address, amount) {
   const key = new PublicKey(address).toBytes()
   return keccak_256(concat(LEAF_PREFIX, key, u64le(amount)))
 }
 
-/** keccak(0x01 || küçük || büyük) — "sorted pair", proof'ta yön taşımaya gerek yok. */
+/** keccak(0x01 || smaller || larger) — a "sorted pair", so the proof carries no direction. */
 function nodeHash(a, b) {
   const [lo, hi] = compare(a, b) <= 0 ? [a, b] : [b, a]
   return keccak_256(concat(NODE_PREFIX, lo, hi))
@@ -81,12 +81,12 @@ function compare(a, b) {
 const hex = (bytes) => Buffer.from(bytes).toString('hex')
 
 /**
- * Ağacı kurar. Bir seviyede tek düğüm artarsa olduğu gibi bir üst seviyeye
- * taşınıyor ("promote") — kopyalayıp kendisiyle eşlemek yaygın bir hatadır
- * ve aynı yaprağın iki kez sayılmasına yol açabilir.
+ * Builds the tree. If a level is left with an odd node, it is promoted to the
+ * level above as it is — duplicating it and pairing it with itself is a common
+ * mistake and can lead to the same leaf being counted twice.
  */
 export function buildTree(leaves) {
-  if (leaves.length === 0) throw new Error('Boş liste — ağaç kurulamaz.')
+  if (leaves.length === 0) throw new Error('Empty list — a tree cannot be built.')
   const levels = [leaves]
   while (levels[levels.length - 1].length > 1) {
     const prev = levels[levels.length - 1]
@@ -111,7 +111,7 @@ export function proofFor(levels, index) {
   return proof
 }
 
-/** Üretilen kanıtın gerçekten köke çıktığını doğrular. */
+/** Verifies that the produced proof really does lead to the root. */
 export function verify(proof, root, leaf) {
   let computed = leaf
   for (const sibling of proof) computed = nodeHash(computed, sibling)
@@ -124,57 +124,59 @@ function parseEntries(argv) {
   const amountFlagIdx = argv.indexOf('--amount')
   const fixedAmount = amountFlagIdx >= 0 ? argv[amountFlagIdx + 1] : null
   // `--amount` YOKKEN indeks -1 oluyordu ve `amountFlagIdx + 1` de 0 —
-  // yani filtre, dosya adı tek argümansa TAM ONU eliyordu. Sonuç:
-  // "Girdi dosyası verilmedi". Presale yolu (JSON, --amount'suz) bu
-  // yüzden hiç çalışmamış; yalnızca --amount verilen çekiliş yolu
-  // çalışıyordu.
+  // so the filter removed EXACTLY the file name when it was the only
+  // argument. The result: "No input file was given". That is why the
+  // presale path (JSON, without --amount) never worked; only the raffle
+  // path, which passes --amount, did.
   const amountValueIdx = amountFlagIdx >= 0 ? amountFlagIdx + 1 : -1
   const file = argv.filter((a, i) => !a.startsWith('--') && i !== amountValueIdx).at(-1)
-  if (!file) throw new Error('Girdi dosyası verilmedi.')
+  if (!file) throw new Error('No input file was given.')
 
   const raw = readFileSync(file, 'utf8')
 
-  // presale-buyers.mjs çıktısı (JSON) mı, düz adres listesi mi?
+  // Is this presale-buyers.mjs output (JSON) or a plain address list?
   if (raw.trimStart().startsWith('{')) {
     const parsed = JSON.parse(raw)
 
-    // draw-raffle.mjs çıktısı: kazanan adresleri + ödül --amount ile
-    // veriliyor (herkese eşit).
+    // draw-raffle.mjs output: the winner addresses, with the prize given
+    // through --amount (equal for everyone).
     //
-    // Bu yol olmadan TGE'de ELLE adres ayıklamak gerekiyordu: çekiliş
-    // JSON üretiyor, build-merkle ise düz adres listesi bekliyordu.
-    // Aradaki dönüşümü insana bırakmak, tam da acele edilen bir günde
-    // kopyala-yapıştır hatasına açık kapı demek.
+    // Without this path, addresses had to be extracted BY HAND at TGE: the
+    // raffle produces JSON while build-merkle expected a plain address
+    // list. Leaving that conversion to a human is an open door to a
+    // copy-paste mistake on exactly the day everyone is in a hurry.
     if (Array.isArray(parsed.winners)) {
       if (!fixedAmount) {
         throw new Error(
-          'Çekiliş sonucu için --amount <en küçük birim> vermelisiniz ' +
-            '(ör. 1.110.000 $LUCK, 9 ondalıkta = 1110000000000000).',
+          'For a raffle result you must pass --amount <smallest unit> ' +
+            '(e.g. 1,110,000 $LUCK at 9 decimals = 1110000000000000).',
         )
       }
       return parsed.winners.map((w) => ({ address: w.address, amount: BigInt(fixedAmount) }))
     }
 
     if (!Array.isArray(parsed.buyers)) {
-      throw new Error('JSON içinde "buyers" (presale) ya da "winners" (çekiliş) dizisi yok.')
+      throw new Error('The JSON contains neither a "buyers" (presale) nor a "winners" (raffle) array.')
     }
-    // `baseUnits` KULLANILIYOR, `tokens` DEĞİL — ve bu ayrım kritik.
+    // `baseUnits` IS USED, NOT `tokens` — and that distinction is critical.
     //
-    // `tokens` insan için: tam token sayısı (ör. 350000). `baseUnits`
-    // zincir için: en küçük birim, yani tokens × 10^decimals. Merkle
-    // yaprağına giren sayı doğrudan claim talimatına gidiyor ve SPL token
-    // programı EN KÜÇÜK BİRİM bekliyor.
+    // `tokens` is for humans: the whole token count (e.g. 350000).
+    // `baseUnits` is for the chain: the smallest unit, i.e. tokens x
+    // 10^decimals. The number that enters the merkle leaf goes straight into
+    // the claim instruction, and the SPL token program expects THE SMALLEST
+    // UNIT.
     //
-    // Burada bir zamanlar `b.tokens` okunuyordu. 9 ondalıkta aradaki fark
-    // 1.000.000.000 kat: her alıcı hak ettiğinin MİLYARDA BİRİNİ alırdı.
-    // İşlemler başarıyla geçer, hiçbir hata görünmez, ve bunu ancak
-    // alıcılar cüzdanlarına bakınca fark ederdi.
+    // `b.tokens` was once read here. At 9 decimals the difference is a factor
+    // of 1,000,000,000: every recipient would have received A BILLIONTH of
+    // what they were owed. The transactions succeed, no error appears, and
+    // the only people who would notice are the recipients looking at their
+    // wallets.
     return parsed.buyers.map((b) => {
       if (b.baseUnits === undefined) {
         throw new Error(
-          `Alıcı kaydında "baseUnits" yok (${b.address}). Alıcı listesi eski ` +
-            'sürüm presale-buyers.mjs ile üretilmiş olabilir — yeniden üretin. ' +
-            '"tokens" alanı TAM TOKEN sayısıdır ve merkle yaprağına konamaz.',
+          `The recipient record has no "baseUnits" (${b.address}). The list may have ` +
+            'been produced by an older version of presale-buyers.mjs — rebuild it. ' +
+            'The "tokens" field is a WHOLE TOKEN count and cannot go into a merkle leaf.',
         )
       }
       return { address: b.address, amount: BigInt(b.baseUnits) }
@@ -182,7 +184,7 @@ function parseEntries(argv) {
   }
 
   if (!fixedAmount) {
-    throw new Error('Düz adres listesi için --amount <miktar> vermelisiniz.')
+    throw new Error('For a plain address list you must pass --amount <amount>.')
   }
   return raw
     .split('\n')
@@ -192,14 +194,15 @@ function parseEntries(argv) {
 }
 
 export function build(entries) {
-  // Aynı adres iki kez geçerse iki ayrı yaprak olurdu ama claim_status
-  // hesabı alıcı başına TEK olduğu için ikincisi asla çekilemezdi — yani
-  // sessizce para kilitlenirdi. Baştan hata veriyoruz.
+  // If the same address appeared twice there would be two separate leaves, but
+  // because the claim_status account is unique PER RECIPIENT the second could
+  // never be claimed — money would be silently locked up. We error out
+  // instead.
   const seen = new Set()
   for (const e of entries) {
-    if (seen.has(e.address)) throw new Error(`Adres listede iki kez var: ${e.address}`)
+    if (seen.has(e.address)) throw new Error(`The address appears twice in the list: ${e.address}`)
     seen.add(e.address)
-    if (e.amount <= 0n) throw new Error(`Miktar sıfır veya negatif: ${e.address}`)
+    if (e.amount <= 0n) throw new Error(`The amount is zero or negative: ${e.address}`)
   }
 
   const leaves = entries.map((e) => leafHash(e.address, e.amount))
@@ -208,10 +211,10 @@ export function build(entries) {
 
   const claims = entries.map((e, i) => {
     const proof = proofFor(levels, i)
-    // Her kanıtı burada, üretir üretmez doğruluyoruz. Bozuk bir kanıtın
-    // TGE günü kullanıcının ekranında keşfedilmesi kabul edilemez.
+    // Every proof is verified here, the moment it is produced. Discovering a
+    // broken proof on a user's screen on TGE day is not acceptable.
     if (!verify(proof, root, leaves[i])) {
-      throw new Error(`Kanıt doğrulanamadı: ${e.address}`)
+      throw new Error(`The proof could not be verified: ${e.address}`)
     }
     return {
       address: e.address,
@@ -225,9 +228,9 @@ export function build(entries) {
 }
 
 // --- selftest ---------------------------------------------------------------
-// Rust tarafındaki testin beklediği sabit vektörler. Değiştirilirse
-// program/luck-distributor/tests/distributor.rs'teki sabit de güncellenmeli
-// — zaten uyuşmazsa test düşer, sessizce kaymaz.
+// The fixed vectors the Rust-side test expects. If they change, the constant in
+// program/luck-distributor/tests/distributor.rs has to be updated too — and if
+// they disagree the test fails anyway, so nothing drifts silently.
 const SELFTEST = [
   { address: 'BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36', amount: 1n },
   { address: '2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9', amount: 271_950_137n },
@@ -236,26 +239,26 @@ const SELFTEST = [
   { address: 'BiWqNZzCPCfJtVPNhoCrvEb9s6unpCFXXf38GR3WnPWX', amount: 70_007n },
 ]
 
-// Aşağısı yalnızca script DOĞRUDAN çalıştırıldığında koşuyor. Bu dosya aynı
-// zamanda bir modül: claim ekranı ve testler `leafHash`/`buildTree`/`verify`
-// fonksiyonlarını import ediyor, o sırada CLI'nin devreye girmemesi gerek.
+// What follows runs only when the script is executed DIRECTLY. This file is
+// also a module: the claim screen and the tests import the `leafHash`,
+// `buildTree` and `verify` functions, and the CLI must not fire while they do.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (isMain && process.argv.includes('--selftest')) {
-  // --- Girdi ayrıştırma ve birim testleri --------------------------------
-  // İkisi de GERÇEK hatalardan geliyor; ikisi de sessizdi.
-  const { mkdtempSync, writeFileSync: yaz } = await import('node:fs')
+  // --- Input parsing and unit tests --------------------------------------
+  // Both come from REAL bugs; both were silent.
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
-  const gecici = mkdtempSync(join(tmpdir(), 'merkle-selftest-'))
+  const tmpDir = mkdtempSync(join(tmpdir(), 'merkle-selftest-'))
 
-  // 1) `--amount` YOKKEN dosya adı okunabiliyor mu?
-  //    Ayrıştırıcı, bayrak yokken indeks -1 olduğu için `-1 + 1 = 0`
-  //    hesabıyla İLK argümanı eliyordu — tek argüman dosya adı olduğunda
-  //    tam onu. Presale yolu bu yüzden hiç çalışmamıştı.
-  const presaleDosyasi = join(gecici, 'buyers.json')
-  yaz(
-    presaleDosyasi,
+  // 1) Can the file name be read WITHOUT `--amount`?
+  //    With the flag absent the index is -1, so the parser computed
+  //    `-1 + 1 = 0` and removed the FIRST argument — exactly the file name
+  //    when it was the only one. That is why the presale path never worked.
+  const presaleFile = join(tmpDir, 'buyers.json')
+  writeFileSync(
+    presaleFile,
     JSON.stringify({
       buyers: [
         { address: SELFTEST[0].address, tokens: 350_000, baseUnits: '350000000000000' },
@@ -263,53 +266,53 @@ if (isMain && process.argv.includes('--selftest')) {
       ],
     }),
   )
-  let presaleGirdileri
+  let presaleEntries
   try {
-    presaleGirdileri = parseEntries([presaleDosyasi])
+    presaleEntries = parseEntries([presaleFile])
   } catch (err) {
     console.error(
-      `SELFTEST DÜŞTÜ: --amount olmadan girdi dosyası okunamadı — ${err.message}`,
+      `SELFTEST FAILED: the input file could not be read without --amount — ${err.message}`,
     )
     process.exit(1)
   }
-  if (presaleGirdileri.length !== 2) {
+  if (presaleEntries.length !== 2) {
     console.error(
-      `SELFTEST DÜŞTÜ: ${presaleGirdileri.length} alıcı okundu, 2 olmalıydı.`,
+      `SELFTEST FAILED: ${presaleEntries.length} recipient(s) read, it should have been 2.`,
     )
     process.exit(1)
   }
 
-  // 2) Merkle yaprağına EN KÜÇÜK BİRİM giriyor mu, tam token değil?
-  //    9 ondalıkta aradaki fark 1.000.000.000 kat: yanlış olan her
-  //    alıcıya hak ettiğinin milyarda birini öderdi ve hiçbir hata
-  //    görünmezdi.
-  if (presaleGirdileri[0].amount !== 350_000_000_000_000n) {
+  // 2) Does THE SMALLEST UNIT enter the merkle leaf rather than whole tokens?
+  //    At 9 decimals the difference is a factor of 1,000,000,000: getting it
+  //    wrong would pay every recipient a billionth of what they were owed,
+  //    and no error would appear.
+  if (presaleEntries[0].amount !== 350_000_000_000_000n) {
     console.error(
-      `SELFTEST DÜŞTÜ: yaprak miktarı ${presaleGirdileri[0].amount}, ` +
-        'olması gereken 350000000000000 (en küçük birim).',
+      `SELFTEST FAILED: the leaf amount is ${presaleEntries[0].amount}, ` +
+        'it should be 350000000000000 (the smallest unit).',
     )
     process.exit(1)
   }
 
-  // 3) `baseUnits` içermeyen ESKİ biçimli liste reddediliyor mu?
-  const eskiDosya = join(gecici, 'eski.json')
-  yaz(eskiDosya, JSON.stringify({ buyers: [{ address: SELFTEST[0].address, tokens: 350_000 }] }))
-  let reddedildi = false
+  // 3) Is an OLD-format list without `baseUnits` rejected?
+  const oldFile = join(tmpDir, 'old.json')
+  writeFileSync(oldFile, JSON.stringify({ buyers: [{ address: SELFTEST[0].address, tokens: 350_000 }] }))
+  let rejected = false
   try {
-    parseEntries([eskiDosya])
+    parseEntries([oldFile])
   } catch {
-    reddedildi = true
+    rejected = true
   }
-  if (!reddedildi) {
-    console.error('SELFTEST DÜŞTÜ: baseUnits içermeyen liste sessizce kabul edildi.')
+  if (!rejected) {
+    console.error('SELFTEST FAILED: a list without baseUnits was silently accepted.')
     process.exit(1)
   }
-  console.log('Girdi ayrıştırma ve birim kontrolleri: GEÇTİ\n')
+  console.log('Input parsing and unit checks: PASSED\n')
 
   const out = build(SELFTEST)
-  console.log('Sabit vektör kökü (Rust testi bu değeri beklemeli):')
+  console.log('The fixed-vector root (the Rust test must expect this value):')
   console.log(out.root)
-  console.log('\nToplam:', out.total, '· yaprak:', out.count)
+  console.log('\nTotal:', out.total, '· leaves:', out.count)
   for (const c of out.claims) {
     console.log(`  ${c.address}  ${c.amount}  proof=${c.proof.length}`)
   }
@@ -318,8 +321,8 @@ if (isMain && process.argv.includes('--selftest')) {
 
 if (isMain) {
   const entries = parseEntries(process.argv.slice(2))
-  process.stderr.write(`${entries.length} alıcı okundu, ağaç kuruluyor...\n`)
+  process.stderr.write(`${entries.length} recipient(s) read, building the tree...\n`)
   const result = build(entries)
-  process.stderr.write(`Kök: ${result.root}\nToplam: ${result.total}\n`)
+  process.stderr.write(`Root: ${result.root}\nTotal: ${result.total}\n`)
   console.log(JSON.stringify(result, null, 2))
 }

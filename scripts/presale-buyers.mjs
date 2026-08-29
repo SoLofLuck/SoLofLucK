@@ -1,52 +1,53 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// Presale alıcı listesi — zincirden
+// The presale buyer list — from the chain
 // ---------------------------------------------------------------------------
-// Presale kasasına gelen HER transferi okuyup gönderen adrese göre toplar ve
-// her alıcının kaç $LUCK ile kaç çekiliş bileti hak ettiğini hesaplar.
+// Reads EVERY transfer into the presale wallet, aggregates them by sending
+// address, and computes how many $LUCK and how many raffle tickets each buyer
+// has earned.
 //
-// NEDEN BU SCRIPT VAR: sitede katkı geçmişi yalnızca kullanıcının kendi
-// tarayıcısında (localStorage) tutuluyor — yani bizde hiçbir kayıt yok, olması
-// da gerekmiyor. Tek doğru kaynak zincirin kendisi. Aynı script'i alıcılar da
-// çalıştırıp kendi paylarını bizden bağımsız doğrulayabilir; "listeyi biz
-// tuttuk, bize güvenin" demek zorunda kalmıyoruz.
+// WHY THIS SCRIPT EXISTS: on the site the contribution history is kept only in
+// the user's own browser (localStorage) — so we hold no record, and we do not
+// need to. The only source of truth is the chain itself. Buyers can run the same
+// script and verify their own share independently of us; we never have to say
+// "we kept the list, trust us".
 //
-// KATKI İKİ PARÇAYA BÖLÜNÜYOR — ikisini de saymak ZORUNDAYIZ:
-// site katkıyı tek işlemde ikiye ayırıyor; %90 presale kasasına, %10
-// operasyon cüzdanına (bkz. src/lib/presale.ts splitContributionLamports).
-// Ama ilan edilen fiyat GÖNDERİLEN TAM TUTAR üzerinden: "1 SOL = 350.000
-// $LUCK" ve "pay bilet sayını düşürmez". Yalnızca presale kasasına
-// ulaşanı saysaydık HER ALICIYA %10 EKSİK token verirdik — 777 SOL
-// hedefinde 27.195.000 $LUCK'lık sessiz bir eksiklik.
+// THE CONTRIBUTION IS SPLIT IN TWO — we MUST count both parts:
+// the site splits a contribution in one transaction; 90% to the presale wallet
+// and 10% to the operations wallet (see splitContributionLamports in
+// src/lib/presale.ts). But the announced price is on THE FULL AMOUNT SENT:
+// "1 SOL = 350,000 $LUCK" and "the share does not reduce your ticket count". If
+// we counted only what reaches the presale wallet we would give EVERY BUYER 10%
+// TOO FEW tokens — a silent shortfall of 27,195,000 $LUCK at the 777 SOL target.
 //
-// Bu yüzden her işlemde İKİ cüzdanın da bakiye artışını topluyoruz.
-// Operasyon payını yalnızca presale kasasının da alacaklandığı
-// işlemlerde sayıyoruz — o cüzdana başka bir sebeple gelen para
-// katkı sanılmasın diye.
+// So on every transaction we add up the balance increase of BOTH wallets. The
+// operations share is counted only on transactions where the presale wallet was
+// also credited — so money arriving in that wallet for some other reason is not
+// mistaken for a contribution.
 //
-// NEYE GÜVENMİYORUZ: işlemlere yazdığımız memo'ya. Memo, gönderenin kendi
-// yazdığı serbest metindir — elle işlem oluşturan biri oraya istediği bilet
-// sayısını yazabilir. Bu yüzden tutar da bilet de YALNIZCA hesabın gerçek
-// bakiye değişiminden hesaplanıyor.
+// WHAT WE DO NOT TRUST: the memo we write into the transactions. A memo is free
+// text written by the sender — anyone building a transaction by hand could write
+// whatever ticket count they liked. So both the amount and the tickets are
+// computed ONLY from the account's real balance change.
 //
-// Kullanım:
+// Usage:
 //   node scripts/presale-buyers.mjs > buyers.json
 //
-// Ortam değişkenleri:
-//   RPC_URL      Solana RPC (varsayılan: mainnet-beta genel uç nokta)
-//   WALLET       Presale kasası (varsayılan: src/config.ts'teki PRESALE_WALLET)
-//   START_ISO    Bu tarihten ÖNCEKİ işlemler yok sayılır (presale açılışı)
-//   END_ISO      Bu tarihten SONRAKİ işlemler yok sayılır (presale kapanışı)
-//   FORMAT       json (varsayılan) | csv
+// Environment variables:
+//   RPC_URL      Solana RPC (default: the public mainnet-beta endpoint)
+//   WALLET       The presale wallet (default: PRESALE_WALLET in src/config.ts)
+//   START_ISO    Transactions BEFORE this date are ignored (the presale opening)
+//   END_ISO      Transactions AFTER this date are ignored (the presale close)
+//   FORMAT       json (default) | csv
 //
-// NOT: genel (public) RPC uç noktaları hız sınırlıdır ve binlerce işlem
-// taranırken 429 döndürür. Gerçek dağıtımda Helius/QuickNode gibi kendi
-// uç noktanızı RPC_URL ile verin.
+// NOTE: public RPC endpoints are rate-limited and return 429 while thousands of
+// transactions are being scanned. For the real distribution, pass your own
+// endpoint (Helius, QuickNode or similar) through RPC_URL.
 
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { readFileSync } from 'node:fs'
 
-// --- config.ts'ten sabitleri oku (TS'i çalıştırmadan, basit regex ile) -------
+// --- read the constants from config.ts (a simple regex, without running TS) --
 function readConfigValue(name, fallback) {
   try {
     const src = readFileSync(new URL('../src/config.ts', import.meta.url), 'utf8')
@@ -66,22 +67,22 @@ const OPS_WALLET = process.env.OPS_WALLET ?? readConfigValue('PRESALE_OPS_WALLET
 const TOKENS_PER_SOL = Number(process.env.TOKENS_PER_SOL || readConfigValue('PRESALE_TOKENS_PER_SOL', 350000))
 const TICKET_UNIT_SOL = Number(process.env.TICKET_UNIT_SOL || readConfigValue('PRESALE_TICKET_UNIT_SOL', 0.5))
 const FORMAT = (process.env.FORMAT || 'json').toLowerCase()
-// $LUCK ondalık basamağı — zincirdeki en küçük birime çevirmek için.
+// The $LUCK decimals — for converting into the smallest on-chain unit.
 const DECIMALS = Number(process.env.DECIMALS || readConfigValue('DEFAULT_DECIMALS', 9))
 
 const startMs = process.env.START_ISO ? Date.parse(process.env.START_ISO) : null
 const endMs = process.env.END_ISO ? Date.parse(process.env.END_ISO) : null
 
 if (!WALLET) {
-  console.error('Presale cüzdanı bulunamadı. WALLET=<adres> verin.')
+  console.error('The presale wallet was not found. Pass WALLET=<address>.')
   process.exit(1)
 }
 if (process.env.START_ISO && Number.isNaN(startMs)) {
-  console.error('START_ISO geçersiz (ör. 2026-09-01T18:00:00Z).')
+  console.error('START_ISO is invalid (e.g. 2026-09-01T18:00:00Z).')
   process.exit(1)
 }
 if (process.env.END_ISO && Number.isNaN(endMs)) {
-  console.error('END_ISO geçersiz.')
+  console.error('END_ISO is invalid.')
   process.exit(1)
 }
 
@@ -89,21 +90,22 @@ const connection = new Connection(RPC_URL, 'confirmed')
 const wallet = new PublicKey(WALLET)
 
 /**
- * Bir işlemden katkıyı çıkarır. Saf fonksiyon: zincire hiç bakmıyor,
- * yalnızca hesap listesi ve bakiye değişimleriyle çalışıyor — bu sayede
- * sentetik verilerle test edilebiliyor (aşağıdaki --selftest).
+ * Extracts the contribution from a transaction. A pure function: it never looks
+ * at the chain and works only from the account list and the balance changes —
+ * which is what makes it testable with synthetic data (the --selftest below).
  *
- * Döndürdüğü `delta`, katkının TAMAMI: presale kasasına ulaşan kısım +
- * aynı işlemde operasyon cüzdanına giden pay. İkisini toplamak şart,
- * çünkü ilan edilen fiyat gönderilen tam tutar üzerinden.
+ * The `delta` it returns is the WHOLE contribution: the part reaching the
+ * presale wallet plus the share going to the operations wallet in the same
+ * transaction. Adding both is essential, because the announced price is on the
+ * full amount sent.
  */
 export function extractContribution(keys, preBalances, postBalances, poolWallet, opsWallet) {
   const idx = keys.indexOf(poolWallet)
   if (idx < 0) return null
 
   const poolDelta = (postBalances[idx] ?? 0) - (preBalances[idx] ?? 0)
-  // Presale kasasına para GİRMEDİYSE bu bir katkı değil (çıkış, ya da
-  // kasanın hiç etkilenmediği bir işlem).
+  // If NO money entered the presale wallet this is not a contribution (an
+  // outflow, or a transaction that did not touch the wallet at all).
   if (poolDelta <= 0) return null
 
   let opsDelta = 0
@@ -115,8 +117,8 @@ export function extractContribution(keys, preBalances, postBalances, poolWallet,
     }
   }
 
-  // Gönderen: işlemin ücretini ödeyen ilk imzacı. Presale akışında parayı
-  // gönderen ile imzalayan aynı cüzdan.
+  // The sender: the first signer, who pays the transaction fee. In the presale
+  // flow the wallet sending the money and the one signing are the same.
   const sender = keys[0]
   if (sender === poolWallet) return null
 
@@ -124,27 +126,28 @@ export function extractContribution(keys, preBalances, postBalances, poolWallet,
 }
 
 /**
- * BÜTÜNLÜK: taradığımız geçmiş kasanın BUGÜNKÜ bakiyesini açıklıyor mu?
+ * COMPLETENESS: does the history we scanned account for the wallet's balance
+ * TODAY?
  *
- * `getSignaturesForAddress` yalnızca RPC düğümünün SAKLADIĞI geçmişi
- * döndürüyor. Genel uç noktalar geçmişi buduyor (arşiv düğümü değiller).
- * Presale haftalarca sürerse ilk katkı yapanların işlemleri o pencerenin
- * dışında kalabilir — ve bu HİÇBİR HATA VERMEZ: script sorunsuz çalışır,
- * daha kısa bir liste üretir, o alıcılar merkle ağacına hiç girmez ve
- * TGE'de "listede değilsin" görürler. Kök zincire yazıldıktan sonra
- * düzeltilemez.
+ * `getSignaturesForAddress` returns only the history the RPC node KEEPS. Public
+ * endpoints prune history (they are not archive nodes). If the presale runs for
+ * weeks, the transactions of the earliest contributors can fall outside that
+ * window — and that RAISES NO ERROR: the script runs fine, produces a shorter
+ * list, those buyers never enter the merkle tree, and at TGE they see "you are
+ * not on the list". Once the root is written to the chain it cannot be fixed.
  *
- * Sağlaması basit: taradığımız her işlemde kasanın İMZALI bakiye
- * değişimini toplarsak, sonuç kasanın şu anki bakiyesine eşit olmalı
- * (kasa boş doğduğu için). Bakiye topladığımızdan FAZLAYSA, kasaya
- * göremediğimiz bir yerden para girmiş demektir — geçmiş eksik.
+ * The cross-check is simple: if we add up the SIGNED balance change of the
+ * wallet across every transaction we scanned, the result must equal the wallet's
+ * current balance (the wallet was born empty). If the balance is MORE than what
+ * we added up, money entered the wallet from somewhere we cannot see — the
+ * history is incomplete.
  *
- * Ters yön (topladığımız fazla) sorun değil: parayı biz çıkarmış
- * olabiliriz ve çıkışları da taramış oluruz.
+ * The other direction (our sum being larger) is not a problem: we may have taken
+ * money out, and we scan the outflows too.
  */
-export function butunlukKontrolu(taranan, mevcut, tolerans) {
-  const acik = mevcut - taranan
-  return { tamam: acik <= tolerans, acik }
+export function completenessCheck(scanned, current, tolerance) {
+  const gap = current - scanned
+  return { complete: gap <= tolerance, gap }
 }
 
 // --- selftest ----------------------------------------------------------------
@@ -157,102 +160,102 @@ if (process.argv.includes('--selftest')) {
   const check = (name, actual, expected) => {
     const ok = JSON.stringify(actual) === JSON.stringify(expected)
     if (!ok) failed++
-    console.log(`${ok ? 'GEÇTİ' : 'DÜŞTÜ'}  ${name}`)
+    console.log(`${ok ? 'PASSED' : 'FAILED'}  ${name}`)
     if (!ok) console.log(`   beklenen ${JSON.stringify(expected)}, gelen ${JSON.stringify(actual)}`)
   }
 
-  // 1) Normal katkı: 1 SOL, %90 kasaya + %10 operasyona
+  // 1) An ordinary contribution: 1 SOL, 90% to the wallet + 10% to operations
   check(
-    'bölünmüş katkı → tam tutar sayılıyor',
+    'a split contribution -> the full amount is counted',
     extractContribution([USER, POOL, OPS], [10 * L, 0, 0], [9 * L, 0.9 * L, 0.1 * L], POOL, OPS)?.delta,
     L,
   )
 
-  // 2) Doğrudan kasaya gönderim (operasyon payı yok)
+  // 2) Sent straight to the wallet (no operations share)
   check(
-    'bölünmemiş katkı → olduğu gibi sayılıyor',
+    'an unsplit contribution -> counted as it is',
     extractContribution([USER, POOL], [10 * L, 0], [9 * L, L], POOL, OPS)?.delta,
     L,
   )
 
-  // 3) Kasadan ÇIKIŞ — katkı değil
+  // 3) An OUTFLOW from the wallet — not a contribution
   check(
-    'kasadan çıkış → sayılmıyor',
+    'an outflow from the wallet -> not counted',
     extractContribution([POOL, USER], [10 * L, 0], [9 * L, L], POOL, OPS),
     null,
   )
 
-  // 4) Yalnızca operasyon cüzdanına para — katkı değil
+  // 4) Money to the operations wallet only — not a contribution
   check(
-    'sadece operasyon cüzdanı → sayılmıyor',
+    'the operations wallet only -> not counted',
     extractContribution([USER, OPS], [10 * L, 0], [9 * L, L], POOL, OPS),
     null,
   )
 
-  // 5) Operasyon cüzdanı yapılandırılmamışsa yalnızca kasa sayılır
+  // 5) With no operations wallet configured, only the presale wallet counts
   check(
-    'operasyon cüzdanı yok → yalnızca kasa',
+    'no operations wallet -> the presale wallet only',
     extractContribution([USER, POOL, OPS], [10 * L, 0, 0], [9 * L, 0.9 * L, 0.1 * L], POOL, '')?.delta,
     0.9 * L,
   )
 
-  // 6) Gerçek fiyat kontrolü: 1 SOL gönderen 350.000 $LUCK almalı
+  // 6) The real price check: someone sending 1 SOL must receive 350,000 $LUCK
   const d = extractContribution([USER, POOL, OPS], [10 * L, 0, 0], [9 * L, 0.9 * L, 0.1 * L], POOL, OPS)
-  check('1 SOL → 350.000 $LUCK', Math.floor((d.delta / L) * 350_000), 350_000)
+  check('1 SOL -> 350,000 $LUCK', Math.floor((d.delta / L) * 350_000), 350_000)
 
-  // 7-10) Bütünlük: taranan geçmiş bugünkü bakiyeyi açıklıyor mu
+  // 7-10) Completeness: does the scanned history account for today's balance
   check(
-    'bütünlük: taranan = mevcut → tamam',
-    butunlukKontrolu(100 * L, 100 * L, L).tamam,
+    'completeness: scanned = current -> fine',
+    completenessCheck(100 * L, 100 * L, L).complete,
     true,
   )
   check(
-    'bütünlük: bakiye taranandan FAZLA → eksik geçmiş',
-    butunlukKontrolu(90 * L, 100 * L, L).tamam,
+    'completeness: the balance exceeds the scan -> incomplete history',
+    completenessCheck(90 * L, 100 * L, L).complete,
     false,
   )
   check(
-    'bütünlük: eksik miktar doğru raporlanıyor',
-    butunlukKontrolu(90 * L, 100 * L, L).acik,
+    'completeness: the missing amount is reported correctly',
+    completenessCheck(90 * L, 100 * L, L).gap,
     10 * L,
   )
   check(
-    'bütünlük: para ÇIKMIŞ (taranan fazla) → sorun değil',
-    butunlukKontrolu(100 * L, 40 * L, L).tamam,
+    'completeness: money went OUT (the scan is larger) -> not a problem',
+    completenessCheck(100 * L, 40 * L, L).complete,
     true,
   )
   check(
-    'bütünlük: tolerans içindeki fark geçiyor',
-    butunlukKontrolu(100 * L, 100 * L + 500, L).tamam,
+    'completeness: a difference within tolerance passes',
+    completenessCheck(100 * L, 100 * L + 500, L).complete,
     true,
   )
 
-  console.log(failed === 0 ? '\nTüm kontroller geçti.' : `\n${failed} kontrol DÜŞTÜ.`)
+  console.log(failed === 0 ? '\nAll checks passed.' : `\n${failed} check(s) FAILED.`)
   process.exit(failed === 0 ? 0 : 1)
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** Hız sınırına (429) takılınca artan bekleme ile tekrar dener. */
+/** Retries with increasing backoff when it hits the rate limit (429). */
 async function withRetry(fn, label) {
   let delay = 500
   for (let attempt = 1; ; attempt++) {
     try {
       return await fn()
     } catch (err) {
-      if (attempt >= 6) throw new Error(`${label} başarısız: ${err.message}`)
-      process.stderr.write(`  ${label}: hata (${err.message}), ${delay}ms sonra tekrar...\n`)
+      if (attempt >= 6) throw new Error(`${label} failed: ${err.message}`)
+      process.stderr.write(`  ${label}: error (${err.message}), retrying in ${delay}ms...\n`)
       await sleep(delay)
       delay *= 2
     }
   }
 }
 
-// --- 1) Kasanın tüm imza geçmişi -------------------------------------------
+// --- 1) The wallet's complete signature history ----------------------------
 process.stderr.write(
-  `Presale kasası : ${WALLET}\n` +
-    `Operasyon payı : ${OPS_WALLET || '(yapılandırılmamış — yalnızca kasa sayılacak)'}\n` +
-    `RPC            : ${RPC_URL}\n\nİmzalar taranıyor...\n`,
+  `Presale wallet    : ${WALLET}\n` +
+    `Operations share  : ${OPS_WALLET || '(not configured — only the presale wallet will count)'}\n` +
+    `RPC               : ${RPC_URL}\n\nScanning signatures...\n`,
 )
 
 const signatures = []
@@ -269,16 +272,17 @@ for (;;) {
   if (page.length < 1000) break
 }
 
-// Başarısız işlemler para taşımaz — baştan eliyoruz.
+// Failed transactions move no money — we filter them out up front.
 const candidates = signatures.filter((s) => !s.err)
-process.stderr.write(`\nToplam ${signatures.length} imza, ${candidates.length} tanesi başarılı.\nİşlemler okunuyor...\n`)
+process.stderr.write(`\n${signatures.length} signatures in total, ${candidates.length} of them successful.\nReading the transactions...\n`)
 
-// --- 2) Her işlemde kasanın bakiye artışını ve göndereni bul ---------------
+// --- 2) Find the wallet's balance increase and the sender per transaction ---
 const buyers = new Map()
 const skipped = []
 let processed = 0
-// Taradığımız işlemlerde presale kasasının İMZALI toplam bakiye değişimi.
-let tarananNet = 0
+// The SIGNED total balance change of the presale wallet across the scanned
+// transactions.
+let scannedNet = 0
 
 for (let i = 0; i < candidates.length; i += 100) {
   const batch = candidates.slice(i, i + 100)
@@ -296,15 +300,15 @@ for (let i = 0; i < candidates.length; i += 100) {
     const sig = batch[j].signature
     if (!tx || tx.meta?.err) continue
 
-    // BÜTÜNLÜK SAYACI — zaman penceresi filtresinden ÖNCE, çünkü sorduğumuz
-    // soru "bu katkı sayılmalı mı" değil, "taradığımız geçmiş kasanın
-    // bugünkü bakiyesini açıklıyor mu". Pencere dışındaki işlemler de
-    // bakiyeyi değiştirdi.
+    // THE COMPLETENESS COUNTER — BEFORE the time-window filter, because the
+    // question we are asking is not "should this contribution count" but "does
+    // the history we scanned account for the wallet's balance today".
+    // Transactions outside the window changed the balance too.
     {
-      const anahtarlar = tx.transaction.message.accountKeys.map((k) => k.pubkey.toBase58())
-      const kasaIdx = anahtarlar.indexOf(WALLET)
-      if (kasaIdx >= 0) {
-        tarananNet += (tx.meta.postBalances[kasaIdx] ?? 0) - (tx.meta.preBalances[kasaIdx] ?? 0)
+      const accountKeys = tx.transaction.message.accountKeys.map((k) => k.pubkey.toBase58())
+      const walletIdx = accountKeys.indexOf(WALLET)
+      if (walletIdx >= 0) {
+        scannedNet += (tx.meta.postBalances[walletIdx] ?? 0) - (tx.meta.preBalances[walletIdx] ?? 0)
       }
     }
 
@@ -322,7 +326,8 @@ for (let i = 0; i < candidates.length; i += 100) {
     if (!contribution) continue
     const { sender, delta } = contribution
 
-    // Kasanın kendisine ait bir hesaptan gelen iç transferleri saymıyoruz.
+    // We do not count internal transfers coming from an account the wallet
+    // owns itself.
     const entry = buyers.get(sender) ?? { lamports: 0, txCount: 0, signatures: [], firstAt: null, lastAt: null }
     entry.lamports += delta
     entry.txCount += 1
@@ -338,39 +343,39 @@ for (let i = 0; i < candidates.length; i += 100) {
   process.stderr.write(`  ${Math.min(i + 100, candidates.length)}/${candidates.length}\n`)
 }
 
-// --- 2b) BÜTÜNLÜK KAPISI ----------------------------------------------------
-// Bu kapı olmadan script, RPC geçmişi budanmış olsa bile sorunsuz çalışır ve
-// DAHA KISA bir liste üretir. O alıcılar merkle ağacına hiç girmez, TGE'de
-// "listede değilsin" görürler ve kök zincire yazıldıktan sonra düzeltilemez.
-// Bu yüzden sessizce devam etmek yerine burada duruyoruz.
+// --- 2b) THE COMPLETENESS GATE ---------------------------------------------
+// Without this gate the script runs fine even when the RPC history has been
+// pruned, and produces A SHORTER list. Those buyers never enter the merkle tree,
+// at TGE they see "you are not on the list", and once the root is written to the
+// chain it cannot be fixed. So rather than continuing silently, we stop here.
 {
-  const TOLERANS = Math.round(Number(process.env.BUTUNLUK_TOLERANS_SOL ?? '0.01') * LAMPORTS_PER_SOL)
-  const mevcut = await withRetry(() => connection.getBalance(wallet), 'getBalance')
-  const { tamam, acik } = butunlukKontrolu(tarananNet, mevcut, TOLERANS)
+  const TOLERANCE = Math.round(Number(process.env.COMPLETENESS_TOLERANCE_SOL ?? '0.01') * LAMPORTS_PER_SOL)
+  const current = await withRetry(() => connection.getBalance(wallet), 'getBalance')
+  const { complete, gap } = completenessCheck(scannedNet, current, TOLERANCE)
   process.stderr.write(
-    `\nBütünlük: taranan net ${(tarananNet / LAMPORTS_PER_SOL).toFixed(4)} SOL · ` +
-      `kasadaki ${(mevcut / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`,
+    `\nCompleteness: scanned net ${(scannedNet / LAMPORTS_PER_SOL).toFixed(4)} SOL · ` +
+      `in the wallet ${(current / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`,
   )
-  if (!tamam) {
+  if (!complete) {
     process.stderr.write(
-      `\nEKSİK GEÇMİŞ — liste kullanılamaz.\n\n` +
-        `Kasada, taradığımız işlemlerle açıklayamadığımız ` +
-        `${(acik / LAMPORTS_PER_SOL).toFixed(4)} SOL var.\n` +
-        `En olası sebep: bu RPC uç noktası geçmişi buduyor (arşiv düğümü değil),\n` +
-        `yani ilk katkı yapanların işlemleri hiç görünmüyor. Bu listeyle merkle\n` +
-        `ağacı kurulursa o alıcılar TGE'de "listede değilsin" görür ve kök\n` +
-        `zincire yazıldıktan sonra DÜZELTİLEMEZ.\n\n` +
-        `Yapılacak: RPC_URL'i tam geçmiş tutan bir arşiv düğümüne çevirip\n` +
-        `tekrar çalıştırın.\n\n` +
-        `(Farkın gerçekten zararsız olduğunu BİLİYORSANIZ — ör. kasaya presale\n` +
-        `dışı bir transfer yapıldıysa — BUTUNLUK_TOLERANS_SOL ile eşiği\n` +
-        `yükseltebilirsiniz. Varsayılan 0.01 SOL.)\n`,
+      `\nINCOMPLETE HISTORY — the list cannot be used.\n\n` +
+        `The wallet holds ${(gap / LAMPORTS_PER_SOL).toFixed(4)} SOL that the ` +
+        `transactions we scanned cannot account for.\n` +
+        `The most likely cause: this RPC endpoint prunes history (it is not an\n` +
+        `archive node), so the earliest contributors' transactions are invisible.\n` +
+        `If a merkle tree is built from this list, those buyers see "you are not on\n` +
+        `the list" at TGE, and once the root is on chain it CANNOT BE FIXED.\n\n` +
+        `What to do: point RPC_URL at an archive node that keeps the full history\n` +
+        `and run again.\n\n` +
+        `(If you KNOW the difference is genuinely harmless — e.g. a non-presale\n` +
+        `transfer was made into the wallet — you can raise the threshold with\n` +
+        `COMPLETENESS_TOLERANCE_SOL. The default is 0.01 SOL.)\n`,
     )
     process.exit(1)
   }
 }
 
-// --- 3) Pay ve bilet hesabı -------------------------------------------------
+// --- 3) The share and ticket calculation ------------------------------------
 const rows = [...buyers.entries()]
   .map(([address, e]) => {
     const sol = e.lamports / LAMPORTS_PER_SOL
@@ -378,20 +383,21 @@ const rows = [...buyers.entries()]
       address,
       lamports: e.lamports,
       sol: Number(sol.toFixed(9)),
-      // `tokens` İNSAN İÇİN: tam token sayısı (ör. 350000).
+      // `tokens` is FOR HUMANS: the whole token count (e.g. 350000).
       tokens: Math.floor(sol * TOKENS_PER_SOL),
-      // `baseUnits` ZİNCİR İÇİN: SPL token'ın en küçük birimi, yani
-      // tokens × 10^decimals. Merkle yaprağına ve claim talimatına GİREN
-      // sayı budur.
+      // `baseUnits` is FOR THE CHAIN: the SPL token's smallest unit, i.e.
+      // tokens x 10^decimals. This is the number that ENTERS the merkle leaf
+      // and the claim instruction.
       //
-      // Bu ayrım bir kez sessizce kaybolmuştu: build-merkle.mjs `tokens`
-      // alanını en küçük birim sanıyordu ve 9 ondalıkta aradaki fark
-      // 1.000.000.000 kat. Yani her alıcı hak ettiğinin MİLYARDA BİRİNİ
-      // alırdı — işlemler başarıyla geçer, kimse hata görmez.
+      // That distinction was once silently lost: build-merkle.mjs took the
+      // `tokens` field for the smallest unit, and at 9 decimals the difference
+      // is a factor of 1,000,000,000. Every buyer would have received A
+      // BILLIONTH of what they were owed — the transactions succeed and nobody
+      // sees an error.
       //
-      // Alan adına birimi yazmak, aynı hatanın tekrar yapılmasını
-      // zorlaştırıyor. Hesap BigInt ile: 271.950.000 × 10^9 sayısı
-      // Number'ın güvenli aralığını (2^53) aşıyor.
+      // Putting the unit in the field name makes the same mistake harder to
+      // repeat. The arithmetic uses BigInt: 271,950,000 x 10^9 exceeds
+      // Number's safe range (2^53).
       baseUnits: (
         (BigInt(e.lamports) * BigInt(TOKENS_PER_SOL) * BigInt(10) ** BigInt(DECIMALS)) /
         BigInt(LAMPORTS_PER_SOL)
@@ -416,13 +422,13 @@ const totals = rows.reduce(
 )
 
 process.stderr.write(
-  `\n${rows.length} alıcı, ${processed} katkı işlemi.\n` +
-    `Toplam: ${(totals.lamports / LAMPORTS_PER_SOL).toFixed(4)} SOL · ` +
+  `\n${rows.length} buyer(s), ${processed} contribution transaction(s).\n` +
+    `Total: ${(totals.lamports / LAMPORTS_PER_SOL).toFixed(4)} SOL · ` +
     `${totals.tokens.toLocaleString('tr-TR')} $LUCK · ${totals.tickets} bilet\n` +
     (skipped.length ? `Atlanan: ${skipped.length}\n` : ''),
 )
 
-// --- 4) Çıktı ---------------------------------------------------------------
+// --- 4) Output --------------------------------------------------------------
 if (FORMAT === 'csv') {
   console.log('address,sol,tokens,baseUnits,tickets,txCount,firstAt,lastAt')
   for (const r of rows) {

@@ -1,151 +1,152 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// Yayına hazırlık denetimi
+// Launch-readiness check
 // ---------------------------------------------------------------------------
-// "Kod doğru" ile "yayına hazır" aynı şey değil. Bazı alanlar bilerek boş
-// bırakıldı ve doldurulmadan yayına çıkmak sessiz sonuçlar doğuruyor —
-// hata vermiyor, sadece yanlış davranıyor:
+// "The code is correct" and "we are ready to launch" are not the same thing.
+// Some fields were deliberately left empty, and going live without filling them
+// in has silent consequences — nothing errors, it just behaves wrongly:
 //
-//   PRESALE_START_ISO boşsa presale SÜRESİZ açık kalıyor. Takvim
-//   ilan edilmemiş sayıldığı için ne geri sayım görünüyor ne de zamanı
-//   gelince kapanıyor.
+//   With PRESALE_START_ISO empty the presale stays open INDEFINITELY. Because
+//   no schedule counts as announced, no countdown appears and it never closes
+//   when the time comes.
 //
-//   LUCK_TOKEN.mint boşsa Claim sekmesi "dağıtım başlamadı" diyor ve
-//   hiçbir buton çalışmıyor — TGE günü herkesin gördüğü şey bu olurdu.
+//   With LUCK_TOKEN.mint empty the Claim tab says "distribution has not
+//   started" and no button works — and that is what everyone would see on TGE
+//   day.
 //
-// Bu denetim BİLEREK derlemeyi düşürmüyor: alanların çoğu geliştirme
-// sırasında boş olmak ZORUNDA. `--strict` ile çalıştırıldığında ise
-// yayın kapısı gibi davranıyor.
+// This check DELIBERATELY does not fail the build: most of these fields MUST be
+// empty during development. Run with `--strict` and it behaves as a launch gate
+// instead.
 //
-// Kullanım:
-//   node scripts/check-launch-readiness.mjs           # rapor
-//   node scripts/check-launch-readiness.mjs --strict  # eksik varsa düşer
+// Usage:
+//   node scripts/check-launch-readiness.mjs           # report
+//   node scripts/check-launch-readiness.mjs --strict  # fails if anything is missing
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const kok = fileURLToPath(new URL('..', import.meta.url))
-const src = readFileSync(`${kok}src/config.ts`, 'utf8')
+const root = fileURLToPath(new URL('..', import.meta.url))
+const src = readFileSync(`${root}src/config.ts`, 'utf8')
 const strict = process.argv.includes('--strict')
 
-const oku = (re) => {
+const read = (re) => {
   const m = src.match(re)
   return m ? m[1] : ''
 }
 
-const maddeler = []
-const madde = (ad, deger, aciklama) =>
-  maddeler.push({ ad, hazir: Boolean(deger), deger, aciklama })
+const items = []
+const item = (name, value, note) =>
+  items.push({ name, ready: Boolean(value), value, note })
 
-madde(
-  '$LUCK mint adresi',
-  oku(/export const LUCK_TOKEN = \{[\s\S]*?mint: '([^']*)'/),
-  'Boşken Claim sekmesi "dağıtım henüz başlamadı" der ve hiçbir buton çalışmaz.',
+item(
+  '$LUCK mint address',
+  read(/export const LUCK_TOKEN = \{[\s\S]*?mint: '([^']*)'/),
+  'While empty, the Claim tab says "distribution has not started yet" and no button works.',
 )
-madde(
-  'Presale başlangıç tarihi',
-  oku(/export const PRESALE_START_ISO\s*=\s*'([^']*)'/),
-  'Boşken presale SÜRESİZ açık kalır: geri sayım görünmez ve zamanı gelince kapanmaz.',
+item(
+  'Presale start date',
+  read(/export const PRESALE_START_ISO\s*=\s*'([^']*)'/),
+  'While empty the presale stays open INDEFINITELY: no countdown appears and it never closes.',
 )
-madde(
-  'Claim programı',
-  oku(/export const CLAIM_CONFIG = \{[\s\S]*?programId: '([^']*)'/),
-  'Boşken kimse payını çekemez.',
+item(
+  'Claim program',
+  read(/export const CLAIM_CONFIG = \{[\s\S]*?programId: '([^']*)'/),
+  'While empty nobody can claim their share.',
 )
-madde(
-  'Oyun programı',
-  oku(/export const GAME_CONFIG[\s\S]*?programId: '([^']*)'/),
-  'Boşken Oyun sekmesi kapalı kalır.',
+item(
+  'Game program',
+  read(/export const GAME_CONFIG[\s\S]*?programId: '([^']*)'/),
+  'While empty the Game tab stays closed.',
 )
-madde(
-  'Presale cüzdanı',
-  oku(/export const PRESALE_WALLET\s*=\s*'([^']*)'/),
-  'Boşken presale gönderim butonları devre dışı.',
+item(
+  'Presale wallet',
+  read(/export const PRESALE_WALLET\s*=\s*'([^']*)'/),
+  'While empty the presale send buttons are disabled.',
 )
 
-// Sosyal bağlantılar: eksikse yalnızca footer'da o bağlantı görünmüyor.
-// Yayın engeli değil ama "proje terk edilmiş" izlenimi veriyor.
-const sosyal = ['twitter', 'telegram', 'discord'].map((k) => ({
+// Social links: a missing one only means that link is absent from the footer.
+// Not a launch blocker, but it gives the impression of an abandoned project.
+const social = ['twitter', 'telegram', 'discord'].map((k) => ({
   k,
-  v: oku(new RegExp(`${k}: '([^']*)'`)),
+  v: read(new RegExp(`${k}: '([^']*)'`)),
 }))
-for (const s of sosyal) {
-  madde(
-    `Sosyal bağlantı: ${s.k}`,
+for (const s of social) {
+  item(
+    `Social link: ${s.k}`,
     s.v,
-    'Yayın engeli değil; eksikse footer\'da o bağlantı hiç görünmüyor.',
+    'Not a launch blocker; if missing, that link simply does not appear in the footer.',
   )
 }
 
-// Merkle dosyaları: hangi turlar yayınlanmış?
-const merkleDizin = `${kok}public/merkle`
-const turlar = existsSync(merkleDizin)
-  ? readdirSync(merkleDizin).filter((f) => /^round-\d+\.json$/.test(f))
+// The merkle files: which rounds have been published?
+const merkleDir = `${root}public/merkle`
+const rounds = existsSync(merkleDir)
+  ? readdirSync(merkleDir).filter((f) => /^round-\d+\.json$/.test(f))
   : []
-maddeler.push({
-  ad: 'Yayınlanan dağıtım listeleri',
-  hazir: turlar.length > 0,
-  deger: turlar.length ? turlar.join(', ') : '',
-  aciklama:
-    'TGE günü en az presale turu (round-0.json) yayınlanmış olmalı; Claim ' +
-    'sekmesi listeyi buradan okuyor ve kökü zincirdekiyle karşılaştırıyor.',
+items.push({
+  name: 'Published distribution lists',
+  ready: rounds.length > 0,
+  value: rounds.length ? rounds.join(', ') : '',
+  note:
+    'On TGE day at least the presale round (round-0.json) has to be published; the Claim ' +
+    'tab reads the list from here and compares its root against the one on chain.',
 })
 
-// Ağ: mainnet'e geçildi mi?
-const varsayilanAg = oku(/export const DEFAULT_NETWORK[^=]*=\s*'([^']+)'/)
-maddeler.push({
-  ad: 'Varsayılan ağ',
-  hazir: varsayilanAg === 'mainnet',
-  deger: varsayilanAg,
-  aciklama: 'Yayında mainnet olmalı. Devnet\'te kalırsa kimse gerçek katkı yapamaz.',
+// The network: have we moved to mainnet?
+const defaultNetwork = read(/export const DEFAULT_NETWORK[^=]*=\s*'([^']+)'/)
+items.push({
+  name: 'Default network',
+  ready: defaultNetwork === 'mainnet',
+  value: defaultNetwork,
+  note: 'It must be mainnet at launch. Left on devnet, nobody can make a real contribution.',
 })
 
-// --- "Stay Tuned" kapısı kaldırıldı mı --------------------------------------
+// --- has the "Stay Tuned" gate been removed --------------------------------
 //
-// Site test aşamasındayken kök adrese gelen HERKESE düz siyah bir "yakında"
-// sayfası gösteriliyor; gerçek uygulama yalnızca PREVIEW_ACCESS_PATH
-// üzerinden açılıyor (bkz. src/main.tsx).
+// While the site is in testing, EVERYONE arriving at the root address is shown
+// a plain black "coming soon" page; the real app only opens through
+// PREVIEW_ACCESS_PATH (see src/main.tsx).
 //
-// Bu, yayın günü unutulmaya en müsait maddelerden biri ve unutulursa sonucu
-// tam bir felaket: presale açılır, duyuru yapılır, gelen herkes BOŞ SİYAH
-// EKRAN görür. Hiçbir hata çıkmaz, hiçbir log yazılmaz — site "çalışıyor"
-// görünür.
+// This is one of the items most easily forgotten on launch day, and forgetting
+// it is a complete disaster: the presale opens, the announcement goes out, and
+// everyone who arrives sees a BLANK BLACK SCREEN. Nothing errors, nothing is
+// logged — the site looks like it is "working".
 //
-// Kapının kaldırılması PREVIEW_ACCESS_PATH'i boş string yapmak demek;
-// main.tsx boş yolda uygulamayı doğrudan açıyor.
+// Removing the gate means setting PREVIEW_ACCESS_PATH to an empty string;
+// main.tsx opens the app directly on an empty path.
 {
   const m = src.match(/export const PREVIEW_ACCESS_PATH\s*=\s*'([^']*)'/)
-  const yol = m ? m[1] : null
-  maddeler.push({
-    ad: '"Yakında" kapısı kaldırıldı',
-    hazir: yol === '',
-    deger: yol === null ? 'okunamadı' : yol === '' ? 'kapalı' : `gizli yol ${yol}`,
-    aciklama:
-      'Kapı açıkken siteye gelen HERKES boş siyah "Stay Tuned" ekranı görür. ' +
-      'Yayın günü unutulursa hiçbir hata çıkmaz, site çalışıyor görünür ama ' +
-      'kimse presale sayfasına ulaşamaz. Kaldırmak için ' +
-      "PREVIEW_ACCESS_PATH = '' yapın.",
+  const path = m ? m[1] : null
+  items.push({
+    name: 'The "coming soon" gate is removed',
+    ready: path === '',
+    value: path === null ? 'could not be read' : path === '' ? 'removed' : `hidden path ${path}`,
+    note:
+      'While the gate is up, EVERYONE arriving at the site sees the blank black "Stay Tuned" ' +
+      'screen. If it is forgotten on launch day nothing errors and the site looks like it is ' +
+      "working, but nobody can reach the presale page. To remove it, set " +
+      "PREVIEW_ACCESS_PATH = ''.",
   })
 }
 
-const eksikler = maddeler.filter((m) => !m.hazir)
+const missing = items.filter((i) => !i.ready)
 
-console.log('YAYINA HAZIRLIK\n')
-for (const m of maddeler) {
-  const isaret = m.hazir ? '✓' : '○'
-  // Mevcut değeri hazır olmasa da gösteriyoruz: "○ Varsayılan ağ" tek
-  // başına eksik mi yanlış mı olduğunu söylemiyor, "○ Varsayılan ağ
-  // (şu an: devnet)" söylüyor.
-  const deger = m.deger ? (m.hazir ? ` — ${m.deger}` : ` (şu an: ${m.deger})`) : ''
-  console.log(`${isaret} ${m.ad}${deger}`)
-  if (!m.hazir) console.log(`    ${m.aciklama}`)
+console.log('LAUNCH READINESS\n')
+for (const i of items) {
+  const mark = i.ready ? '✓' : '○'
+  // The current value is shown even when the item is not ready: "○ Default
+  // network" on its own does not say whether it is missing or wrong, whereas
+  // "○ Default network (currently: devnet)" does.
+  const value = i.value ? (i.ready ? ` — ${i.value}` : ` (currently: ${i.value})`) : ''
+  console.log(`${mark} ${i.name}${value}`)
+  if (!i.ready) console.log(`    ${i.note}`)
 }
 
-console.log(`\n${maddeler.length - eksikler.length}/${maddeler.length} hazır.`)
-if (eksikler.length > 0 && strict) {
-  console.error(`\n${eksikler.length} madde eksik — yayına çıkılamaz.`)
+console.log(`\n${items.length - missing.length}/${items.length} ready.`)
+if (missing.length > 0 && strict) {
+  console.error(`\n${missing.length} item(s) missing — cannot launch.`)
   process.exit(1)
 }
-if (eksikler.length > 0) {
-  console.log('(Bu denetim derlemeyi düşürmüyor. Yayın kapısı için --strict kullanın.)')
+if (missing.length > 0) {
+  console.log('(This check does not fail the build. Use --strict as a launch gate.)')
 }

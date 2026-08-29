@@ -1,83 +1,84 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// Hata kodu denetimi — arayüzdeki mesajlar doğru hataya mı bağlı
+// Error-code check — is each message in the interface bound to the right error
 // ---------------------------------------------------------------------------
-// Arayüz, zincirden gelen ham hataları kullanıcıya anlaşılır mesajlara
-// çeviriyor ve bunu hata KODUNA bakarak yapıyor (ör. 0x1776 =
-// NoSpinsRemaining). Kodlar Anchor'da enum SIRASINDAN türüyor:
-// 6000 + varyantın sırası.
+// The interface turns the raw errors coming from the chain into messages a user
+// can understand, and it does so by looking at the error CODE (e.g. 0x1776 =
+// NoSpinsRemaining). In Anchor those codes are derived from the ORDER of the
+// enum: 6000 + the variant's index.
 //
-// Yani enum'a ortadan bir varyant eklenirse ondan sonraki HER kod kayar ve
-// arayüz sessizce YANLIŞ mesajı gösterir: "spin hakkın kalmadı" derken
-// aslında "sonuç açma süresi doldu" olur. Kod çalışmaya devam ettiği için
-// bunu ancak kullanıcı şikâyetinden öğrenirdik.
+// So if a variant is inserted in the middle of the enum, EVERY code after it
+// shifts and the interface silently shows the WRONG message: it says "you have
+// no spins left" when the truth is "the reveal window expired". Because the
+// code keeps working, we would only learn about it from a user complaint.
 //
-// Bu denetim, arayüzdeki her `/Ad|0xNNNN/` çiftini programdaki enum
-// sırasıyla karşılaştırıyor.
+// This check compares every `/Name|0xNNNN/` pair in the interface against the
+// order of the enum in the program.
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-const kok = fileURLToPath(new URL('..', import.meta.url))
+const root = fileURLToPath(new URL('..', import.meta.url))
 const ANCHOR_ERROR_OFFSET = 6000
 
-function enumKodlari(dosya, enumAdi) {
-  const src = readFileSync(dosya, 'utf8')
-  const bas = src.indexOf(`pub enum ${enumAdi} {`)
-  if (bas === -1) throw new Error(`${enumAdi} bulunamadı: ${dosya}`)
-  const son = src.indexOf('\n}', bas)
-  const govde = src.slice(bas, son)
-  const varyantlar = [...govde.matchAll(/^\s{4}([A-Z][A-Za-z0-9]*),\s*$/gm)].map((m) => m[1])
-  const kodlar = new Map()
-  varyantlar.forEach((ad, i) => kodlar.set(ad, ANCHOR_ERROR_OFFSET + i))
-  return kodlar
+function enumCodes(file, enumName) {
+  const src = readFileSync(file, 'utf8')
+  const start = src.indexOf(`pub enum ${enumName} {`)
+  if (start === -1) throw new Error(`${enumName} not found: ${file}`)
+  const end = src.indexOf('\n}', start)
+  const body = src.slice(start, end)
+  const variants = [...body.matchAll(/^\s{4}([A-Z][A-Za-z0-9]*),\s*$/gm)].map((m) => m[1])
+  const codes = new Map()
+  variants.forEach((name, i) => codes.set(name, ANCHOR_ERROR_OFFSET + i))
+  return codes
 }
 
-const hatalar = []
-const kontroller = []
+const failures = []
+const checks = []
 
-function denetle(arayuzDosyasi, programDosyasi, enumAdi) {
-  const kodlar = enumKodlari(`${kok}${programDosyasi}`, enumAdi)
-  const arayuz = readFileSync(`${kok}${arayuzDosyasi}`, 'utf8')
-  // `/Ad|0xNNNN/i` biçimindeki eşleşmeler.
-  const ciftler = [...arayuz.matchAll(/\/([A-Z][A-Za-z0-9]*)\|(0x[0-9a-fA-F]+)\/i/g)]
-  if (ciftler.length === 0) {
-    hatalar.push(`${arayuzDosyasi}: hiç hata kodu eşleşmesi bulunamadı — desen değişmiş olabilir`)
+function inspect(interfaceFile, programFile, enumName) {
+  const codes = enumCodes(`${root}${programFile}`, enumName)
+  const ui = readFileSync(`${root}${interfaceFile}`, 'utf8')
+  // Matches of the form `/Name|0xNNNN/i`.
+  const pairs = [...ui.matchAll(/\/([A-Z][A-Za-z0-9]*)\|(0x[0-9a-fA-F]+)\/i/g)]
+  if (pairs.length === 0) {
+    failures.push(`${interfaceFile}: no error-code match found — the pattern may have changed`)
     return
   }
-  for (const [, ad, hex] of ciftler) {
-    const beklenen = kodlar.get(ad)
-    const gercek = parseInt(hex, 16)
-    if (beklenen === undefined) {
-      hatalar.push(`${arayuzDosyasi}: "${ad}" ${enumAdi} içinde yok`)
-      kontroller.push({ ad: `${ad} enum'da var`, ok: false })
+  for (const [, name, hex] of pairs) {
+    const expected = codes.get(name)
+    const actual = parseInt(hex, 16)
+    if (expected === undefined) {
+      failures.push(`${interfaceFile}: "${name}" is not in ${enumName}`)
+      checks.push({ name: `${name} exists in the enum`, ok: false })
       continue
     }
-    const ok = beklenen === gercek
-    kontroller.push({
-      ad: `${ad} = ${hex} (${gercek})`,
+    const ok = expected === actual
+    checks.push({
+      name: `${name} = ${hex} (${actual})`,
       ok,
-      detay: ok ? '' : `enum sırasına göre ${beklenen} (0x${beklenen.toString(16)}) olmalı`,
+      detail: ok ? '' : `by the enum order it should be ${expected} (0x${expected.toString(16)})`,
     })
-    if (!ok) hatalar.push(ad)
+    if (!ok) failures.push(name)
   }
 }
 
-denetle(
+inspect(
   'src/components/solofluck/GameTab.tsx',
   'program/luck-game/programs/luck-game/src/lib.rs',
   'GameError',
 )
 
-for (const c of kontroller) {
-  console.log(`${c.ok ? '✓' : '✗'} ${c.ad}${c.detay ? `  — ${c.detay}` : ''}`)
+for (const c of checks) {
+  console.log(`${c.ok ? '✓' : '✗'} ${c.name}${c.detail ? `  — ${c.detail}` : ''}`)
 }
 
-if (hatalar.length > 0) {
+if (failures.length > 0) {
   console.error(
-    `\n${hatalar.length} hata kodu uyuşmuyor. Arayüz, zincirden gelen hatayı YANLIŞ ` +
-      'mesaja çevirir — kod çalışmaya devam eder ve bunu ancak kullanıcı şikâyetinden öğreniriz.',
+    `\n${failures.length} error code(s) do not match. The interface would translate an error ` +
+      'from the chain into the WRONG message — the code keeps working and we would only learn ' +
+      'about it from a user complaint.',
   )
   process.exit(1)
 }
-console.log(`\n${kontroller.length} hata kodunun hepsi enum sırasıyla tutuyor.`)
+console.log(`\nAll ${checks.length} error codes agree with the enum order.`)

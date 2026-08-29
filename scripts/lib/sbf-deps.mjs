@@ -1,27 +1,27 @@
 // ---------------------------------------------------------------------------
-// Zincire (SBF) giren bağımlılık kümesini hesaplar
+// Computes the set of dependencies that enter the on-chain (SBF) build
 // ---------------------------------------------------------------------------
-// PROBLEM: `cargo audit` Cargo.lock'u tarıyor ve Cargo.lock, testler için
-// gelen TÜM Solana validator/TLS yığınını içeriyor — h2, quinn (QUIC),
-// rustls-webpki, ring, tokio... Bunlar zincire yüklenen programın içine
-// GİRMİYOR ama audit çıktısında görünüyor. İlk koşuda 10 "açık" çıktı ve
-// hepsi bu yığındandı.
+// THE PROBLEM: `cargo audit` scans Cargo.lock, and Cargo.lock contains the
+// ENTIRE Solana validator/TLS stack pulled in for tests — h2, quinn (QUIC),
+// rustls-webpki, ring, tokio and so on. None of that ENTERS the program
+// uploaded to the chain, yet it shows up in the audit output. On the first run
+// 10 "advisories" appeared and every one of them came from that stack.
 //
-// Cargo.lock'u zincirdeki programmış gibi denetlemek bir kategori hatası.
-// Doğru soru: SBF derlemesine hangi paketler giriyor?
+// Auditing Cargo.lock as if it were the on-chain program is a category error.
+// The right question is: which packages enter the SBF build?
 //
-// NİYE `cargo tree --target sbf-solana-solana` DEĞİL: standart rustc bu
-// hedefi tanımıyor (Solana kendi rustc çatalını gönderiyor), dolayısıyla
-// cargo tree hedefi çözemeyip düşüyor. CI'da Solana araç zinciri yok.
+// WHY NOT `cargo tree --target sbf-solana-solana`: standard rustc does not know
+// that target (Solana ships its own rustc fork), so cargo tree cannot resolve it
+// and fails. The Solana toolchain is not available in CI.
 //
-// ÇÖZÜM: `cargo metadata` her bağımlılık kenarında o kenarın hangi hedef
-// koşuluyla geçerli olduğunu veriyor (ör. cfg(not(target_os = "solana"))).
-// Bu koşulları SBF hedefi için burada değerlendirip grafiği kendimiz
-// yürüyoruz. rustc'ye ihtiyaç yok.
+// THE SOLUTION: `cargo metadata` states, on every dependency edge, the target
+// condition under which that edge applies (e.g. cfg(not(target_os = "solana"))).
+// We evaluate those conditions for the SBF target here and walk the graph
+// ourselves. No rustc needed.
 
 import { execFileSync } from 'node:child_process'
 
-/** SBF hedefinin cfg değerleri. */
+/** The cfg values of the SBF target. */
 const SBF = {
   target_os: 'solana',
   target_arch: 'sbf',
@@ -32,118 +32,118 @@ const SBF = {
 }
 
 /**
- * `cfg(...)` ifadesini SBF hedefi için değerlendirir.
+ * Evaluates a `cfg(...)` expression for the SBF target.
  *
- * Tanımadığı cfg adları (rustix_use_libc, miri, getrandom_backend gibi
- * derleme bayrakları) FALSE sayılıyor — bunlar özel olarak açılmadıkça
- * geçerli değil ve bizim derlememizde açılmıyorlar.
+ * cfg names it does not know (build flags such as rustix_use_libc, miri or
+ * getrandom_backend) count as FALSE — they do not apply unless switched on
+ * explicitly, and they are not switched on in our build.
  */
-export function cfgDogruMu(ifade) {
-  const s = ifade.trim()
+export function cfgIsTrue(expr) {
+  const s = expr.trim()
 
-  if (s.startsWith('not(')) return !cfgDogruMu(icerik(s, 'not'))
-  if (s.startsWith('any(')) return parcala(icerik(s, 'any')).some(cfgDogruMu)
-  if (s.startsWith('all(')) return parcala(icerik(s, 'all')).every(cfgDogruMu)
+  if (s.startsWith('not(')) return !cfgIsTrue(inner(s, 'not'))
+  if (s.startsWith('any(')) return split(inner(s, 'any')).some(cfgIsTrue)
+  if (s.startsWith('all(')) return split(inner(s, 'all')).every(cfgIsTrue)
 
-  // anahtar = "değer"
+  // key = "value"
   const m = s.match(/^([a-z_0-9]+)\s*=\s*"([^"]*)"$/)
   if (m) {
-    const [, anahtar, deger] = m
-    if (anahtar in SBF) return SBF[anahtar] === deger
-    // target_family gibi bilmediğimiz anahtarlar: SBF ne unix ne windows.
-    if (anahtar === 'target_family') return false
+    const [, key, value] = m
+    if (key in SBF) return SBF[key] === value
+    // Keys we do not know, such as target_family: SBF is neither unix nor windows.
+    if (key === 'target_family') return false
     return false
   }
 
-  // Çıplak adlar
+  // Bare names
   if (s === 'unix' || s === 'windows') return false
-  // Bilinmeyen bayraklar kapalı sayılıyor.
+  // Unknown flags count as off.
   return false
 }
 
-function icerik(s, ad) {
-  const bas = ad.length + 1
-  return s.slice(bas, s.lastIndexOf(')'))
+function inner(s, name) {
+  const start = name.length + 1
+  return s.slice(start, s.lastIndexOf(')'))
 }
 
-/** Virgülle ayır — ama parantez içindeki virgülleri bölme. */
-function parcala(s) {
-  const parcalar = []
-  let derinlik = 0
-  let bas = 0
+/** Split on commas — but not on commas inside parentheses. */
+function split(s) {
+  const parts = []
+  let depth = 0
+  let start = 0
   for (let i = 0; i < s.length; i++) {
     const c = s[i]
-    if (c === '(') derinlik++
-    else if (c === ')') derinlik--
-    else if (c === ',' && derinlik === 0) {
-      parcalar.push(s.slice(bas, i))
-      bas = i + 1
+    if (c === '(') depth++
+    else if (c === ')') depth--
+    else if (c === ',' && depth === 0) {
+      parts.push(s.slice(start, i))
+      start = i + 1
     }
   }
-  parcalar.push(s.slice(bas))
-  return parcalar.map((p) => p.trim()).filter(Boolean)
+  parts.push(s.slice(start))
+  return parts.map((p) => p.trim()).filter(Boolean)
 }
 
 /**
- * Bir kenarın `target` alanı SBF için geçerli mi.
+ * Does an edge's `target` field apply to SBF?
  *
- * `null`  → koşulsuz, her hedefte geçerli.
- * `cfg(…)`→ ifadeyi değerlendir.
- * düz üçlü ("aarch64-linux-android" gibi) → bizim hedefimiz değil.
+ * `null`   -> unconditional, applies to every target.
+ * `cfg(…)` -> evaluate the expression.
+ * a plain triple (such as "aarch64-linux-android") -> not our target.
  */
-export function kenarGecerli(target) {
+export function edgeApplies(target) {
   if (target === null || target === undefined) return true
   const s = String(target).trim()
-  if (s.startsWith('cfg(')) return cfgDogruMu(s.slice(4, s.lastIndexOf(')')))
+  if (s.startsWith('cfg(')) return cfgIsTrue(s.slice(4, s.lastIndexOf(')')))
   return false
 }
 
 /**
- * Programın SBF derlemesine giren paket kümesi (ad@sürüm).
+ * The set of packages (name@version) that enter the program's SBF build.
  *
- * Yalnızca NORMAL bağımlılıklar izleniyor: dev-dependencies test
- * makinesinde çalışıyor, build-dependencies derleme sırasında — ikisi de
- * zincire yüklenen bytecode'un içinde değil.
+ * Only NORMAL dependencies are followed: dev-dependencies run on the test
+ * machine and build-dependencies run during the build — neither ends up inside
+ * the bytecode uploaded to the chain.
  */
-export function sbfBagimliliklari(calismaDizini, paketAdi) {
-  const ham = execFileSync('cargo', ['metadata', '--format-version', '1'], {
-    cwd: calismaDizini,
+export function sbfDependencies(workingDir, packageName) {
+  const raw = execFileSync('cargo', ['metadata', '--format-version', '1'], {
+    cwd: workingDir,
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
   })
-  const meta = JSON.parse(ham)
+  const meta = JSON.parse(raw)
 
-  const dugumler = new Map(meta.resolve.nodes.map((n) => [n.id, n]))
-  const paketler = new Map(meta.packages.map((p) => [p.id, p]))
+  const nodes = new Map(meta.resolve.nodes.map((n) => [n.id, n]))
+  const packages = new Map(meta.packages.map((p) => [p.id, p]))
 
-  const kok = meta.resolve.nodes.find((n) => {
-    const p = paketler.get(n.id)
-    return p && p.name === paketAdi
+  const root = meta.resolve.nodes.find((n) => {
+    const p = packages.get(n.id)
+    return p && p.name === packageName
   })
-  if (!kok) throw new Error(`paket bulunamadı: ${paketAdi}`)
+  if (!root) throw new Error(`package not found: ${packageName}`)
 
-  const gorulen = new Set()
-  const kuyruk = [kok.id]
-  while (kuyruk.length) {
-    const id = kuyruk.pop()
-    if (gorulen.has(id)) continue
-    gorulen.add(id)
-    const dugum = dugumler.get(id)
-    if (!dugum) continue
-    for (const dep of dugum.deps) {
-      // Bir kenar birden fazla türde olabilir (normal + dev). Yalnızca
-      // NORMAL (kind === null) ve hedefi SBF'ye uyan olanları izliyoruz.
-      const gecerli = dep.dep_kinds.some(
-        (dk) => (dk.kind === null || dk.kind === undefined) && kenarGecerli(dk.target),
+  const seen = new Set()
+  const queue = [root.id]
+  while (queue.length) {
+    const id = queue.pop()
+    if (seen.has(id)) continue
+    seen.add(id)
+    const node = nodes.get(id)
+    if (!node) continue
+    for (const dep of node.deps) {
+      // An edge can be of more than one kind (normal + dev). We follow only
+      // the NORMAL ones (kind === null) whose target applies to SBF.
+      const applies = dep.dep_kinds.some(
+        (dk) => (dk.kind === null || dk.kind === undefined) && edgeApplies(dk.target),
       )
-      if (gecerli) kuyruk.push(dep.pkg)
+      if (applies) queue.push(dep.pkg)
     }
   }
 
-  gorulen.delete(kok.id)
-  return [...gorulen]
+  seen.delete(root.id)
+  return [...seen]
     .map((id) => {
-      const p = paketler.get(id)
+      const p = packages.get(id)
       return p ? `${p.name}@${p.version}` : id
     })
     .sort()
