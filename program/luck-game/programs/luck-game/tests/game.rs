@@ -567,7 +567,7 @@ fn event_bytes_match_the_golden_vector() {
 
     let resolved = hex(
         luck_game::PlayResolved {
-            player: player,
+            player,
             won: true,
             prize_paid: 1_234_567_890,
             is_big_win: false,
@@ -591,7 +591,7 @@ fn event_bytes_match_the_golden_vector() {
 
     let committed = hex(
         luck_game::PlayCommitted {
-            player: player,
+            player,
             plays_count: 11,
             spins_remaining: 22,
             bonus_granted: true,
@@ -613,7 +613,7 @@ fn event_bytes_match_the_golden_vector() {
 
     let purchase = hex(
         luck_game::SpinsPurchased {
-            player: player,
+            player,
             tier_index: 3,
             spin_count: 20,
             price_lamports: 800_000_000,
