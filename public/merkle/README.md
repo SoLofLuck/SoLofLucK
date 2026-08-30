@@ -1,41 +1,41 @@
-# Dağıtım listeleri
+# Distribution lists
 
-Bu klasördeki `round-<id>.json` dosyaları, claim programının zincire yazılmış
-merkle kökünün açık karşılığıdır:
+The `round-<id>.json` files in this folder are the public counterpart of the
+merkle root the claim program has written to the chain:
 
-| id | Ne |
+| id | What |
 |----|----|
-| 0 | Presale payları (TGE'de %9, sonra 13 hafta boyunca haftalık %7) |
-| 1–14 | Haftalık biletli çekiliş kazananları |
+| 0 | The presale allocations (9% at TGE, then 7% weekly for 13 weeks) |
+| 1–14 | The winners of the weekly ticketed raffles |
 
-## Bunlar neden herkese açık?
+## Why are these public?
 
-Merkle'ın buradaki amacı gizlilik değil, **doğrulanabilirlik**. Zincirde
-yalnızca 32 baytlık bir kök duruyor; alıcı payını kanıtlayan proof'u
-getiriyor. Liste açık olduğu için:
+The point of the merkle tree here is not privacy but **verifiability**. Only a
+32-byte root sits on the chain; the buyer brings the proof of their allocation.
+Because the list is public:
 
-- Herkes kendi payını görebilir
-- Kimse listeye sonradan eklenemez (kök değişirdi ve zincirdekiyle
-  uyuşmazdı — site bunu fark edip çekmeyi engelliyor)
-- Biz de kimsenin payını sessizce değiştiremeyiz
+- Everyone can see their own allocation
+- Nobody can be added to the list after the fact (the root would change and would
+  no longer match the one on chain — the site notices that and blocks the claim)
+- And we cannot quietly change anyone's allocation either
 
-## Nasıl üretiliyor / nasıl doğrularsınız?
+## How is it produced / how can you verify it?
 
 ```bash
-# 1) Alıcı listesini zincirden çıkar (presale kasasının işlem geçmişi)
-RPC_URL=<rpc> START_ISO=<presale başlangıcı> END_ISO=<presale bitişi> \
+# 1) Extract the buyer list from the chain (the presale vault's transaction history)
+RPC_URL=<rpc> START_ISO=<presale start> END_ISO=<presale end> \
   node scripts/presale-buyers.mjs > buyers.json
 
-# 2) Merkle ağacını kur
+# 2) Build the merkle tree
 node scripts/build-merkle.mjs buyers.json > public/merkle/round-0.json
 ```
 
-Aynı iki komutu siz de çalıştırıp buradaki dosyayla karşılaştırabilirsiniz —
-kök tutuyorsa liste doğrudur. Bize güvenmeniz gerekmiyor.
+You can run those same two commands yourself and compare the result with the file
+here — if the root matches, the list is correct. You do not have to trust us.
 
-Çekiliş turları için kazanan adresleri düz bir metin dosyasına konur:
+For raffle rounds the winning addresses are put into a plain text file:
 
 ```bash
-node scripts/build-merkle.mjs --amount <kazanan başına miktar> winners.txt \
+node scripts/build-merkle.mjs --amount <amount per winner> winners.txt \
   > public/merkle/round-1.json
 ```

@@ -1,91 +1,91 @@
-# sell-lock — Anti-Snipe Satış Kilidi (Token-2022 Transfer Hook)
+# sell-lock — the Anti-Snipe Sell Lock (a Token-2022 Transfer Hook)
 
-Bu, ana `0nRCoin` web sitesinden **ayrı**, zincir üzerinde çalışan bir Solana
-programıdır (akıllı kontrat). Amaç: bir token havuzu kurulduktan sonra
-seçilen bir süre boyunca (15 dk / 1 saat / 5 saat / 24 saat) **hiç kimsenin**
-(havuzu kuran dahil) o havuza **satış** yapamaması — alım her zaman serbest
-kalır. Süre dolunca hiçbir işlem gerekmeden otomatik olarak herkes için
-satış açılır.
+This is a Solana program (a smart contract) that runs on the chain,
+**separately** from the main `0nRCoin` website. Its purpose: once a token pool
+has been created, **nobody** (the creator of the pool included) can **sell** into
+that pool for a chosen period (15 min / 1 hour / 5 hours / 24 hours) — buying
+stays open the whole time. When the period is over, selling opens up for everyone
+automatically, with no transaction needed.
 
-## Durum: Devnet'e deploy edildi ✅
+## Status: deployed to Devnet ✅
 
 **Program ID (Devnet):** `3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5`
 
-Solana Playground (beta.solpg.io) üzerinden, kullanıcıyla birlikte adım adım
-derlenip Devnet'e deploy edildi (yerel bir bilgisayar/Rust-Anchor-Solana CLI
-kurulumu olmadan, tamamen telefon tarayıcısından). Henüz web sitesine
-(TokenForm / Havuz Oluştur akışlarına) entegre edilmedi — sıradaki adım bu.
+It was built and deployed to Devnet step by step together with the user through
+Solana Playground (beta.solpg.io) — with no local computer or Rust/Anchor/Solana
+CLI installation, entirely from a phone browser. It has not been integrated into
+the website yet (the TokenForm / Create Pool flows) — that is the next step.
 
-Mainnet'e **henüz deploy edilmedi**.
+It has **not been deployed to mainnet**.
 
-## Derleme sürecinde çözülen sorunlar (ileride tekrar deploy gerekirse)
+## Problems solved during the build (in case a redeploy is ever needed)
 
-- `#[interface(spl_transfer_hook_interface::execute)]` diye bir Anchor
-  attribute'u **yok** — `fallback` isimli ve doğru imzalı bir fonksiyon
-  Anchor tarafından otomatik özel işleyici olarak tanınıyor, ekstra attribute
-  gerekmiyor.
-- `fallback` içinde Anchor'ın gizli/dahili `__private::__global::<instruction>`
-  çağrı yoluna güvenmek, Solana Playground'un kullandığı Anchor sürümüyle
-  uyuşmadı ve derlemeyi "length limit exceeded" gibi anlamsız bir hatayla
-  bozdu. Çözüm: o özel yola hiç güvenmeden, `fallback` içinde CPI ile gelen
-  ham hesap listesini doğrudan okuyup asıl mantığı orada uygulamak (bkz.
-  `lib.rs`'teki `fallback` fonksiyonu).
-- Solana Playground'da kod değişikliklerini **her zaman dosyanın tamamını
-  silip yeniden yapıştırarak** yapmak, mobilde parça-parça düzenlemekten çok
-  daha güvenilir oldu (kısmi düzenlemeler birkaç kez eşleşmeyen kapanış
-  parantezi hatasına yol açtı).
+- There is **no** Anchor attribute called
+  `#[interface(spl_transfer_hook_interface::execute)]` — Anchor recognizes a
+  function named `fallback` with the right signature as the custom handler
+  automatically, and no extra attribute is needed.
+- Relying on Anchor's hidden, internal `__private::__global::<instruction>` call
+  path inside `fallback` did not match the Anchor version Solana Playground uses,
+  and broke the build with a meaningless error like "length limit exceeded". The
+  fix: without relying on that special path at all, read the raw account list that
+  arrives through the CPI directly inside `fallback` and apply the real logic there
+  (see the `fallback` function in `lib.rs`).
+- On Solana Playground, making code changes by **always deleting the whole file
+  and pasting it again** turned out to be far more reliable than editing it piece
+  by piece on mobile (partial edits led to a mismatched-closing-brace error
+  several times).
 
-## Gerekli araçlar (yerel/Anchor CLI ile tekrar derlemek isterseniz)
+## The tools you need (if you want to rebuild it locally with the Anchor CLI)
 
 1. **Rust**: https://www.rust-lang.org/tools/install
-2. **Solana CLI**: https://docs.solanalabs.com/cli/install
-3. **Anchor CLI**:
+2. **The Solana CLI**: https://docs.solanalabs.com/cli/install
+3. **The Anchor CLI**:
    ```bash
    cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
    avm install latest
    avm use latest
    ```
-4. Devnet'te SOL'ü olan bir cüzdan:
+4. A wallet with SOL on Devnet:
    ```bash
    solana config set --url devnet
    solana-keygen new
    solana airdrop 2
    ```
-5. Derleme:
+5. The build:
    ```bash
    cd program/sell-lock
    anchor build
    anchor deploy
    ```
 
-## Instruction'lar
+## The instructions
 
-- `initialize_extra_account_meta_list` — Token-2022 mint'i Transfer Hook
-  uzantısıyla oluşturduktan hemen sonra bir kez çağrılır.
-- `register_launch(duration_seconds)` — havuz kurulduktan hemen sonra bir kez
-  çağrılır; havuzun kasa adreslerini ve kilit süresini zincire kalıcı olarak
-  yazar (aynı mint için ikinci çağrı başarısız olur — süre değiştirilemez).
-  `duration_seconds` yalnızca 900 (15dk) / 3600 (1sa) / 18000 (5sa) / 86400
-  (24sa) olabilir.
-- `fallback` — Token-2022'nin her transferde otomatik çağırdığı asıl kilit
-  mantığı: hedef, kayıtlı havuz kasalarından biriyse (yani bu bir satışsa) ve
-  süre dolmadıysa reddeder.
+- `initialize_extra_account_meta_list` — called once, right after the Token-2022
+  mint is created with the Transfer Hook extension.
+- `register_launch(duration_seconds)` — called once, right after the pool is
+  created; it writes the pool's vault addresses and the lock duration to the chain
+  permanently (a second call for the same mint fails — the duration cannot be
+  changed). `duration_seconds` can only be 900 (15 min) / 3600 (1 h) / 18000
+  (5 h) / 86400 (24 h).
+- `fallback` — the actual lock logic, which Token-2022 calls automatically on
+  every transfer: if the destination is one of the registered pool vaults (that
+  is, this is a sale) and the period has not elapsed, it rejects the transfer.
 
-## Bilinen, henüz ele alınmamış konular (v1 sınırlamaları)
+## Known, not yet addressed matters (v1 limitations)
 
-- `register_launch` şu an **imza sahibi kim olursa olsun** çağrılabilir
-  (yalnızca süre + kasa adresi doğrulaması var). Teorik olarak biri, gerçek
-  havuz kurulmadan hemen önce/sonra bu çağrıyı sizin yerinize (ör. daha kısa
-  bir süreyle) yapmaya çalışabilir. Web sitesi entegrasyonunda bu, aynı
-  işlem/akış içinde (havuz oluşturma ile arka arkaya) yapılacağı için pratik
-  risk düşük, ama ileride sıkılaştırılabilir.
-- Raydium CPMM'in bizim Transfer Hook'umuzu swap işlemlerinde doğru şekilde
-  tetikleyip tetiklemediği **henüz test edilmedi** — bu, web sitesi
-  entegrasyonu + gerçek bir mint/havuz/swap denemesiyle doğrulanacak.
-- Mainnet'e deploy edilmedi.
+- `register_launch` can currently be called **whoever the signer is** (there is
+  only a duration and vault address check). In theory somebody could try to make
+  that call in your place (with a shorter duration, say) just before or after the
+  real pool is created. In the website integration this will be done inside the
+  same transaction/flow (back to back with creating the pool), so the practical
+  risk is low, but it can be tightened up later.
+- Whether Raydium CPMM triggers our Transfer Hook correctly on swaps has **not
+  been tested yet** — this will be verified with the website integration plus a
+  real mint/pool/swap attempt.
+- It has not been deployed to mainnet.
 
-## Sıradaki adım
+## The next step
 
-Web sitesine entegrasyon: Token Oluştur formuna kilit süresi seçeneği, Havuz
-Oluştur akışına `initialize_extra_account_meta_list` / `register_launch`
-çağrılarının eklenmesi.
+Integration into the website: a lock-duration option in the Create Token form,
+and adding the `initialize_extra_account_meta_list` / `register_launch` calls to
+the Create Pool flow.

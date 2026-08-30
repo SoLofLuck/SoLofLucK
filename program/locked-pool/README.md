@@ -1,51 +1,50 @@
 # locked-pool
 
-Kendi kontrolümüzdeki, basit bir sabit-çarpım (constant product / x*y=k)
-likidite havuzu programı. **Amaç:** Raydium/Orca/Meteora gibi hiçbir DEX'in
-kabul etmediği "alım her zaman serbest, satış belirli bir süre boyunca
-herkes için kapalı" kuralını, kendi yazdığımız ve tam kontrolümüzde olan bir
-programda gerçekleştirmek.
+A simple constant-product (x*y=k) liquidity pool program under our own control.
+**The purpose:** to implement the rule "buying is always open, selling is closed
+to everyone for a given period" — which no DEX such as Raydium, Orca or Meteora
+will accept — in a program we wrote ourselves and control completely.
 
-Neden ayrı bir program gerekti (özet): Raydium/Orca/Meteora'nın hepsi,
-Token-2022'nin Transfer Hook uzantısını (hangi mantığı içerdiğine
-bakmaksızın, sadece uzantı türü var diye) pool oluşturma aşamasında
-reddediyor. Bu, kod seviyesinde kanıtlanmış, aşılamaz bir kısıtlama. Detaylı
-araştırma sohbet geçmişinde mevcut.
+Why a separate program was needed (in short): Raydium, Orca and Meteora all
+reject Token-2022's Transfer Hook extension at the pool creation stage — simply
+because the extension type is present, regardless of what logic it contains. That
+is an unavoidable restriction, proven at the code level. The detailed research is
+in the conversation history.
 
-## Nasıl çalışır
+## How it works
 
-- `initialize_pool(duration_seconds, sol_amount, token_amount)`: Havuzu
-  oluşturur, ilk likiditeyi yatırır. `duration_seconds` o anki zamana
-  eklenerek `unlock_ts` olarak **kalıcı şekilde** kaydedilir. Bunu
-  değiştirecek hiçbir instruction yok — kurucu dahil kimse süreyi
-  kısaltamaz, uzatamaz ya da iptal edemez.
-- `swap_buy`: SOL → Token. Kilit durumundan bağımsız, **her zaman** serbest.
-- `swap_sell`: Token → SOL. Kilit açık sayılır ancak ve ancak: `Clock::now
-  >= pool.unlock_ts` (otomatik) YA DA `pool.manually_unlocked == true`
-  (erken açma) — ikisinden hangisi önce gerçekleşirse. Her iki durum da tek,
-  global `pool` hesabından okunur; bu instruction'ı kim ne zaman gönderirse
-  göndersin aynı anda aynı sonucu görür.
-- `unlock_now`: Kilidi süresinden önce, tek seferde ve **kalıcı** olarak
-  açar. Sadece `pool.creator` çağırabilir (`has_one` ile zorunlu). Bir kere
-  `true` olduktan sonra `false`'a geri dönüş yok — kısmi/seçici açma
-  (bazı hesaplar için evet, bazıları için hayır) mümkün değil, çünkü
-  `swap_sell` bunu tek global bayraktan okuyor.
-- `add_liquidity` / `remove_liquidity`: Standart, kilitten bağımsız likidite
-  ekleme/çekme (LP token karşılığında orantılı pay).
+- `initialize_pool(duration_seconds, sol_amount, token_amount)`: creates the pool
+  and deposits the initial liquidity. `duration_seconds` is added to the current
+  time and recorded **permanently** as `unlock_ts`. There is no instruction that
+  would change it — nobody, the creator included, can shorten, extend or cancel
+  the period.
+- `swap_buy`: SOL → Token. Always open, regardless of the lock state.
+- `swap_sell`: Token → SOL. The lock counts as open if and only if `Clock::now >=
+  pool.unlock_ts` (automatically) OR `pool.manually_unlocked == true` (an early
+  opening) — whichever happens first. Both are read from the single, global `pool`
+  account; whoever sends this instruction, and whenever they send it, sees the
+  same result at the same moment.
+- `unlock_now`: opens the lock before its time, once and **permanently**. Only
+  `pool.creator` can call it (enforced with `has_one`). Once it is `true` there is
+  no way back to `false` — a partial or selective opening (yes for some accounts,
+  no for others) is impossible, because `swap_sell` reads it from that single
+  global flag.
+- `add_liquidity` / `remove_liquidity`: standard adding and removing of liquidity,
+  independent of the lock (a proportional share in exchange for LP tokens).
 
-Not: `unlock_now` kurucuya bir güven bağımlılığı geri katıyor (butona hiç
-basmazsa kilit sadece `unlock_ts`'te otomatik açılır — süresiz kilitli
-kalma riski yoktur, çünkü otomatik süre her zaman arka planda çalışır).
-Kurucu isterse hiç kullanmayabilir; tamamen opsiyonel bir "erken aç"
-mekanizması.
+Note: `unlock_now` reintroduces a trust dependency on the creator (if they never
+press the button, the lock simply opens automatically at `unlock_ts` — there is no
+risk of staying locked indefinitely, because the automatic period always runs in
+the background). The creator may choose never to use it; it is an entirely
+optional "open early" mechanism.
 
-## Deploy durumu
+## Deploy status
 
-Henüz deploy edilmedi. Sell-lock programında olduğu gibi Solana Playground
-(https://beta.solpg.io) üzerinden Devnet'e deploy edilecek — bu ortamda
-`crates.io` ve `release.anza.xyz` ağ erişimi engelli olduğu için yerel
-`anchor build`/`solana program deploy` çalıştırılamıyor.
+Not deployed yet. As with the sell-lock program, it will be deployed to Devnet
+through Solana Playground (https://beta.solpg.io) — network access to `crates.io`
+and `release.anza.xyz` is blocked in this environment, so `anchor build` and
+`solana program deploy` cannot be run locally.
 
-Deploy sonrası `declare_id!(...)` içindeki placeholder program ID gerçek
-adresle güncellenecek ve `Anchor.toml`'daki `[programs.devnet]` girdisi de
-eşleştirilecek.
+After the deploy, the placeholder program ID in `declare_id!(...)` will be updated
+with the real address and the `[programs.devnet]` entry in `Anchor.toml` will be
+matched to it.

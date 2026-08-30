@@ -9,7 +9,7 @@ const POOL_SEED: &[u8] = b"pool";
 const AUTHORITY_SEED: &[u8] = b"authority";
 const LP_MINT_SEED: &[u8] = b"lp_mint";
 
-// Uniswap-v2 tarzı %0.3 işlem ücreti (havuzda kalır, LP sağlayıcılarına gider).
+// A Uniswap-v2 style 0.3% trading fee (it stays in the pool and goes to the LPs).
 const FEE_NUMERATOR: u128 = 997;
 const FEE_DENOMINATOR: u128 = 1000;
 
@@ -17,10 +17,10 @@ const FEE_DENOMINATOR: u128 = 1000;
 pub mod locked_pool {
     use super::*;
 
-    /// Havuzu oluşturur ve ilk likiditeyi yatırır. `duration_seconds`,
-    /// satışın ne kadar süre kilitli kalacağını belirler — bu değer havuz
-    /// hesabına yazıldıktan sonra bir daha ASLA değiştirilemez; bunu
-    /// değiştirecek hiçbir instruction bu programda yok.
+    /// Creates the pool and deposits the initial liquidity. `duration_seconds`
+    /// sets how long selling stays locked — once written to the pool account that
+    /// value can NEVER be changed again; there is no instruction in this program
+    /// that would change it.
     pub fn initialize_pool(
         ctx: Context<InitializePool>,
         duration_seconds: i64,
@@ -33,7 +33,7 @@ pub mod locked_pool {
         let now = Clock::get()?.unix_timestamp;
         let unlock_ts = now.checked_add(duration_seconds).ok_or(PoolError::MathOverflow)?;
 
-        // SOL'u pool_authority PDA'sına aktar.
+        // Move the SOL into the pool_authority PDA.
         system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
@@ -45,7 +45,7 @@ pub mod locked_pool {
             sol_amount,
         )?;
 
-        // Token'ı vault'a aktar.
+        // Move the token into the vault.
         token::transfer(
             CpiContext::new(
                 ctx.accounts.token_program.to_account_info(),
@@ -58,7 +58,7 @@ pub mod locked_pool {
             token_amount,
         )?;
 
-        // İlk LP miktarı = sqrt(sol_amount * token_amount) (Uniswap v2 kuralı).
+        // The initial LP amount = sqrt(sol_amount * token_amount) (the Uniswap v2 rule).
         let lp_amount = integer_sqrt(
             (sol_amount as u128)
                 .checked_mul(token_amount as u128)
@@ -96,8 +96,8 @@ pub mod locked_pool {
         Ok(())
     }
 
-    /// Mevcut havuz oranına göre likidite ekler. Alım/satım kısıtlamasıyla
-    /// hiç ilgisi yok — likidite her zaman eklenip çekilebilir.
+    /// Adds liquidity at the pool's current ratio. It has nothing to do with the
+    /// buy/sell restriction — liquidity can always be added and removed.
     pub fn add_liquidity(ctx: Context<AddLiquidity>, sol_amount: u64, max_token_amount: u64) -> Result<()> {
         require!(sol_amount > 0, PoolError::InvalidAmount);
 
@@ -169,8 +169,8 @@ pub mod locked_pool {
         Ok(())
     }
 
-    /// LP payını yakıp karşılığında orantılı SOL + token geri çeker.
-    /// Bu instruction'ın da satış kilidiyle hiç ilgisi yok.
+    /// Burns the LP share and withdraws the proportional SOL + token in return.
+    /// This instruction has nothing to do with the sell lock either.
     pub fn remove_liquidity(
         ctx: Context<RemoveLiquidity>,
         lp_amount: u64,
@@ -247,7 +247,7 @@ pub mod locked_pool {
         Ok(())
     }
 
-    /// SOL -> Token. Kilit süresinden bağımsız olarak HER ZAMAN serbesttir.
+    /// SOL -> Token. ALWAYS open, regardless of the lock period.
     pub fn swap_buy(ctx: Context<Swap>, sol_in: u64, min_token_out: u64) -> Result<()> {
         require!(sol_in > 0, PoolError::InvalidAmount);
 
@@ -311,11 +311,12 @@ pub mod locked_pool {
         Ok(())
     }
 
-    /// Token -> SOL. Kilit açık sayılır ancak ve ancak: `pool.unlock_ts`
-    /// dolduysa OTOMATİK OLARAK, YA DA kurucu `unlock_now` ile erken açtıysa.
-    /// İkisi de tek, global `pool` hesabından okunur — bu instruction'ı
-    /// gönderen herkes (kim, ne zaman gönderirse göndersin) aynı anda aynı
-    /// sonucu görür; hiçbir hesap diğerinden önce/sonra açılmaz.
+    /// Token -> SOL. The lock counts as open if and only if: `pool.unlock_ts`
+    /// has elapsed, AUTOMATICALLY, OR the creator opened it early with
+    /// `unlock_now`. Both are read from the single, global `pool` account — so
+    /// everyone who sends this instruction (whoever they are, whenever they send
+    /// it) sees the same result at the same moment; no account opens before or
+    /// after another.
     pub fn swap_sell(ctx: Context<Swap>, token_in: u64, min_sol_out: u64) -> Result<()> {
         require!(token_in > 0, PoolError::InvalidAmount);
 
@@ -383,13 +384,12 @@ pub mod locked_pool {
         Ok(())
     }
 
-    /// Kilidi süresinden ÖNCE, tek seferde ve KALICI olarak açar. Sadece
-    /// `pool.creator` çağırabilir. Bir kere `true` olduktan sonra bunu
-    /// `false`'a geri döndürecek hiçbir instruction yok — yani ne kurucu
-    /// ne de başka biri kilidi yeniden kapatamaz, seçici (bazı hesaplar
-    /// için evet bazıları için hayır) davranamaz. `swap_sell` bu bayrağı
-    /// tek, global kaynak olarak okuduğu için etkisi tüm satıcılar için
-    /// aynı anda başlar.
+    /// Opens the lock BEFORE its time, once and PERMANENTLY. Only
+    /// `pool.creator` can call it. Once it is `true` there is no instruction that
+    /// would set it back to `false` — so neither the creator nor anybody else can
+    /// close the lock again, or act selectively (yes for some accounts, no for
+    /// others). Because `swap_sell` reads this flag as its single, global source,
+    /// its effect starts for every seller at the same moment.
     pub fn unlock_now(ctx: Context<UnlockNow>) -> Result<()> {
         require!(!ctx.accounts.pool.manually_unlocked, PoolError::AlreadyUnlocked);
         ctx.accounts.pool.manually_unlocked = true;
@@ -397,7 +397,7 @@ pub mod locked_pool {
     }
 }
 
-/// Newton yöntemiyle tamsayı karekök (Uniswap v2'deki ile aynı yaklaşım).
+/// An integer square root by Newton's method (the same approach as in Uniswap v2).
 fn integer_sqrt(value: u128) -> u128 {
     if value == 0 {
         return 0;
@@ -417,11 +417,11 @@ pub struct Pool {
     pub token_vault: Pubkey,
     pub lp_mint: Pubkey,
     pub creator: Pubkey,
-    /// Unix zaman damgası — bu andan itibaren satış serbest. Havuz
-    /// oluşturulduktan sonra bunu değiştirecek hiçbir instruction yok.
+    /// A Unix timestamp — selling is open from this moment on. There is no
+    /// instruction that would change it after the pool is created.
     pub unlock_ts: i64,
-    /// `unlock_now` ile tek seferlik, kalıcı erken açma. `false` -> `true`
-    /// yönünde tek yönlü; geri kapatan hiçbir instruction yok.
+    /// The one-off, permanent early opening done by `unlock_now`. It is one-way,
+    /// `false` -> `true`; there is no instruction that closes it again.
     pub manually_unlocked: bool,
     pub bump: u8,
     pub authority_bump: u8,
@@ -447,8 +447,8 @@ pub struct InitializePool<'info> {
     )]
     pub pool: Account<'info, Pool>,
 
-    /// CHECK: Sadece SOL tutan ve CPI'larda imza için kullanılan bir PDA;
-    /// hiç veri içermiyor, bu yüzden Anchor tip kontrolü gerektirmiyor.
+    /// CHECK: a PDA that only holds SOL and is used to sign in CPIs; it carries
+    /// no data, so it needs no Anchor type check.
     #[account(
         mut,
         seeds = [AUTHORITY_SEED, pool.key().as_ref()],
@@ -498,7 +498,7 @@ pub struct AddLiquidity<'info> {
     #[account(seeds = [POOL_SEED, pool.token_mint.as_ref()], bump = pool.bump)]
     pub pool: Account<'info, Pool>,
 
-    /// CHECK: pool.authority_bump ile doğrulanan PDA.
+    /// CHECK: a PDA verified with pool.authority_bump.
     #[account(
         mut,
         seeds = [AUTHORITY_SEED, pool.key().as_ref()],
@@ -536,7 +536,7 @@ pub struct RemoveLiquidity<'info> {
     #[account(seeds = [POOL_SEED, pool.token_mint.as_ref()], bump = pool.bump)]
     pub pool: Account<'info, Pool>,
 
-    /// CHECK: pool.authority_bump ile doğrulanan PDA.
+    /// CHECK: a PDA verified with pool.authority_bump.
     #[account(
         mut,
         seeds = [AUTHORITY_SEED, pool.key().as_ref()],
@@ -568,7 +568,7 @@ pub struct Swap<'info> {
     #[account(seeds = [POOL_SEED, pool.token_mint.as_ref()], bump = pool.bump)]
     pub pool: Account<'info, Pool>,
 
-    /// CHECK: pool.authority_bump ile doğrulanan PDA.
+    /// CHECK: a PDA verified with pool.authority_bump.
     #[account(
         mut,
         seeds = [AUTHORITY_SEED, pool.key().as_ref()],
@@ -588,8 +588,8 @@ pub struct Swap<'info> {
 
 #[derive(Accounts)]
 pub struct UnlockNow<'info> {
-    /// Havuzu oluşturan cüzdan olmalı — `pool.creator` ile eşleşme
-    /// Anchor'ın `has_one` kısıtıyla zorunlu kılınıyor.
+    /// Has to be the wallet that created the pool — the match against
+    /// `pool.creator` is enforced by Anchor's `has_one` constraint.
     pub creator: Signer<'info>,
 
     #[account(
@@ -603,20 +603,20 @@ pub struct UnlockNow<'info> {
 
 #[error_code]
 pub enum PoolError {
-    #[msg("Süre 0'dan büyük olmalı.")]
+    #[msg("The duration has to be greater than 0.")]
     InvalidDuration,
-    #[msg("Geçersiz miktar.")]
+    #[msg("Invalid amount.")]
     InvalidAmount,
-    #[msg("Havuzda likidite yok.")]
+    #[msg("The pool has no liquidity.")]
     EmptyPool,
-    #[msg("Slippage payı aşıldı.")]
+    #[msg("The slippage tolerance was exceeded.")]
     SlippageExceeded,
-    #[msg("Havuzda yeterli likidite yok.")]
+    #[msg("The pool does not have enough liquidity.")]
     InsufficientLiquidity,
-    #[msg("Matematik taşması.")]
+    #[msg("Arithmetic overflow.")]
     MathOverflow,
-    #[msg("Satış kilidi hâlâ aktif — belirlenen süre dolmadan satış yapılamaz.")]
+    #[msg("The sell lock is still active — you cannot sell before the set period elapses.")]
     SellLocked,
-    #[msg("Kilit zaten manuel olarak açılmış.")]
+    #[msg("The lock has already been opened manually.")]
     AlreadyUnlocked,
 }
