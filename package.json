@@ -7,7 +7,7 @@
     "dev": "vite",
     "check:tokenomics": "node scripts/check-tokenomics.mjs",
     "check:scripts": "node scripts/build-merkle.mjs --selftest && node scripts/draw-raffle.mjs --selftest && node scripts/presale-buyers.mjs --selftest",
-    "verify": "npm run check:tokenomics && npm run check:scripts && npm run check:abi && npm run check:tx-path && npm run check:error-codes && npm run check:runbook",
+    "verify": "npm run check:language && npm run check:tokenomics && npm run check:scripts && npm run check:abi && npm run check:tx-path && npm run check:error-codes && npm run check:runbook",
     "build": "npm run verify && tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
@@ -17,7 +17,8 @@
     "check:launch": "node scripts/check-launch-readiness.mjs",
     "launch-gate": "node scripts/check-launch-readiness.mjs --strict",
     "check:runbook": "node scripts/check-runbook.mjs",
-    "check:onchain-deps": "node scripts/check-onchain-deps.mjs"
+    "check:onchain-deps": "node scripts/check-onchain-deps.mjs",
+    "check:language": "node scripts/check-language.mjs"
   },
   "dependencies": {
     "@irys/web-upload": "^0.0.15",

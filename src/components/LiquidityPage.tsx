@@ -33,12 +33,12 @@ type SubTab = 'create' | 'manage' | 'lock' | 'burn' | 'search'
 
 function fmtNum(n: number, digits = 6): string {
   if (!Number.isFinite(n)) return '-'
-  return n.toLocaleString('tr-TR', { maximumFractionDigits: digits })
+  return n.toLocaleString('en-US', { maximumFractionDigits: digits })
 }
 
 function fmtUsd(n: number): string {
   if (!Number.isFinite(n)) return '-'
-  return n.toLocaleString('tr-TR', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 })
 }
 
 /** An "X SOL (~$Y)" row — shows only the SOL part if the SOL/USD price has not arrived yet. */

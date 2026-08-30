@@ -160,7 +160,7 @@ const hex = Buffer.from(ix.data).toString('hex')
 
 check('instruction data length', ix.data.length, DATA_LEN)
 check('discriminator', hex.slice(0, 16), DISCRIMINATOR)
-check('miktar (u64 little-endian)', hex.slice(16, 32), AMOUNT_LE)
+check('amount (u64 little-endian)', hex.slice(16, 32), AMOUNT_LE)
 check('proof length (u32 little-endian)', hex.slice(32, 40), PROOF_LEN_LE)
 check('proof node 1', hex.slice(40, 104), '11'.repeat(32))
 check('proof node 2', hex.slice(104, 168), '22'.repeat(32))
@@ -190,7 +190,7 @@ for (let i = 0; i < ACCOUNT_ORDER.length; i++) {
 // The claimant must be the only signer; if another account demanded a
 // signature, the wallet would either never open or grant the wrong authority.
 check('the claimant is the only signer', ix.keys.filter((k) => k.isSigner).length, 1)
-check('imzalayan claimant', ix.keys[0].isSigner, true)
+check('the claimant signs', ix.keys[0].isSigner, true)
 // The accounts the program writes to must be marked writable.
 for (const [i, name] of [[1, 'distributor'], [3, 'vault'], [4, 'claim_status'], [5, 'destination']]) {
   check(`${name} is writable`, ix.keys[i].isWritable, true)
@@ -529,19 +529,19 @@ for (const v of oyunVektorleri) {
     r('#liquidity/presale').subTab, 'about')
 
   // Round trip: reading back the hash we wrote must land in the same place.
-  let bozuk = []
+  let broken = []
   for (const page of ROUTES.pages) {
     for (const subTab of ROUTES.subTabs) {
       const h = dl.hashFromRoute(page, subTab, ROUTES)
-      const geri = r(h)
-      const beklenenAlt = page === 'solofluck' ? subTab : 'about'
-      if (geri.page !== page || geri.subTab !== beklenenAlt) {
-        bozuk.push(`${page}/${subTab} -> ${h} -> ${geri.page}/${geri.subTab}`)
+      const back = r(h)
+      const expectedSubTab = page === 'solofluck' ? subTab : 'about'
+      if (back.page !== page || back.subTab !== expectedSubTab) {
+        broken.push(`${page}/${subTab} -> ${h} -> ${back.page}/${back.subTab}`)
       }
     }
   }
   check('route: the round trip is consistent',
-    bozuk.length === 0 ? true : `bozuk: ${bozuk.join(' · ')}`, true)
+    broken.length === 0 ? true : `broken: ${broken.join(' · ')}`, true)
 
   // App.tsx and SoLofLuckPage.tsx carry the same routing definition; if they
   // drift apart, the tab and the address bar stop agreeing.
@@ -843,7 +843,7 @@ for (const v of oyunVektorleri) {
     sahteBaglanti(
       `8cb617b4df501e9d${OYUNCU_HEX}01d20296490000000000012a9ab70e00000000`,
     ),
-    'sahte-imza',
+    'forged-signature',
   )
   check('event PlayResolved: could be read', resolved !== null, true)
   check('event PlayResolved: won', resolved?.won, true)
@@ -854,7 +854,7 @@ for (const v of oyunVektorleri) {
 
   const committed = await game.parsePlayCommittedFromTx(
     sahteBaglanti(`0f6a7973baf30b2c${OYUNCU_HEX}0b0000001600000001cedf201d00000000`),
-    'sahte-imza',
+    'forged-signature',
   )
   check('event PlayCommitted: could be read', committed !== null, true)
   check('event PlayCommitted: plays_count', committed?.playsCount, 11)
@@ -864,7 +864,7 @@ for (const v of oyunVektorleri) {
 
   const purchased = await game.parseSpinsPurchasedFromTx(
     sahteBaglanti(`c39218f3ce200ed2${OYUNCU_HEX}03140000000008af2f0000000017000000`),
-    'sahte-imza',
+    'forged-signature',
   )
   check('event SpinsPurchased: could be read', purchased !== null, true)
   check('event SpinsPurchased: tier_index', purchased?.tierIndex, 3)
@@ -876,7 +876,7 @@ for (const v of oyunVektorleri) {
   // another event's bytes would be taken for PlayResolved and misdecoded.
   const foreignDiscriminator = await game.parsePlayResolvedFromTx(
     sahteBaglanti(`0f6a7973baf30b2c${OYUNCU_HEX}01d20296490000000000012a9ab70e00000000`),
-    'sahte-imza',
+    'forged-signature',
   )
   check('event PlayResolved: a foreign discriminator is rejected', foreignDiscriminator, null)
 }

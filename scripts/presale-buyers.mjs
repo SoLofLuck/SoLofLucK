@@ -161,7 +161,7 @@ if (process.argv.includes('--selftest')) {
     const ok = JSON.stringify(actual) === JSON.stringify(expected)
     if (!ok) failed++
     console.log(`${ok ? 'PASSED' : 'FAILED'}  ${name}`)
-    if (!ok) console.log(`   beklenen ${JSON.stringify(expected)}, gelen ${JSON.stringify(actual)}`)
+    if (!ok) console.log(`   expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
   }
 
   // 1) An ordinary contribution: 1 SOL, 90% to the wallet + 10% to operations
@@ -268,7 +268,7 @@ for (;;) {
   if (page.length === 0) break
   signatures.push(...page)
   before = page[page.length - 1].signature
-  process.stderr.write(`  ${signatures.length} imza...\n`)
+  process.stderr.write(`  ${signatures.length} signature(s)...\n`)
   if (page.length < 1000) break
 }
 
@@ -424,8 +424,8 @@ const totals = rows.reduce(
 process.stderr.write(
   `\n${rows.length} buyer(s), ${processed} contribution transaction(s).\n` +
     `Total: ${(totals.lamports / LAMPORTS_PER_SOL).toFixed(4)} SOL · ` +
-    `${totals.tokens.toLocaleString('tr-TR')} $LUCK · ${totals.tickets} bilet\n` +
-    (skipped.length ? `Atlanan: ${skipped.length}\n` : ''),
+    `${totals.tokens.toLocaleString('en-US')} $LUCK · ${totals.tickets} ticket(s)\n` +
+    (skipped.length ? `Skipped: ${skipped.length}\n` : ''),
 )
 
 // --- 4) Output --------------------------------------------------------------

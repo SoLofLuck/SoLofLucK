@@ -12,10 +12,10 @@ import type { NetworkId } from '../config'
 // "non-cancelable / non-topupable / non-transferable", so nobody, us included,
 // can withdraw the LP before it expires.
 export const LOCK_DURATION_OPTIONS: { label: string; seconds: number }[] = [
-  { label: '1 Saat', seconds: 60 * 60 },
-  { label: '5 Saat', seconds: 5 * 60 * 60 },
-  { label: '24 Saat', seconds: 24 * 60 * 60 },
-  { label: '48 Saat', seconds: 48 * 60 * 60 },
+  { label: '1 Hour', seconds: 60 * 60 },
+  { label: '5 Hours', seconds: 5 * 60 * 60 },
+  { label: '24 Hours', seconds: 24 * 60 * 60 },
+  { label: '48 Hours', seconds: 48 * 60 * 60 },
 ]
 
 export interface LockResult {
@@ -57,7 +57,7 @@ export async function lockLpTokens(
     tokenId: lpMintAddress,
     amount,
     unlockDate,
-    name: `LP Kilidi (${Math.round(durationSeconds / 3600)} saat)`,
+    name: `LP Lock (${Math.round(durationSeconds / 3600)} hours)`,
     tokenProgramId: lpTokenProgramId,
   }
 

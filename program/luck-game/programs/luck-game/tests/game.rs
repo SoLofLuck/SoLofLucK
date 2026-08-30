@@ -204,7 +204,7 @@ async fn a_foreign_delegate_cannot_spend_somebody_elses_spin() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Resolve: zamanlama ve atlanan slot
+// 3. Resolve: the timing and a skipped slot
 // ---------------------------------------------------------------------------
 
 /// Puts a player into the "pending game" state and returns the target slot.

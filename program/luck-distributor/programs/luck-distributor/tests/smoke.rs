@@ -17,7 +17,7 @@ use solana_sdk::pubkey::Pubkey;
 async fn the_harness_starts_and_the_program_is_loaded() {
     let mut ctx = common::program_test().start_with_context().await;
 
-    let hesap = ctx
+    let account = ctx
         .banks_client
         .get_account(luck_distributor::ID)
         .await
@@ -25,11 +25,11 @@ async fn the_harness_starts_and_the_program_is_loaded() {
         .expect("the program account is not in the test bank — the program was never loaded");
 
     assert!(
-        hesap.executable,
+        account.executable,
         "the program account exists but is not executable"
     );
     assert_ne!(
-        hesap.owner,
+        account.owner,
         Pubkey::default(),
         "the program account has no owner — the load was left half-finished"
     );

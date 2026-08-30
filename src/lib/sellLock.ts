@@ -34,15 +34,15 @@ export interface SellLockDurationOption {
 // seconds: 0 = no lock (disabled).
 export const SELL_LOCK_DURATION_OPTIONS: SellLockDurationOption[] = [
   { label: 'Disabled (no sell lock)', seconds: 0 },
-  { label: '15 Dakika', seconds: 900 },
-  { label: '1 Saat', seconds: 3600 },
-  { label: '5 Saat', seconds: 18_000 },
-  { label: '24 Saat', seconds: 86_400 },
+  { label: '15 Minutes', seconds: 900 },
+  { label: '1 Hour', seconds: 3600 },
+  { label: '5 Hours', seconds: 18_000 },
+  { label: '24 Hours', seconds: 86_400 },
 ]
 
 export function formatSellLockDuration(seconds: number): string {
   const match = SELL_LOCK_DURATION_OPTIONS.find((o) => o.seconds === seconds)
-  return match?.label ?? `${seconds} saniye`
+  return match?.label ?? `${seconds} seconds`
 }
 
 function getLaunchConfigPda(mint: PublicKey): PublicKey {

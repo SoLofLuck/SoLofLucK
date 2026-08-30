@@ -211,7 +211,7 @@ pub async fn set_time(ctx: &mut ProgramTestContext, unix_timestamp: i64) {
     ctx.set_sysvar(&clock);
 }
 
-// --- PDA'lar -----------------------------------------------------------------
+// --- The PDAs -----------------------------------------------------------------
 
 pub fn distributor_pda(mint: &Pubkey, id: u64) -> (Pubkey, u8) {
     Pubkey::find_program_address(

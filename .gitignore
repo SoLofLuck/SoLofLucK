@@ -23,8 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 
-# check-claim-abi.mjs, istemci kodunu derleyip çalıştırmak için buraya
-# geçici bir klasör açıyor (node_modules altında olmak zorunda: derlenen
-# modül @solana/web3.js'i import ediyor). Normalde kendini siliyor; koşu
-# yarıda kesilirse artık kalabilir.
+# check-claim-abi.mjs opens a temporary folder here to build and run the client
+# code (it has to be under node_modules: the compiled module imports
+# @solana/web3.js). It normally cleans up after itself; if a run is interrupted
+# the leftovers can remain.
 node_modules/.claim-abi-*

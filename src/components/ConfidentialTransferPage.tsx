@@ -39,7 +39,7 @@ interface Props {
 const MAX_PENDING_BALANCE_CREDIT_COUNTER = 65536n
 
 function fmtAmount(raw: bigint, decimals: number): string {
-  return (Number(raw) / 10 ** decimals).toLocaleString('tr-TR')
+  return (Number(raw) / 10 ** decimals).toLocaleString('en-US')
 }
 
 async function sendTx(
@@ -579,7 +579,7 @@ export function ConfidentialTransferPage({ network }: Props) {
 
   return (
     <div className="token-form">
-      <h2>Gizli Miktar Transferi (Confidential Transfer)</h2>
+      <h2>Confidential Amount Transfer (Confidential Transfer)</h2>
       <p className="subtab-desc">
         Uses Token-2022's official <strong>Confidential Transfer</strong> extension: the AMOUNT
         transferred is kept encrypted on chain and is not visible on explorers such as Solscan.{' '}
@@ -667,7 +667,7 @@ export function ConfidentialTransferPage({ network }: Props) {
         <>
           <div className="pool-manage__section" style={{ marginTop: 20 }}>
             <div className="pool-manage__section-title">
-              Gizli Bakiyeniz
+              Your Confidential Balance
               <small className="pool-manage__balance-hint">
                 {' '}
                 {currentBalance !== null && decimals !== null ? fmtAmount(currentBalance, decimals) : '...'} token

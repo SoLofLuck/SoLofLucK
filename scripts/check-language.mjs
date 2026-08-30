@@ -38,6 +38,10 @@ const SCANNED_EXTENSIONS = new Set([
   '.ts', '.tsx', '.mjs', '.js', '.rs', '.md', '.yml', '.yaml',
   '.json', '.html', '.css', '.toml',
 ])
+// Extensionless dotfiles carry comments too, and the extension list alone
+// skipped them silently — .gitignore held a Turkish comment for exactly that
+// reason.
+const SCANNED_NAMES = new Set(['.gitignore', '.gitattributes', '.npmrc', '.nvmrc', 'Dockerfile', 'Makefile'])
 
 // Turkish-specific letters.
 const TURKISH_LETTERS = /[ğüşıöçĞÜŞİÖÇ]/
@@ -53,7 +57,36 @@ const TURKISH_WORDS = [
   'kaynak', 'ornek', 'yeni', 'eski', 'once', 'sonra', 'icin', 've',
   'veya', 'ama', 'ancak', 'cunku', 'yani', 'ile', 'olarak', 'kadar',
   'sadece', 'yalnizca', 'her', 'hic', 'bir', 'bu', 'su', 'o',
+  // A second pass added after the first "everything is English" claim turned
+  // out to be wrong: these are ASCII-only Turkish words that the letter test
+  // and the list above both missed, found by sweeping the repository by hand.
+  // Every one of them was a real remnant somewhere.
+  'kazanan', 'kazananlar', 'kazanma', 'oynama', 'kaydet', 'kayit',
+  'bozuldu', 'sembol', 'gizli', 'imza', 'imzalar', 'imzalayan', 'miktar',
+  'hesap', 'hesaplar', 'hesaplama', 'durum', 'durumu', 'bilet', 'biletler',
+  'kilit', 'kilidi', 'kilitli', 'havuz', 'havuzu', 'likidite', 'saat',
+  'dakika', 'saniye', 'tutar', 'sahte', 'olamaz', 'karakterden',
+  'transferi', 'prova', 'kontrat', 'rezerv', 'rezervler', 'anahtar',
+  'kural', 'kurallar', 'adim', 'adimlar', 'paket', 'paketi', 'paketler',
+  'zorunlu', 'varsayilan', 'liste', 'listesi', 'uyari', 'baslik',
+  'tarih', 'zaman', 'ayar', 'ayarlar', 'sayfa', 'iptal', 'burada',
+  'neden', 'hangi', 'katki', 'katkilar', 'oran', 'orani',
+  // A third pass. Same lesson again: each sweep with a wider list found more.
+  'geri', 'bozuk', 'beklenen', 'eksik', 'fazla', 'takvim', 'kabul',
+  'mimari', 'mimarisi', 'tohum', 'sabit', 'atlanan', 'olan', 'olmayan',
+  'degildir', 'gerekir', 'edildi', 'edilir', 'yapildi', 'basarili',
+  'basarisiz', 'gecerli', 'gecersiz', 'hazir', 'dolu', 'tum', 'diger',
+  'baska', 'ayni', 'farkli', 'kendi', 'kendisi', 'uzerinde', 'altinda',
+  'icinde', 'arasinda', 'boyunca', 'sirasinda', 'yukleniyor',
+  'bekleniyor', 'gonderildi', 'tamamlandi', 'secildi', 'alindi',
+  'verildi', 'kazandi', 'kaybetti', 'oynadi', 'karakter',
 ]
+
+// Turkish LOCALES. `toLocaleString('tr-TR')` contains no Turkish word at all,
+// but it renders every number on the site in Turkish notation ("1.234,56"). It
+// is Turkish that the reader sees and no word list would ever catch it, so it
+// is matched as a pattern of its own.
+const TURKISH_LOCALES = /\btr-TR\b|\btr_TR\b|lang\s*=\s*["']tr["']/
 // Very short words ("ve", "bir", "bu", "o") collide with English and other
 // languages, so they are matched only when they appear alongside a longer
 // Turkish word on the same line — handled below.
@@ -83,7 +116,7 @@ function walk(dir) {
     if (SKIP_DIRS.has(name)) continue
     const full = join(dir, name)
     if (statSync(full).isDirectory()) out.push(...walk(full))
-    else if (SCANNED_EXTENSIONS.has(extname(name))) out.push(full)
+    else if (SCANNED_EXTENSIONS.has(extname(name)) || SCANNED_NAMES.has(name)) out.push(full)
   }
   return out
 }
@@ -102,6 +135,7 @@ for (const file of walk(root)) {
   lines.forEach((line, i) => {
     const hits = []
     if (TURKISH_LETTERS.test(line)) hits.push('Turkish letters')
+    if (TURKISH_LOCALES.test(line)) hits.push('Turkish locale')
     for (const word of STRONG_WORDS) {
       if (new RegExp(`\\b${word}\\b`, 'i').test(line)) {
         hits.push(`word "${word}"`)

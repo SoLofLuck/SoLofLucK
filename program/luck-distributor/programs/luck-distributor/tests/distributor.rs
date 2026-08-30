@@ -295,12 +295,12 @@ async fn incomplete_schedule_rejected() {
         &[],
     )
     .await;
-    assert!(res.is_err(), "eksik takvim kabul edilmemeli");
+    assert!(res.is_err(), "an incomplete schedule must not be accepted");
 }
 
 // -- 11 ---------------------------------------------------------------------
-/// A round with many recipients: once everyone has claimed, the vault must empty EXACTLY —
-/// ne eksik ne fazla.
+/// A round with many recipients: once everyone has claimed, the vault must empty
+/// EXACTLY — neither short nor over.
 #[tokio::test]
 async fn many_buyers_drain_vault_exactly() {
     let mut ctx = program_test().start_with_context().await;

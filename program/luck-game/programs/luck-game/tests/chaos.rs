@@ -236,7 +236,7 @@ async fn run_chaos(
             let kp = players[i].kp.insecure_clone();
             result = game.send(&[ix], &[&kp]).await;
         } else if action < 33 {
-            // --- delegate kaydet ---
+            // --- register a delegate ---
             let ix = game.register_delegate_ix(&player_key, &delegate_key);
             let kp = players[i].kp.insecure_clone();
             result = game.send(&[ix], &[&kp]).await;
@@ -350,10 +350,10 @@ async fn run_chaos(
 
         let after = game.player_state(&player_key).await;
         if let Some(s) = after.as_ref() {
-            // D3 — kazanma ≤ oynama
+            // D3 — wins <= plays
             assert!(
                 s.wins_count <= s.plays_count,
-                "D3 BOZULDU ({label}): kazanma {} > oynama {}",
+                "D3 BROKEN ({label}): {} wins > {} plays",
                 s.wins_count,
                 s.plays_count
             );
@@ -385,7 +385,7 @@ async fn run_chaos(
                     assert_eq!(
                         s.spins_remaining,
                         spins_before.saturating_sub(1),
-                        "D6 BOZULDU ({label}): bir oynama {spins_before} -> {} spin",
+                        "D6 BROKEN ({label}): one play took the balance {spins_before} -> {}",
                         s.spins_remaining
                     );
                 }

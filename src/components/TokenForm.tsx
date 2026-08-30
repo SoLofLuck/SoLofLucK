@@ -104,8 +104,8 @@ export function TokenForm({ network }: Props) {
   function validate(): string | null {
     if (!form.name.trim()) return 'The token name is required.'
     if (form.name.length > 32) return 'The token name cannot be longer than 32 characters.'
-    if (!form.symbol.trim()) return 'Sembol (ticker) zorunludur.'
-    if (form.symbol.length > 10) return 'Sembol 10 karakterden uzun olamaz.'
+    if (!form.symbol.trim()) return 'The symbol (ticker) is required.'
+    if (form.symbol.length > 10) return 'The symbol cannot be longer than 10 characters.'
     if (form.decimals < 0 || form.decimals > 9) return 'Decimals must be between 0 and 9.'
     if (!/^\d+$/.test(form.supply) || BigInt(form.supply) <= 0n) return 'Enter a valid supply amount.'
     return null
@@ -208,7 +208,7 @@ export function TokenForm({ network }: Props) {
         </label>
 
         <label className="field">
-          <span>Sembol *</span>
+          <span>Symbol *</span>
           <input
             type="text"
             placeholder="e.g. MYTK"
@@ -356,7 +356,7 @@ export function TokenForm({ network }: Props) {
             onChange={(e) => update('confidentialTransferEnabled', e.target.checked)}
           />
           <div>
-            <strong>Gizli Miktar Transferi (Confidential Transfer)</strong>
+            <strong>Confidential Amount Transfer (Confidential Transfer)</strong>
             <small>
               With Token-2022's official extension the AMOUNT transferred is kept encrypted on chain —
               the sender and recipient addresses always stay visible, only the amount is hidden. If you

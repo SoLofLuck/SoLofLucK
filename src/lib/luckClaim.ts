@@ -31,7 +31,7 @@ function mintKey(): PublicKey {
   return new PublicKey(LUCK_TOKEN.mint)
 }
 
-// --- PDA'lar ---------------------------------------------------------------
+// --- The PDAs ---------------------------------------------------------------
 
 function u64le(value: number | bigint): Buffer {
   const buf = Buffer.alloc(8)
@@ -318,6 +318,6 @@ export function formatLuck(amount: bigint): string {
   const base = BigInt(10) ** BigInt(LUCK_TOKEN.decimals)
   const whole = amount / base
   const frac = (amount % base).toString().padStart(LUCK_TOKEN.decimals, '0').replace(/0+$/, '')
-  const wholeText = whole.toLocaleString('tr-TR')
-  return frac ? `${wholeText},${frac.slice(0, 4)}` : wholeText
+  const wholeText = whole.toLocaleString('en-US')
+  return frac ? `${wholeText}.${frac.slice(0, 4)}` : wholeText
 }

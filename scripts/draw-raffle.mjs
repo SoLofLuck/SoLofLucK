@@ -132,11 +132,11 @@ if (isMain && process.argv.includes('--selftest')) {
     { address: 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', tickets: 10 },
   ]
 
-  const seed = keccak_256(new TextEncoder().encode('sabit-tohum'))
+  const seed = keccak_256(new TextEncoder().encode('fixed-seed'))
   const a = drawWinners(entries, seed, 2)
   const b = drawWinners(entries, seed, 2)
   console.log('Determinism:', JSON.stringify(a) === JSON.stringify(b) ? 'PASSED' : 'FAILED')
-  console.log('  kazananlar:', a.map((w) => w.address.slice(0, 4)).join(', '))
+  console.log('  winners:', a.map((w) => w.address.slice(0, 4)).join(', '))
 
   // Can the same wallet win twice?
   const uniq = new Set(a.map((w) => w.address))
@@ -146,7 +146,7 @@ if (isMain && process.argv.includes('--selftest')) {
   const counts = Object.fromEntries(entries.map((e) => [e.address, 0]))
   const N = 20000
   for (let i = 0; i < N; i++) {
-    const s = keccak_256(new TextEncoder().encode(`tohum-${i}`))
+    const s = keccak_256(new TextEncoder().encode(`seed-${i}`))
     counts[drawWinners(entries, s, 1)[0].address]++
   }
   console.log('Proportionality (expected / observed):')
@@ -247,7 +247,7 @@ if (isMain) {
     `Announced slot: ${slot}\nDraw slot: ${drawSlot}\n` +
       `Blockhash: ${block.blockhash}\n` +
       `Participants: ${entries.length} · total tickets: ${totalTickets}\n` +
-      `Kazanan: ${winners.length}\n\n`,
+      `Winners: ${winners.length}\n\n`,
   )
 
   console.log(

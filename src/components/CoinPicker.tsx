@@ -240,7 +240,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
                   />
                 </label>
                 <button type="submit" className="btn btn--secondary">
-                  Bu Mint'i Kullan
+                  Use This Mint
                 </button>
               </form>
             </div>
