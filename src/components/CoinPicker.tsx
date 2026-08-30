@@ -153,7 +153,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
           <div className="coin-picker__modal" onClick={(e) => e.stopPropagation()}>
             <div className="coin-picker__modal-header">
               <h3>Select A Coin</h3>
-              <button type="button" className="coin-picker__close" onClick={() => setIsOpen(false)} aria-label="Kapat">
+              <button type="button" className="coin-picker__close" onClick={() => setIsOpen(false)} aria-label="Close">
                 ✕
               </button>
             </div>
@@ -200,8 +200,8 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
                             type="button"
                             className="coin-row__icon-btn"
                             onClick={(e) => copyToClipboard(e, t.mint)}
-                            aria-label="Adresi kopyala"
-                            title="Adresi kopyala"
+                            aria-label="Copy the address"
+                            title="Copy the address"
                           >
                             ⧉
                           </button>
@@ -234,7 +234,7 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
                   <span>Or paste a mint address</span>
                   <input
                     type="text"
-                    placeholder="Token mint adresi"
+                    placeholder="Token mint address"
                     value={manualMint}
                     onChange={(e) => setManualMint(e.target.value)}
                   />

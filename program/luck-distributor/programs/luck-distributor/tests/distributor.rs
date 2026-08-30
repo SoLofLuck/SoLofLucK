@@ -91,8 +91,8 @@ async fn claim(
 
 // -- 1 ----------------------------------------------------------------------
 /// When the schedule ends completely, can the recipient claim the LAST UNIT of
-/// their share? If rounding left a few units in the vault, that money would sit
-/// tokenler sonsuza below kilitlenirdi.
+/// their share? If rounding left a few units in the vault, those tokens would be
+/// locked there forever.
 #[tokio::test]
 async fn full_schedule_pays_exactly_total() {
     let mut ctx = program_test().start_with_context().await;

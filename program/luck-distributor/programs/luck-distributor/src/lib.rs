@@ -90,8 +90,8 @@ pub mod luck_distributor {
 
         // The schedule MUST reach exactly 100%. Without this check a configuration
         // such as 7% x 14 = 98% would be accepted silently and the recipients' last
-        // 2% would stay locked in the vault forever — both a loss and
-        // de kimse fark etmeden, aylar sonra.
+        // 2% would stay locked in the vault forever — a loss, and one nobody would
+        // notice until months later.
         let total_bps = (cliff_bps as u64)
             .checked_add((periods as u64).checked_mul(period_bps as u64).ok_or(DistributorError::MathOverflow)?)
             .ok_or(DistributorError::MathOverflow)?;

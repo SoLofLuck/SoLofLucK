@@ -196,7 +196,7 @@ for (const [i, name] of [[1, 'distributor'], [3, 'vault'], [4, 'claim_status'], 
   check(`${name} is writable`, ix.keys[i].isWritable, true)
 }
 
-check('program adresi', ix.programId.toBase58(), config.CLAIM_CONFIG.programId)
+check('the program address', ix.programId.toBase58(), config.CLAIM_CONFIG.programId)
 
 // ---------------------------------------------------------------------------
 // The initialize ABI — the instruction that opens the round and LOCKS the tokens
@@ -297,7 +297,7 @@ for (let i = 0; i < INIT_ACCOUNT_ORDER.length; i++) {
 check('initialize: the authority is the only signer', init.keys.filter((k) => k.isSigner).length, 1)
 check('initialize: distributor is writable', init.keys[2].isWritable, true)
 check('initialize: vault is writable', init.keys[3].isWritable, true)
-check('initialize: program adresi', init.programId, config.CLAIM_CONFIG.programId)
+check('initialize: the program address', init.programId, config.CLAIM_CONFIG.programId)
 
 
 // ---------------------------------------------------------------------------
@@ -748,8 +748,8 @@ for (const v of oyunVektorleri) {
 // narrowest.
 //
 // The vectors were derived independently of Anchor's rules (the discriminator =
-// sha256("account:<Name>")[0..8], the body = Borsh) and pinned on the Rust side
-// `hesap_baytlari_altin_vektore_uyuyor` ile sabitlendi.
+// sha256("account:<Name>")[0..8], the body = Borsh) and are pinned on the Rust
+// side by `player_state_byte_layout_matches_the_golden_vector`.
 {
   const fakeAccount = (hex) => ({
     getAccountInfo: async () => ({ data: Buffer.from(hex, 'hex') }),

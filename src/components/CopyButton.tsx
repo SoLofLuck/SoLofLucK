@@ -6,7 +6,7 @@ interface Props {
   className?: string
 }
 
-export function CopyButton({ value, label = 'Kopyala', className = '' }: Props) {
+export function CopyButton({ value, label = 'Copy', className = '' }: Props) {
   const [copied, setCopied] = useState(false)
 
   async function handleCopy() {

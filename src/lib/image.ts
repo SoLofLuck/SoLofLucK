@@ -31,7 +31,7 @@ interface DecodedImage {
 
 async function decodeWithImageBitmap(blob: Blob): Promise<DecodedImage> {
   if (typeof createImageBitmap !== 'function') {
-    throw new Error('createImageBitmap desteklenmiyor.')
+    throw new Error('createImageBitmap is not supported.')
   }
   const bitmap = await createImageBitmap(blob)
   return {

@@ -192,7 +192,7 @@ export function TokenForm({ network }: Props) {
 
   return (
     <form className="token-form" onSubmit={handleSubmit}>
-      <h2>Token Bilgileri</h2>
+      <h2>Token Details</h2>
 
       <div className="form-grid">
         <label className="field">

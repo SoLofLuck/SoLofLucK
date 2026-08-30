@@ -151,7 +151,7 @@ function PoolSearch({ network }: { network: NetworkId }) {
       return
     }
     if (!mint1.trim()) {
-      setError('En az bir token mint adresi girin.')
+      setError('Enter at least one token mint address.')
       return
     }
 
@@ -341,7 +341,7 @@ function PoolCreate({
 
     setLoading(true)
     try {
-      setStatus('Token bilgileri zincirden okunuyor...')
+      setStatus('Reading the token details from the chain...')
       let mintA: MintRef
       let mintB: MintRef
       try {

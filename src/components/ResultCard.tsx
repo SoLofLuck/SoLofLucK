@@ -18,7 +18,7 @@ export function ResultCard({ result, network = 'devnet', onReset }: Props) {
       <p>Your token was created on the Solana network and the full supply was sent to your wallet.</p>
 
       <div className="result-card__row">
-        <span>Mint Adresi</span>
+        <span>Mint Address</span>
         <code>{result.mint}</code>
       </div>
       <div className="result-card__row">
