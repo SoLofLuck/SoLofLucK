@@ -8,8 +8,6 @@ import {
   buySpins,
   computeBestFitSpinPurchase,
   fetchGameConfig,
-  fetchVaultBalanceLamports,
-  getConfigPda,
   fetchLeaderboard,
   fetchPlayerState,
   forfeitStuckPlay,
@@ -117,11 +115,6 @@ export function GameTab() {
   // account). That amount must stay on chain — it is NOT spendable gas, so we
   // subtract it before showing the balance to the user (see lib/luckGame.ts).
   const [delegateRentReserve, setDelegateRentReserve] = useState<number | null>(null)
-  // The vault balance IS read now. It used to go unqueried because it "was not
-  // shown to the user"; but the game's single most decisive rule depends on it:
-  // if the vault cannot cover the jackpot, no round can win. Hiding that from the
-  // player would mean hiding their real odds in a game they paid for.
-  const [vaultLamports, setVaultLamports] = useState<number | null>(null)
 
   const [busy, setBusy] = useState<string | null>(null)
   // The transaction progress text is NO LONGER shown on screen (user feedback:
@@ -214,11 +207,6 @@ export function GameTab() {
       setGameConfig(cfg)
       setInitialized(cfg !== null)
       setCurrentSlot(slot)
-      if (cfg) {
-        setVaultLamports(await fetchVaultBalanceLamports(connection, getConfigPda()))
-      }
-      // The vault balance is fetched just above, and only when a config exists —
-      // there is no point querying it on every polling round otherwise.
       if (activeOwnerPublicKey) {
         const ps = await fetchPlayerState(connection, activeOwnerPublicKey)
         setPlayerState(ps)
@@ -637,19 +625,6 @@ export function GameTab() {
     lamportsToSol(delegateGasLamports) < GAME_CONFIG.delegateLowBalanceSol
 
   // Whether the vault can cover the jackpot plus the treasury share — the SAME
-  // check the program applies inside resolve(). If it cannot, the round counts
-  // as a loss whatever the dice roll.
-  const jackpotCost =
-    gameConfig
-      ? gameConfig.bigPrizeLamports +
-        (gameConfig.bigPrizeLamports * BigInt(gameConfig.treasuryFeeBps)) / BigInt(10_000)
-      : BigInt(0)
-  const spendableVault =
-    vaultLamports !== null && delegateRentReserve !== null
-      ? BigInt(Math.max(0, vaultLamports - delegateRentReserve))
-      : null
-  const canPayJackpot = spendableVault === null ? true : spendableVault >= jackpotCost
-
   // How the two prizes split among WINNERS. `bigPrizeBps` is the share of
   // winners who get the jackpot rather than the small prize, so the other side
   // is simply the rest.
@@ -793,20 +768,6 @@ export function GameTab() {
                   what it actually pays. A prize goes straight to your wallet — nothing is
                   deducted from it.
                 </p>
-                {/* The one warning that stays. Everything else about how the vault is
-                    doing was taken off this panel deliberately, but "no round can win
-                    right now" is not a house statistic: it is the answer to "is it
-                    worth paying for a package this minute". Taking money for a game
-                    that cannot pay out, without saying so, is a different thing from
-                    keeping our numbers to ourselves. It names no balance and no
-                    threshold. */}
-                {!canPayJackpot && (
-                  <div className="alert alert--warning">
-                    ⚠️ The game cannot pay out the jackpot at the moment, and the program
-                    does not count a prize it cannot pay as a win — so no round can win
-                    until that changes. Please wait before buying a package.
-                  </div>
-                )}
               </div>
             </details>
           )}
