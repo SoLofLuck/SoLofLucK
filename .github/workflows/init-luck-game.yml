@@ -1,4 +1,4 @@
-name: luck-game — Initialize the Game (Devnet)
+name: luck-game — Initialize the Game (Devnet or Mainnet)
 
 on:
   workflow_dispatch:
@@ -11,9 +11,16 @@ on:
         description: 'The treasury wallet the 20% fee share goes to (public key)'
         required: true
         type: string
+      network:
+        description: "The chain to run initialize() on. devnet (DEFAULT) is the test network; mainnet-beta is the live one."
+        required: false
+        type: choice
+        default: devnet
+        options: [devnet, mainnet-beta]
 
 # If initialize() has already been called the script skips it silently, so this
 # workflow can safely be triggered more than once.
+
 jobs:
   init:
     runs-on: ubuntu-latest
@@ -39,5 +46,5 @@ jobs:
           PROGRAM_ID: ${{ inputs.program_id }}
           TREASURY_WALLET: ${{ inputs.treasury_wallet }}
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
-          RPC_URL: https://api.devnet.solana.com
+          RPC_URL: ${{ inputs.network == 'mainnet-beta' && 'https://api.mainnet-beta.solana.com' || 'https://api.devnet.solana.com' }}
         run: node program/luck-game/scripts/initialize.mjs

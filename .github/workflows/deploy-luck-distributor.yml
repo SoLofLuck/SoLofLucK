@@ -1,4 +1,4 @@
-name: luck-distributor — Build and Deploy to Devnet
+name: luck-distributor — Build and Deploy (Devnet or Mainnet)
 
 on:
   workflow_dispatch:
@@ -8,6 +8,17 @@ on:
         required: false
         type: boolean
         default: false
+      network:
+        description: "The chain to deploy to. devnet (DEFAULT) is the test network and its SOL is free. mainnet-beta is REAL MONEY: the deploy costs about 2.3 SOL of permanent rent and the result is public."
+        required: false
+        type: choice
+        default: devnet
+        options: [devnet, mainnet-beta]
+      confirm_mainnet:
+        description: "Only for network=mainnet-beta. Type exactly: I UNDERSTAND THIS IS REAL MONEY"
+        required: false
+        type: string
+        default: ''
 
 # This workflow builds the claim/distribution program (program/luck-distributor)
 # and installs it on Devnet. It uses the same deploy wallet
@@ -75,6 +86,19 @@ jobs:
           "$HOME/.cargo/bin/avm" install 0.30.1
           "$HOME/.cargo/bin/avm" use 0.30.1
 
+      # A mainnet deploy spends real money and cannot be undone, and this
+      # workflow is one dropdown away from the devnet one people run all day.
+      # So mainnet needs a typed confirmation: a stray click cannot reach it.
+      - name: Confirm the mainnet deploy
+        if: inputs.network == 'mainnet-beta'
+        run: |
+          if [ "${{ inputs.confirm_mainnet }}" != "I UNDERSTAND THIS IS REAL MONEY" ]; then
+            echo "::error::network=mainnet-beta requires confirm_mainnet to read exactly" \
+                 "'I UNDERSTAND THIS IS REAL MONEY'. Nothing was deployed."
+            exit 1
+          fi
+          echo "Mainnet deploy confirmed."
+
       - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
@@ -82,10 +106,15 @@ jobs:
           ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
           KEYFILE
 
-      - name: Configure Devnet
-        run: solana config set --url devnet --keypair ~/.config/solana/id.json
+      - name: Configure the cluster
+        run: |
+          solana config set --url "${{ inputs.network || 'devnet' }}" \
+                            --keypair ~/.config/solana/id.json
+          echo "CLUSTER=${{ inputs.network || 'devnet' }}" >> "$GITHUB_ENV"
+          solana config get
 
       - name: Devnet SOL airdrop (for the deploy fee)
+        if: env.CLUSTER == 'devnet'
         # GitHub's shared runner IPs hit the devnet faucet's rate limit often —
         # so we both retry longer and more often, and failing here does not stop
         # the job. If the airdrop never lands, the deploy step will stop with a
@@ -233,7 +262,7 @@ jobs:
       - name: First deploy (only when first_deploy=true)
         if: inputs.first_deploy == true
         working-directory: program/luck-distributor
-        run: anchor deploy --provider.cluster devnet --provider.wallet ~/.config/solana/id.json
+        run: anchor deploy --provider.cluster "$CLUSTER" --provider.wallet ~/.config/solana/id.json
 
       # The normal path: upgrading the ADDRESS. NO keypair is needed — the chain
       # only looks for the upgrade authority's signature. If there is no program
@@ -281,9 +310,10 @@ jobs:
             current=$(solana balance | awk '{print $1}')
             if awk "BEGIN{exit !($current < $needed)}"; then
               echo "::error::$label needs ~$needed SOL, the wallet holds $current SOL" \
-                   "and the devnet faucet did not provide it (per-IP rate limit)." \
+                   "on $CLUSTER (on devnet the faucet is rate-limited per IP; on" \
+                   "mainnet-beta there is no faucet at all)." \
                    "No spend is attempted - attempting one would strand SOL in a buffer account." \
-                   "Fix: send devnet SOL to $(solana address) and run this workflow again."
+                   "Fix: send $CLUSTER SOL to $(solana address) and run this workflow again."
               exit 1
             fi
           }

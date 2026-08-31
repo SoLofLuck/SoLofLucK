@@ -156,9 +156,44 @@ and `slot` fields.
 
 ## 7. Switch to mainnet
 
-`src/config.ts` -> `DEFAULT_NETWORK = 'mainnet'`
+Flipping the site to mainnet is NOT one line. A Solana program address is per
+network: the IDs in `src/config.ts` hold programs on devnet and **nothing at all
+on mainnet**. Point the site at mainnet without redeploying and every game and
+claim transaction fails — for everyone, on TGE day, with nothing in the build or
+the tests complaining. The order below is what stops that.
 
-**Verify:** `npm run launch-gate` exits with code 0.
+**7a. Deploy both programs to mainnet.** Run `luck-game — Build and Deploy` and
+`luck-distributor — Build and Deploy` with `network: mainnet-beta`,
+`first_deploy: true`, and `confirm_mainnet` typed out in full. This spends real
+SOL: about 2.3 SOL of permanent rent per program, plus the same again as a
+buffer while the deploy runs. The deploy wallet needs roughly 5 SOL per program
+— there is no faucet on mainnet.
+
+> The deploy key used so far is a devnet key (see `LUCK_GAME_DEPLOY_KEY`). Put a
+> real key in that secret before this step, and treat its upgrade authority as
+> what it is: whoever holds it can replace both programs.
+
+**7b. Write the printed Program IDs into the repository.** Each first deploy
+prints a new ID. It has to go into `declare_id!()`, `Anchor.toml`,
+`GAME_CONFIG.programId` / `CLAIM_CONFIG.programId` in `src/config.ts`, and the
+two checkers that pin it (`check-tokenomics`, `check-abi`) — all in one commit.
+`npm run verify` fails if any of them is left behind.
+
+**7c. Initialize both programs on mainnet.** Run the two Initialize workflows
+with `network: mainnet-beta` and the new Program IDs.
+
+**7d. Only now move the two network constants** in `src/config.ts`:
+
+```
+DEFAULT_NETWORK            = 'mainnet-beta'
+PROGRAM_DEPLOYMENT_NETWORK = 'mainnet-beta'
+```
+
+The spelling is `'mainnet-beta'`, not `'mainnet'` — the latter is not a
+`NetworkId` and `tsc -b` fails the build on it.
+
+**Verify:** `npm run launch-gate` exits with code 0. It refuses while the two
+constants disagree, which is what a half-finished move looks like.
 
 ---
 

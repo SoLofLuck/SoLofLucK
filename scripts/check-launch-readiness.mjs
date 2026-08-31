@@ -93,12 +93,59 @@ items.push({
 })
 
 // The network: have we moved to mainnet?
+//
+// The value compared against is 'mainnet-beta', NOT 'mainnet'. That is the only
+// mainnet spelling NetworkId accepts (see src/config.ts), and getting it wrong
+// here made this gate unsatisfiable: with the correct 'mainnet-beta' in the
+// config the item stayed unready forever, so `npm run launch-gate` could never
+// exit 0 — on launch day the gate would either have to be bypassed, which
+// defeats the point of having one, or it would block a release that was in fact
+// ready. Writing the literal 'mainnet' instead does not rescue it: that is not
+// a NetworkId, and `tsc -b` fails the build on it.
 const defaultNetwork = read(/export const DEFAULT_NETWORK[^=]*=\s*'([^']+)'/)
 items.push({
   name: 'Default network',
-  ready: defaultNetwork === 'mainnet',
+  ready: defaultNetwork === 'mainnet-beta',
   value: defaultNetwork,
-  note: 'It must be mainnet at launch. Left on devnet, nobody can make a real contribution.',
+  note:
+    "It must be 'mainnet-beta' at launch — that exact spelling, the only one NetworkId accepts. " +
+    'Left on devnet, nobody can make a real contribution.',
+})
+
+// --- do the program IDs belong to the network we are pointing at? ----------
+//
+// The single most expensive way to get launch day wrong. A program address is
+// per network: the addresses in config.ts hold programs on devnet and nothing
+// on mainnet. Flipping DEFAULT_NETWORK to 'mainnet' without redeploying both
+// programs and writing their new IDs into config.ts leaves the site talking to
+// mainnet with devnet addresses.
+//
+// That failure is silent in the worst way. The site loads, the tabs render, the
+// wallet connects — and then every single game and claim transaction fails,
+// because the program it is calling does not exist on that chain. Nothing in
+// the build, the tests or the other checks catches it: every one of them is
+// happy with a well-formed address.
+//
+// So config.ts states which network its addresses are worth something on, and
+// this compares the two. It is checked in BOTH directions on purpose: pointing
+// at devnet with mainnet program IDs is just as broken, and is what a
+// half-finished rollback looks like.
+const programNetwork = read(/export const PROGRAM_DEPLOYMENT_NETWORK[^=]*=\s*'([^']+)'/)
+items.push({
+  name: 'The program IDs match the network',
+  ready: Boolean(programNetwork) && programNetwork === defaultNetwork,
+  value: programNetwork
+    ? programNetwork === defaultNetwork
+      ? `both ${defaultNetwork}`
+      : `site ${defaultNetwork}, programs ${programNetwork}`
+    : 'PROGRAM_DEPLOYMENT_NETWORK could not be read',
+  note:
+    'A program address only exists on the network it was deployed to. While these two disagree ' +
+    'the site calls addresses that hold no program on the chain it is connected to: nothing ' +
+    'errors on load, but every game and claim transaction fails for everyone. Moving to mainnet ' +
+    'means deploying BOTH programs there (deploy-luck-game / deploy-luck-distributor with ' +
+    'network=mainnet-beta), writing the new IDs into config.ts, and only then moving ' +
+    'PROGRAM_DEPLOYMENT_NETWORK.',
 })
 
 // --- has the "Stay Tuned" gate been removed --------------------------------

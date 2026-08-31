@@ -57,6 +57,22 @@ export const FEE_AMOUNT_SOL = 0.1
 export const DEFAULT_DECIMALS = 9
 export const DEFAULT_NETWORK: NetworkId = 'devnet'
 
+// The network the program IDs in this file are actually deployed on.
+//
+// A Solana program address is per network: the same address holds a program on
+// devnet and nothing at all on mainnet. The IDs below (GAME_CONFIG.programId,
+// CLAIM_CONFIG.programId) are single values, not one per network — so moving
+// DEFAULT_NETWORK to 'mainnet' without redeploying the programs and writing
+// their new addresses in here points the site at mainnet while it keeps calling
+// devnet addresses. Nothing errors: the programs simply do not exist there, and
+// every game and claim transaction fails, on TGE day, for everyone.
+//
+// So this constant records what the addresses below are worth. It moves ONLY
+// after both programs really have been deployed to that network and their new
+// IDs are written into this file. check-launch-readiness compares the two and
+// launch-gate refuses to pass while they disagree — in either direction.
+export const PROGRAM_DEPLOYMENT_NETWORK: NetworkId = 'devnet'
+
 // ---------------------------------------------------------------------------
 // Testing phase: the "Stay Tuned" gate
 // ---------------------------------------------------------------------------

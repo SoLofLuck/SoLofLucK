@@ -1,4 +1,4 @@
-name: luck-distributor — Open a Distribution Round (Devnet)
+name: luck-distributor — Initialize the Claim Program (Devnet or Mainnet)
 
 # This is the workflow that runs on TGE day: it opens a distribution round and
 # locks the tokens. The program has NO "withdraw the money" instruction — so this
@@ -50,6 +50,12 @@ on:
         required: false
         default: true
         type: boolean
+      network:
+        description: "The chain to run initialize() on. devnet (DEFAULT) is the test network; mainnet-beta is the live one."
+        required: false
+        type: choice
+        default: devnet
+        options: [devnet, mainnet-beta]
 
 jobs:
   init:
@@ -90,7 +96,7 @@ jobs:
           PERIOD_BPS: ${{ inputs.period_bps }}
           PERIODS: ${{ inputs.periods }}
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
-          RPC_URL: https://api.devnet.solana.com
+          RPC_URL: ${{ inputs.network == 'mainnet-beta' && 'https://api.mainnet-beta.solana.com' || 'https://api.devnet.solana.com' }}
           DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
         run: node program/luck-distributor/scripts/initialize-round.mjs
 
