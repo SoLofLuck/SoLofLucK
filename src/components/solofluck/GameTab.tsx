@@ -650,20 +650,23 @@ export function GameTab() {
       : null
   const canPayJackpot = spendableVault === null ? true : spendableVault >= jackpotCost
 
-  // How the two prizes compare, for the player. `bigPrizeBps` is the share of
-  // WINNERS who get the jackpot rather than the small prize, so the rest is the
-  // small prize and the ratio between them is what a player actually wants to
-  // know: "how much more often does the small one come up".
+  // How the two prizes split among WINNERS. `bigPrizeBps` is the share of
+  // winners who get the jackpot rather than the small prize, so the other side
+  // is simply the rest.
   //
-  // It is derived from the chain value rather than written down as a sentence,
-  // because a hardcoded "about 2x" would keep claiming that after someone moved
-  // bigPrizeBps with update_config — and a wrong number about prizes is worse
-  // than no number. One decimal, and the trailing '.0' dropped so the common
-  // case reads "2x" and not "2.0x".
-  const smallPrizeTimesMoreLikely = (() => {
+  // Both come from the chain value rather than being written into a sentence: a
+  // hardcoded "70% / 30%" would go on claiming that after someone moved
+  // bigPrizeBps with update_config, and a wrong number about prizes is worse
+  // than no number. Trailing '.0' is dropped so the common case reads "30%"
+  // rather than "30.0%".
+  //
+  // Note this is NOT the chance of winning — that number is deliberately not on
+  // this panel. This is only how a win, once it happens, divides between the
+  // two prizes.
+  const winnerSplit = (() => {
     if (!gameConfig || gameConfig.bigPrizeBps <= 0 || gameConfig.bigPrizeBps >= 10_000) return null
-    const ratio = (10_000 - gameConfig.bigPrizeBps) / gameConfig.bigPrizeBps
-    return ratio.toFixed(1).replace(/\.0$/, '')
+    const pct = (bps: number) => (bps / 100).toFixed(1).replace(/\.0$/, '')
+    return { small: pct(10_000 - gameConfig.bigPrizeBps), big: pct(gameConfig.bigPrizeBps) }
   })()
 
   const targetSlot = playerState ? playerState.commitSlot + revealDelaySlots : null
@@ -771,11 +774,11 @@ export function GameTab() {
                   <span>Small prize</span>
                   <strong>{fmtSol(lamportsToSol(gameConfig.smallPrizeLamports))} SOL</strong>
                 </div>
-                {smallPrizeTimesMoreLikely && (
+                {winnerSplit && (
                   <div className="result-card__row">
-                    <span>How the two compare</span>
+                    <span>Among winners</span>
                     <strong>
-                      {smallPrizeTimesMoreLikely}× more small prizes than jackpots
+                      {winnerSplit.small}% small prize · {winnerSplit.big}% jackpot
                     </strong>
                   </div>
                 )}
