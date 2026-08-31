@@ -829,9 +829,9 @@ for (const v of oyunVektorleri) {
     getTransaction: async () => ({
       meta: {
         logMessages: [
-          'Program H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf invoke [1]',
+          'Program Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5 invoke [1]',
           `Program data: ${Buffer.from(hex, 'hex').toString('base64')}`,
-          'Program H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf success',
+          'Program Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5 success',
         ],
       },
     }),

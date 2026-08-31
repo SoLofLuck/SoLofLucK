@@ -417,7 +417,7 @@ export const GAME_CONFIG = {
   // AUTHORITY: the programs are upgradeable and we hold the authority. That is
   // deliberate (so bugs can be fixed) and is written down as a point of
   // centralisation in SECURITY.md.
-  programId: 'H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf',
+  programId: 'Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5',
   freePlays: 3,
   // The spin-credit tariff: once the 3 free attempts are used up (plus the +1
   // bonus spin), each package is bought in one go and added to the balance. In

@@ -12,7 +12,7 @@ use anchor_lang::system_program::{self, Transfer as SolTransfer};
 // An older note here said the keypair was carried in the rust-cache and that
 // the program could not be updated if it were lost. That is no longer true:
 // when the workflow was rewritten the cache steps were removed entirely.
-declare_id!("H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf");
+declare_id!("Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5");
 
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";

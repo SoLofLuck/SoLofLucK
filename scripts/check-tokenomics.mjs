@@ -132,7 +132,7 @@ check('published addresses are unique', new Set(all).size, all.length)
 const PINNED = {
   PRESALE_WALLET: 'BDuECRxzgUQagisgJ8LAUx4zp1uH2ccouusK15sfvY36',
   PRESALE_OPS_WALLET: '2Lzc6jorznu7zQKny79topGTE7V837oiV3j53zPH4Qh9',
-  'GAME_CONFIG.programId': 'H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf',
+  'GAME_CONFIG.programId': 'Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5',
   'CLAIM_CONFIG.programId': 'G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e',
   'GAME_CONFIG.treasuryWallet': '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
   'PUBLIC_WALLETS.team': 'AHGDn3qqRyShYURf9qriMpVPHT8W6LwVTKUBXYMzuMxA',

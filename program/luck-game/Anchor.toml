@@ -6,7 +6,7 @@ skip-lint = false
 
 # Deployed to Devnet (the spin-credit/delegate architecture — see program/luck-game/README.md).
 [programs.devnet]
-luck_game = "H6gnAvLa5o2JtjfdgyKdZy2eC9bjnMerCcbxjYZeKdnf"
+luck_game = "Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5"
 
 [programs.mainnet]
 luck_game = "11111111111111111111111111111111"
