@@ -649,10 +649,22 @@ export function GameTab() {
       ? BigInt(Math.max(0, vaultLamports - delegateRentReserve))
       : null
   const canPayJackpot = spendableVault === null ? true : spendableVault >= jackpotCost
-  const easyMode =
-    gameConfig !== null &&
-    spendableVault !== null &&
-    spendableVault >= gameConfig.vaultEasyThresholdLamports
+
+  // How the two prizes compare, for the player. `bigPrizeBps` is the share of
+  // WINNERS who get the jackpot rather than the small prize, so the rest is the
+  // small prize and the ratio between them is what a player actually wants to
+  // know: "how much more often does the small one come up".
+  //
+  // It is derived from the chain value rather than written down as a sentence,
+  // because a hardcoded "about 2x" would keep claiming that after someone moved
+  // bigPrizeBps with update_config — and a wrong number about prizes is worse
+  // than no number. One decimal, and the trailing '.0' dropped so the common
+  // case reads "2x" and not "2.0x".
+  const smallPrizeTimesMoreLikely = (() => {
+    if (!gameConfig || gameConfig.bigPrizeBps <= 0 || gameConfig.bigPrizeBps >= 10_000) return null
+    const ratio = (10_000 - gameConfig.bigPrizeBps) / gameConfig.bigPrizeBps
+    return ratio.toFixed(1).replace(/\.0$/, '')
+  })()
 
   const targetSlot = playerState ? playerState.commitSlot + revealDelaySlots : null
   const slotsRemaining =
@@ -733,69 +745,63 @@ export function GameTab() {
           )}
 
           {/* ---------------------------------------------------------------
-              The game's rules — with the real values READ FROM THE CHAIN
+              What the player gets — with the real values READ FROM THE CHAIN
               ---------------------------------------------------------------
-              Until this panel was added the site stated the game's odds NOWHERE: the
-              player paid 0.1 SOL but could not see their chance of winning, the
-              prizes, the house share, or the rule that "no round can win if the vault
-              cannot cover the jackpot". Not knowing your real odds in a game you paid
-              for is not acceptable.
+              This panel answers the player's questions and nothing else: what can I
+              win, how do the two prizes compare, how many free goes do I get.
 
-              The numbers deliberately come from the on-chain GameConfig, NOT from
-              config.ts: the odds printed on screen are the very odds the program
-              actually applies. If the two drifted apart, the screen would be lying. */}
+              What is deliberately NOT here: the vault balance, the house share, the
+              win percentage and the easy-mode threshold. Those are our operating
+              numbers, not the player's — a site is not the place for them. They stay
+              readable by anyone who wants them, in the program source and in this
+              repository, which is where a claim of fairness belongs anyway.
+
+              The prizes come from the on-chain GameConfig, NOT from config.ts, so
+              what is printed is what the program actually pays. If the two drifted
+              apart, the screen would be lying. */}
           {gameConfig && (
             <details className="luck-game__rules">
-              <summary>📋 Odds and rules (read from the chain)</summary>
+              <summary>📋 Prizes and free attempts (read from the chain)</summary>
               <div className="luck-game__rules-body">
-                <div className="result-card__row">
-                  <span>Chance of winning</span>
-                  <strong>
-                    {easyMode
-                      ? `${(gameConfig.easyWinBps / 100).toFixed(2)}% (easy mode on)`
-                      : `${(gameConfig.normalWinBps / 100).toFixed(2)}%`}
-                  </strong>
-                </div>
-                <div className="result-card__row">
-                  <span>Small prize</span>
-                  <strong>{fmtSol(lamportsToSol(gameConfig.smallPrizeLamports))} SOL</strong>
-                </div>
                 <div className="result-card__row">
                   <span>Big prize (jackpot)</span>
                   <strong>{fmtSol(lamportsToSol(gameConfig.bigPrizeLamports))} SOL</strong>
                 </div>
                 <div className="result-card__row">
-                  <span>Share of winners hitting the jackpot</span>
-                  <strong>{(gameConfig.bigPrizeBps / 100).toFixed(0)}%</strong>
+                  <span>Small prize</span>
+                  <strong>{fmtSol(lamportsToSol(gameConfig.smallPrizeLamports))} SOL</strong>
                 </div>
+                {smallPrizeTimesMoreLikely && (
+                  <div className="result-card__row">
+                    <span>How the two compare</span>
+                    <strong>
+                      {smallPrizeTimesMoreLikely}× more small prizes than jackpots
+                    </strong>
+                  </div>
+                )}
                 <div className="result-card__row">
-                  <span>Easy-mode threshold</span>
+                  <span>Free attempts</span>
                   <strong>
-                    {fmtSol(lamportsToSol(gameConfig.vaultEasyThresholdLamports))} SOL in the vault
+                    {GAME_CONFIG.freePlays} per wallet, plus a +1 bonus when they run out
                   </strong>
-                </div>
-                <div className="result-card__row">
-                  <span>Vault balance</span>
-                  <strong>
-                    {vaultLamports === null ? '—' : `${fmtSol(lamportsToSol(vaultLamports))} SOL`}
-                  </strong>
-                </div>
-                <div className="result-card__row">
-                  <span>House share</span>
-                  <strong>{(gameConfig.treasuryFeeBps / 100).toFixed(0)}%</strong>
                 </div>
                 <p className="luck-game__rules-note">
-                  {(gameConfig.treasuryFeeBps / 100).toFixed(0)}% of the package you pay for goes
-                  to the treasury and the rest to the vault that pays the prizes. NOTHING is
-                  deducted from your prize when you win — the treasury share comes out of the
-                  vault separately.
+                  The prizes are read from the program on the chain, so what you see here is
+                  what it actually pays. A prize goes straight to your wallet — nothing is
+                  deducted from it.
                 </p>
+                {/* The one warning that stays. Everything else about how the vault is
+                    doing was taken off this panel deliberately, but "no round can win
+                    right now" is not a house statistic: it is the answer to "is it
+                    worth paying for a package this minute". Taking money for a game
+                    that cannot pay out, without saying so, is a different thing from
+                    keeping our numbers to ourselves. It names no balance and no
+                    threshold. */}
                 {!canPayJackpot && (
                   <div className="alert alert--warning">
-                    ⚠️ The vault cannot pay the jackpot right now. The program does not count
-                    a prize it cannot pay as a win — so until the vault reaches{' '}
-                    {fmtSol(lamportsToSol(jackpotCost))} SOL, no round can win. Know this
-                    before you buy a package.
+                    ⚠️ The game cannot pay out the jackpot at the moment, and the program
+                    does not count a prize it cannot pay as a win — so no round can win
+                    until that changes. Please wait before buying a package.
                   </div>
                 )}
               </div>
@@ -838,7 +844,18 @@ export function GameTab() {
             </div>
           )}
 
-          {!pending && (
+          {/* `pending` is read from the chain and flips to true the moment play()
+              lands, then back to false when resolve() finishes. Hiding the button on
+              `pending` alone therefore unmounted it for the second or two in between,
+              in the MIDDLE of the spin: the "Reels are spinning..." label appeared,
+              vanished, and came back. Nothing was broken underneath — the reels kept
+              turning — but the one piece of text telling the player the machine is
+              working blinked out exactly when they were watching it.
+
+              So while the animation runs the button stays put regardless of `pending`.
+              It is disabled throughout (see `disabled` below), so keeping it mounted
+              adds no action, only a label that does not flicker. */}
+          {(!pending || spinAnimating) && (
             <button
               type="button"
               className="btn btn--primary btn--block luck-game__play-btn"
