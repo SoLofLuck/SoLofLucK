@@ -1,10 +1,16 @@
 import { useMemo, useState } from 'react'
-import { LUCK_TOKEN, PRESALE_TICKET_UNIT_SOL, PRESALE_TOKENS_PER_SOL } from '../../config'
+import {
+  LUCK_TOKEN,
+  PRESALE_TARGET_SOL,
+  PRESALE_TICKET_UNIT_SOL,
+  PRESALE_TOKENS_PER_SOL,
+} from '../../config'
 import { useSolUsdPrice } from '../../lib/solPrice'
 import { useHourlySnapshot, useTokenUsdPrice } from '../../lib/tokenPrice'
 import {
   MULTIPLE_MARKS,
   MULTIPLE_MAX,
+  MULTIPLE_MIN,
   TGE_FDV_SOL,
   multipleFromSlider,
   projectValue,
@@ -12,6 +18,9 @@ import {
   tgePriceUsd,
 } from '../../lib/luckValue'
 
+// ---------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------
 // A token price is a very small number and the usual currency formatter, which
 // stops at two decimals, renders every one of them as "$0.00". Significant
 // digits are what carries the information here.
@@ -23,7 +32,7 @@ function formatUsdPrice(n: number | null): string {
 function formatUsd(n: number | null): string {
   if (n === null) return '—'
   const abs = Math.abs(n)
-  const digits = abs === 0 || abs >= 100 ? (abs === 0 ? 2 : 0) : abs >= 1 ? 2 : 4
+  const digits = abs === 0 ? 2 : abs >= 100 ? 0 : abs >= 1 ? 2 : 4
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
 }
 
@@ -35,6 +44,10 @@ function formatSol(n: number): string {
 
 function formatTokens(n: number): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 0 })
+}
+
+function formatCompact(n: number): string {
+  return n.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 }
 
 function formatMultiple(m: number): string {
@@ -51,8 +64,10 @@ function formatPercent(p: number): string {
   return `${sign}${p.toLocaleString('en-US', { maximumFractionDigits: p > -10 && p < 10 ? 1 : 0 })}%`
 }
 
-const MARKS = MULTIPLE_MARKS
 const QUICK_AMOUNTS = [0.5, 1, 5, 10, 25]
+
+/** Which currency the calculator answers in. */
+type Unit = 'usd' | 'sol'
 
 export function ValueTab() {
   const solUsd = useSolUsdPrice()
@@ -64,6 +79,7 @@ export function ValueTab() {
   // number it prints: clicking "2×" landed on 1.9998, which rounded to "2×" in
   // the heading while the rows below quietly showed a gain of 0.9998 SOL.
   const [multiple, setMultiple] = useState(2)
+  const [unit, setUnit] = useState<Unit>('usd')
 
   const amountSol = Number(amountText)
 
@@ -81,102 +97,153 @@ export function ValueTab() {
     [amountSol, multiple, solUsd],
   )
 
+  // With no SOL price there are no dollars to switch to, so the toggle is not
+  // offered and every figure falls back to SOL. The page stays whole without
+  // the price service rather than filling with dashes.
+  const dollarsAvailable = solUsd !== null
+  const shownUnit: Unit = dollarsAvailable ? unit : 'sol'
+  const money = (sol: number, usd: number | null) =>
+    shownUnit === 'usd' && usd !== null ? formatUsd(usd) : formatSol(sol)
+
   // Where the live price sits against the presale price. Only meaningful once
   // the coin actually trades — before that it is not "1x", it is nothing.
   const liveMultiple =
     live.price !== null && tgeUsd !== null && tgeUsd > 0 ? live.price / tgeUsd : null
 
+  const liveState =
+    live.status === 'live' ? 'on' : live.status === 'unavailable' ? 'off' : 'idle'
   const liveLabel =
     live.status === 'live'
       ? formatUsdPrice(live.price)
       : live.status === 'loading'
-        ? 'Loading...'
+        ? 'Loading'
         : live.status === 'unavailable'
-          ? 'Cannot be read'
+          ? 'Unavailable'
           : 'Not trading yet'
-
   const liveNote =
     live.status === 'live'
       ? liveMultiple === null
         ? 'Live market price.'
-        : `${formatMultiple(liveMultiple)} the presale price (${formatPercent((liveMultiple - 1) * 100)}).`
+        : `${formatMultiple(liveMultiple)} the presale price · ${formatPercent((liveMultiple - 1) * 100)}`
       : live.status === 'unavailable'
-        ? 'The price service could not be reached. This says nothing about the price itself — try again shortly.'
+        ? 'The price service could not be reached — this says nothing about the price itself.'
         : live.status === 'loading'
           ? 'Asking the price service.'
-          : 'The coin has no market yet, so it has no market price. It gets one when the liquidity pool opens at TGE.'
+          : 'It gets a market price when the pool opens at TGE.'
 
   const breakEven = Math.abs(projection.profitSol) < 1e-9
   const profitPositive = projection.profitSol >= 0
 
+  // The whole range at once. Dragging answers "what about 7x"; this answers
+  // "what does the range look like", which is the question a slider cannot
+  // show and the reason the table is here rather than a chart of it — value is
+  // a straight multiple of the price, so a plot of it would draw a line the
+  // reader already knows the shape of.
+  const ladder = useMemo(
+    () => MULTIPLE_MARKS.map((m) => ({ m, p: projectValue(amountSol, m, solUsd) })),
+    [amountSol, solUsd],
+  )
+  // Which ladder row the slider is currently nearest, compared as a ratio so
+  // "nearest" means the same thing at 2x as at 100x.
+  const activeMark = MULTIPLE_MARKS.reduce((best, m) =>
+    Math.abs(Math.log(m / multiple)) < Math.abs(Math.log(best / multiple)) ? m : best,
+  )
+
+  const fillPercent = sliderFromMultiple(multiple) * 100
+
   return (
     <div className="luck-value">
-      <p className="subtab-desc">
-        The presale price is fixed and known. A market price is not, and does not exist until the
-        pool opens. This page keeps the two apart: what $LUCK costs in the presale, what it trades
-        at once it trades, and a calculator where <strong>you</strong> pick a price and see what it
-        would mean.
-      </p>
-
-      <div className="luck-value__cards">
-        <div className="luck-value__card">
-          <span className="luck-value__card-label">Presale price — fixed</span>
-          <strong className="luck-value__card-value">
-            {/* Without a SOL price there is no dollar figure at all, and a dash
-                where the price goes reads as "the price is nothing" rather
-                than "we have not got it yet". */}
-            1 $LUCK = {tgeUsdHourly === null ? '...' : formatUsdPrice(tgeUsdHourly)}
+      <section className="luck-value__hero">
+        <div className="luck-value__hero-main">
+          <span className="luck-value__eyebrow">Presale price · fixed</span>
+          <strong className="luck-value__hero-figure">
+            {tgeUsdHourly === null ? '···' : formatUsdPrice(tgeUsdHourly)}
           </strong>
-          <span className="luck-value__card-note">
+          <span className="luck-value__hero-unit">per $LUCK</span>
+          <p className="luck-value__hero-sub">
             1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK, and that rate never changes.{' '}
             {hourly.value === null
               ? 'The dollar figure is waiting for the SOL price.'
-              : `The dollar figure is read once an hour — last at ${formatClock(
-                  hourly.takenAt,
-                )}, with SOL at ${formatUsd(hourly.value)}.`}
+              : `Read once an hour — last at ${formatClock(hourly.takenAt)}, SOL at ${formatUsd(
+                  hourly.value,
+                )}.`}
+          </p>
+        </div>
+
+        <div className="luck-value__hero-side">
+          <span className={`luck-value__pill luck-value__pill--${liveState}`}>
+            <i aria-hidden="true" />
+            Market price
           </span>
+          <strong className="luck-value__hero-live">{liveLabel}</strong>
+          <span className="luck-value__hero-livenote">{liveNote}</span>
         </div>
+      </section>
 
-        <div className="luck-value__card">
-          <span className="luck-value__card-label">Market price — live</span>
-          <strong className="luck-value__card-value">
-            1 $LUCK = {liveLabel}
-          </strong>
-          <span className="luck-value__card-note">{liveNote}</span>
-        </div>
-
-        <div className="luck-value__card">
-          <span className="luck-value__card-label">Valuation at the presale price</span>
-          <strong className="luck-value__card-value">
+      <div className="luck-value__stats">
+        <div className="luck-value__stat">
+          <span>Valuation at the presale price</span>
+          <strong>
             {hourly.value === null
               ? formatSol(TGE_FDV_SOL)
               : formatUsd(TGE_FDV_SOL * hourly.value)}
           </strong>
-          <span className="luck-value__card-note">
-            {hourly.value === null ? '' : `${formatSol(TGE_FDV_SOL)}. `}
-            All {formatTokens(LUCK_TOKEN.totalSupply)} $LUCK priced at what the presale charges.
-            This is the number a multiplier multiplies.
-          </span>
+          <small>{formatSol(TGE_FDV_SOL)} — every token that will ever exist</small>
+        </div>
+        <div className="luck-value__stat">
+          <span>Total supply</span>
+          <strong>{formatCompact(LUCK_TOKEN.totalSupply)}</strong>
+          <small>{formatTokens(LUCK_TOKEN.totalSupply)} $LUCK, fixed at launch</small>
+        </div>
+        <div className="luck-value__stat">
+          <span>Presale target</span>
+          <strong>{PRESALE_TARGET_SOL} SOL</strong>
+          <small>
+            {hourly.value === null
+              ? 'The pool opens once it is filled'
+              : `${formatUsd(PRESALE_TARGET_SOL * hourly.value)} — the pool opens once it is filled`}
+          </small>
         </div>
       </div>
 
-      <div className="luck-value__calc">
-        <h3 className="luck-value__calc-head">If the price ends up here, what is it worth?</h3>
+      <section className="luck-value__calc">
+        <div className="luck-value__calc-head">
+          <h3>What would it be worth?</h3>
+          {dollarsAvailable && (
+            <div className="luck-value__toggle" role="group" aria-label="Currency">
+              {(['usd', 'sol'] as Unit[]).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  className={unit === u ? 'is-on' : ''}
+                  aria-pressed={unit === u}
+                  onClick={() => setUnit(u)}
+                >
+                  {u === 'usd' ? 'USD' : 'SOL'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <label className="field luck-value__amount">
-          <span>What you put into the presale (SOL)</span>
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            inputMode="decimal"
-            value={amountText}
-            onChange={(e) => setAmountText(e.target.value)}
-          />
+          <span>What you put into the presale</span>
+          <div className="luck-value__amount-box">
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              inputMode="decimal"
+              value={amountText}
+              onChange={(e) => setAmountText(e.target.value)}
+            />
+            <span className="luck-value__amount-unit">SOL</span>
+          </div>
           {amountSol > 0 && projection.valueAtTgeUsd !== null && (
-            <small>{formatUsd(projection.valueAtTgeUsd)}</small>
+            <small>{formatUsd(projection.valueAtTgeUsd)} at today&apos;s SOL price</small>
           )}
         </label>
+
         <div className="luck-value__quick">
           {QUICK_AMOUNTS.map((a) => (
             <button
@@ -204,21 +271,24 @@ export function ValueTab() {
             max={1}
             step={0.001}
             value={sliderFromMultiple(multiple)}
+            // The filled part of the track is painted from this, so the bar
+            // reads as a level rather than as a bare groove with a dot on it.
+            style={{ '--fill': `${fillPercent}%` } as React.CSSProperties}
             onChange={(e) => setMultiple(multipleFromSlider(Number(e.target.value)))}
             aria-label="Price as a multiple of the presale price"
           />
           <div className="luck-value__marks">
-            {MARKS.map((m) => (
+            {MULTIPLE_MARKS.map((m) => (
               <button
                 key={m}
                 type="button"
-                className="luck-value__mark"
+                className={`luck-value__mark ${m === activeMark ? 'is-on' : ''}`}
                 style={{
                   left: `${sliderFromMultiple(m) * 100}%`,
                   transform:
-                    m === MARKS[0]
+                    m === MULTIPLE_MARKS[0]
                       ? 'none'
-                      : m === MARKS[MARKS.length - 1]
+                      : m === MULTIPLE_MARKS[MULTIPLE_MARKS.length - 1]
                         ? 'translateX(-100%)'
                         : 'translateX(-50%)',
                 }}
@@ -230,20 +300,14 @@ export function ValueTab() {
           </div>
           <p className="luck-value__slider-foot">
             The bar starts at the presale price and runs to {MULTIPLE_MAX}×. It moves in ratios
-            rather than steps, so every equal slide is an equal ratio. The multiple applies to the
-            price in SOL and in dollars alike.
+            rather than steps, so every equal slide is an equal ratio.
           </p>
         </div>
 
         <div className="luck-value__result">
           <div className="luck-value__result-main">
             <span>Your {formatSol(amountSol > 0 ? amountSol : 0)} would be worth</span>
-            <strong>
-              {projection.valueUsd === null
-                ? formatSol(projection.valueSol)
-                : formatUsd(projection.valueUsd)}
-            </strong>
-            {projection.valueUsd !== null && <small>{formatSol(projection.valueSol)}</small>}
+            <strong>{money(projection.valueSol, projection.valueUsd)}</strong>
           </div>
           <div
             className={`luck-value__result-delta ${
@@ -253,16 +317,8 @@ export function ValueTab() {
             <span>{breakEven ? 'Break even' : profitPositive ? 'Gain' : 'Loss'}</span>
             <strong>
               {breakEven ? '' : profitPositive ? '+' : ''}
-              {projection.profitUsd === null
-                ? formatSol(projection.profitSol)
-                : formatUsd(projection.profitUsd)}
+              {money(projection.profitSol, projection.profitUsd)}
             </strong>
-            {projection.profitUsd !== null && (
-              <small>
-                {breakEven ? '' : profitPositive ? '+' : ''}
-                {formatSol(projection.profitSol)}
-              </small>
-            )}
           </div>
         </div>
 
@@ -273,11 +329,7 @@ export function ValueTab() {
           </li>
           <li>
             <span>Worth at the TGE price</span>
-            <strong>
-              {projection.valueAtTgeUsd === null
-                ? formatSol(projection.valueAtTgeSol)
-                : `${formatUsd(projection.valueAtTgeUsd)} · ${formatSol(projection.valueAtTgeSol)}`}
-            </strong>
+            <strong>{money(projection.valueAtTgeSol, projection.valueAtTgeUsd)}</strong>
           </li>
           <li>
             <span>$LUCK price here</span>
@@ -291,14 +343,46 @@ export function ValueTab() {
           </li>
           <li className="luck-value__rows-emph">
             <span>The whole coin at this price</span>
-            <strong>
-              {projection.fdvUsd === null
-                ? formatSol(projection.fdvSol)
-                : `${formatUsd(projection.fdvUsd)} · ${formatSol(projection.fdvSol)}`}
-            </strong>
+            <strong>{money(projection.fdvSol, projection.fdvUsd)}</strong>
           </li>
         </ul>
-      </div>
+      </section>
+
+      <section className="luck-value__ladder">
+        <h3>The whole range at a glance</h3>
+        <p className="luck-value__ladder-sub">
+          The same {formatSol(amountSol > 0 ? amountSol : 0)}, at every step of the bar. Tap a row
+          to move the slider there.
+        </p>
+        <div className="luck-value__table-wrap">
+          <table className="luck-value__table">
+            <thead>
+              <tr>
+                <th scope="col">Price</th>
+                <th scope="col">1 $LUCK</th>
+                <th scope="col">Your stack</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ladder.map(({ m, p }) => (
+                <tr
+                  key={m}
+                  className={m === activeMark ? 'is-on' : ''}
+                  onClick={() => setMultiple(m)}
+                >
+                  <th scope="row">{m}×</th>
+                  <td>{formatUsdPrice(p.priceUsd)}</td>
+                  <td>{money(p.valueSol, p.valueUsd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="luck-value__ladder-foot">
+          Every multiple on this page is a number you picked, not a forecast. The bar starts at{' '}
+          {MULTIPLE_MIN}× and only goes up; the price can also fall below the presale price.
+        </p>
+      </section>
     </div>
   )
 }
