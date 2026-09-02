@@ -155,18 +155,23 @@ export function ValueTab() {
     <div className="luck-value">
       <section className="luck-value__hero">
         <div className="luck-value__hero-main">
-          <span className="luck-value__eyebrow">Presale price · fixed</span>
+          <span className="luck-value__eyebrow">Presale price</span>
           <strong className="luck-value__hero-figure">
-            {tgeUsdHourly === null ? '···' : formatUsdPrice(tgeUsdHourly)}
+            {tgeUsdHourly === null
+              ? formatTokens(PRESALE_TOKENS_PER_SOL)
+              : formatUsdPrice(tgeUsdHourly)}
           </strong>
-          <span className="luck-value__hero-unit">per $LUCK</span>
+          <span className="luck-value__hero-unit">
+            {tgeUsdHourly === null ? '$LUCK per 1 SOL' : 'per $LUCK'}
+          </span>
           <p className="luck-value__hero-sub">
-            1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK, and that rate never changes.{' '}
+            <strong>1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK</strong> for the whole
+            presale.{' '}
             {hourly.value === null
-              ? 'The dollar figure is waiting for the SOL price.'
-              : `Read once an hour — last at ${formatClock(hourly.takenAt)}, SOL at ${formatUsd(
-                  hourly.value,
-                )}.`}
+              ? 'The dollar figure needs a live SOL price, which has not arrived yet.'
+              : `The dollar figure follows SOL — read at ${formatClock(
+                  hourly.takenAt,
+                )}, SOL at ${formatUsd(hourly.value)}.`}
           </p>
         </div>
 
@@ -179,6 +184,33 @@ export function ValueTab() {
           <span className="luck-value__hero-livenote">{liveNote}</span>
         </div>
       </section>
+
+      <ol className="luck-value__how">
+        <li>
+          <span className="luck-value__how-step">1</span>
+          <div>
+            <strong>One rate, for the whole presale.</strong> Every contribution is priced at 1 SOL
+            = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK. It does not rise as more is raised, and
+            the first day and the last day get the same tokens per SOL.
+          </div>
+        </li>
+        <li>
+          <span className="luck-value__how-step">2</span>
+          <div>
+            <strong>The dollar figure moves, the rate does not.</strong> The price is fixed in SOL,
+            not in dollars, so what one $LUCK costs in dollars follows SOL. That is why the figure
+            above is read from the market once an hour instead of written into the page.
+          </div>
+        </li>
+        <li>
+          <span className="luck-value__how-step">3</span>
+          <div>
+            <strong>At TGE the market takes over.</strong> The liquidity pool opens and buyers and
+            sellers set the price from then on, so the presale rate stops being the price and
+            becomes what you paid. Until then there is no market price at all.
+          </div>
+        </li>
+      </ol>
 
       <div className="luck-value__stats">
         <div className="luck-value__stat">

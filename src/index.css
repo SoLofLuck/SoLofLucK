@@ -2608,6 +2608,51 @@ button {
   background: var(--danger);
 }
 
+/* --- how the price works ------------------------------------------------- */
+/* Three numbered points, because the question they answer ("is this price
+   always this, or is it the price at TGE?") is a sequence, not a list: the
+   rate, then what moves against it, then what replaces it. */
+
+.luck-value__how {
+  list-style: none;
+  counter-reset: none;
+  margin: 0 0 1.5rem;
+  padding: 1.1rem 1.15rem;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+}
+
+.luck-value__how li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 0.87rem;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+.luck-value__how strong {
+  color: var(--text);
+}
+
+.luck-value__how-step {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  margin-top: 2px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #0b1020;
+  background: var(--accent-gradient);
+}
+
 /* --- the supporting stats ------------------------------------------------ */
 
 .luck-value__stats {
