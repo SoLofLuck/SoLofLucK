@@ -573,9 +573,7 @@ export function GameTab() {
     return (
       <div className="luck-game">
         <div className="alert alert--warning">
-          ⚠️ The game program has not been configured yet (<code>GAME_CONFIG.programId</code>{' '}
-          in {`src/config.ts`}). program/luck-game must be deployed first and its ID entered
-          here — see <code>program/luck-game/README.md</code>.
+          ⚠️ The game is not live yet. It opens once the game program is published on chain.
         </div>
       </div>
     )

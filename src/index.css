@@ -2263,22 +2263,6 @@ button {
   color: var(--text);
 }
 
-.luck-presale__ops-note {
-  margin: 0.75rem 0 0;
-  padding: 0.85rem 1rem;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  border-left: 3px solid #22d3ee;
-  border-radius: 0.6rem;
-  background: rgba(15, 23, 42, 0.55);
-  color: #cbd5e1;
-  font-size: 0.9rem;
-  line-height: 1.6;
-}
-
-.luck-presale__ops-note strong {
-  color: #e2e8f0;
-}
-
 /* Tokenomics: the SOL allocation and the launch commitments */
 .luck-tokenomics__subhead {
   margin: 2rem 0 0.6rem;

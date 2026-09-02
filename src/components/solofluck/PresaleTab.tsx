@@ -15,13 +15,11 @@ import {
   type NetworkId,
 } from '../../config'
 import {
-  PRESALE_OPS_FEE_PERCENT,
   calcTickets,
   computePresaleProgress,
   formatRemaining,
   getLocalContributions,
   presaleEndsAt,
-  presaleOpsFeeActive,
   presalePhaseAt,
   sendPresaleContribution,
   tokensForSol,
@@ -207,8 +205,8 @@ export function PresaleTab({ network }: Props) {
     <div className="luck-presale">
       {!configured && (
         <div className="alert alert--warning">
-          ⚠️ The presale wallet has not been configured yet (<code>PRESALE_WALLET</code> in{' '}
-          {`src/config.ts`}). The contribution buttons stay disabled until an address is set.
+          ⚠️ The presale is not open yet. Contributions cannot be sent until the presale wallet
+          is announced.
         </div>
       )}
 
@@ -374,19 +372,6 @@ export function PresaleTab({ network }: Props) {
           </button>
         </div>
       </div>
-
-      {presaleOpsFeeActive && (
-        <p className="luck-presale__ops-note">
-          <strong>{PRESALE_OPS_FEE_PERCENT.toLocaleString('en-US')}%</strong> of your contribution
-          is set aside as the operations share — it covers the costs until the token goes live (pool
-          creation fee, token metadata, RPC, domain name, marketing). That share goes to a separate
-          wallet in the same transaction and is <strong>not added to the liquidity pool</strong>;
-          the remaining <strong>{(100 - PRESALE_OPS_FEE_PERCENT).toLocaleString('en-US')}%</strong>{' '}
-          collects in the presale wallet. Your raffle tickets are calculated on the{' '}
-          <strong>full amount</strong> you send — the share does not reduce your ticket count. You
-          see both recipients in your wallet before you sign.
-        </p>
-      )}
 
       <ul className="luck-presale__rules">
         <li>

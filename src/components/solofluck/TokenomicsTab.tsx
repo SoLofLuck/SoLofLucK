@@ -243,13 +243,6 @@ export function TokenomicsTab() {
           tokens do not arrive at once — they unlock in monthly slices over 7 months.
         </li>
       </ul>
-
-      <div className="alert alert--info">
-        This split and these commitments are still a plan that has not been written to the chain yet
-        (the <code>TOKENOMICS</code> list in {`src/config.ts`}) — when the coin is actually created
-        from the "Create Token" tab, the mint/freeze authorities and lock durations must be set to
-        match this plan.
-      </div>
     </div>
   )
 }
