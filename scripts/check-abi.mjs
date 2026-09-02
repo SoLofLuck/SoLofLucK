@@ -65,7 +65,7 @@ function check(name, actual, expected) {
 // node_modules from outside the repo.
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const out = mkdtempSync(join(repoRoot, 'node_modules', '.claim-abi-'))
-let tscCiktisi = ''
+let tscOutput = ''
 try {
   execFileSync(
     'npx',
@@ -85,7 +85,7 @@ try {
     ],
     { stdio: ['ignore', 'pipe', 'pipe'] },
   )
-  tscCiktisi = ''
+  tscOutput = ''
 } catch (err) {
   // Because we compile a single file without the project tsconfig, tsc
   // reports type errors here that are NOT real (Buffer types, Vite's
@@ -96,7 +96,7 @@ try {
   // fail, the import below blows up and we print the reason at that point.
   // Printing spurious errors on every build would hide a real one in the
   // noise.
-  tscCiktisi = `${err.stdout ?? ''}${err.stderr ?? ''}`.trim()
+  tscOutput = `${err.stdout ?? ''}${err.stderr ?? ''}`.trim()
 }
 
 // Two mechanical fixups applied to the COMPILED output (the source files are
@@ -121,10 +121,10 @@ const jsFiles = (dir) =>
         ? [join(dir, e.name)]
         : [],
   )
-for (const yol of jsFiles(out)) {
+for (const file of jsFiles(out)) {
   writeFileSync(
-    yol,
-    readFileSync(yol, 'utf8')
+    file,
+    readFileSync(file, 'utf8')
       .replace(/from '(\.[^']*)'/g, (m, p) => (p.endsWith('.js') ? m : `from '${p}.js'`))
       .replace(/import\.meta\.env/g, '({})'),
   )
@@ -137,7 +137,7 @@ try {
   claim = await import(pathToFileURL(join(out, 'lib/luckClaim.js')).href)
 } catch (err) {
   console.error('The client code could not be compiled — the ABI comparison could not run.')
-  if (tscCiktisi) console.error(tscCiktisi)
+  if (tscOutput) console.error(tscOutput)
   console.error(err)
   rmSync(out, { recursive: true, force: true })
   process.exit(1)
@@ -506,7 +506,7 @@ for (const v of oyunVektorleri) {
   const ROUTES = {
     pages: ['create', 'liquidity', 'privacy', 'solofluck'],
     defaultPage: 'create',
-    subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'],
+    subTabs: ['about', 'tokenomics', 'value', 'presale', 'claim', 'game'],
     defaultSubTab: 'about',
     subTabPage: 'solofluck',
   }
@@ -885,7 +885,7 @@ rmSync(out, { recursive: true, force: true })
 
 for (const c of checks) {
   const mark = c.ok ? '✓' : '✗'
-  const detail = c.ok ? '' : `  (expected ${c.expected}, gelen ${c.actual})`
+  const detail = c.ok ? '' : `  (expected ${c.expected}, actual ${c.actual})`
   console.log(`${mark} ${c.name}${detail}`)
 }
 if (failures.length > 0) {

@@ -107,6 +107,20 @@ const TURKISH_WORDS = [
   // "createImageBitmap desteklenmiyor." were the last two.
   'adresi', 'kopyala', 'desteklenmiyor', 'destekleniyor', 'bulunamadi',
   'yuklenemedi', 'okunamadi', 'yazilamadi', 'olusturulamadi', 'silinemedi',
+  // A sixth pass. Two remnants survived all five: "yolu" dangling at the end
+  // of an otherwise English sentence on the Lock Liquidity page, and "gelen"
+  // in the line every failing ABI check printed. Neither had a Turkish letter
+  // and neither word was listed, so both files scanned clean for months. The
+  // lesson each pass repeats: a single Turkish word inside an English sentence
+  // is invisible to a letter test AND to the deep sweep, which only flags
+  // paragraphs with no English in them at all. Only the list catches those, so
+  // the list has to keep growing.
+  'yol', 'yolu', 'yollar', 'gelen', 'giden', 'sayi', 'sayisi', 'tane',
+  'boyut', 'boyutu', 'uzun', 'kisa', 'buyuk', 'kucuk', 'yuksek', 'dusuk',
+  'artis', 'azalis', 'fiyat', 'fiyati', 'satis', 'carpan', 'kar', 'zarar',
+  'yatirim', 'ucret', 'komisyon', 'guncel', 'guncelleme', 'simdi',
+  'gunluk', 'haftalik', 'aylik', 'ilk', 'kez', 'defa', 'asagida',
+  'yukarida', 'soldan', 'sagdan', 'ortalama', 'toplami', 'birim',
 ]
 
 // Turkish LOCALES. `toLocaleString('tr-TR')` contains no Turkish word at all,

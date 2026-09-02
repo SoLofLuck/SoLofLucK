@@ -218,7 +218,7 @@ function PoolSearch({ network }: { network: NetworkId }) {
                 <span className="pool-card__badge">{p.type === 'Concentrated' ? 'CLMM' : 'CPMM'}</span>
               </div>
               <div className="pool-card__row">
-                <span>Fiyat</span>
+                <span>Price</span>
                 <span>
                   {fmtNum(p.price)} {p.mintB.symbol}
                 </span>
@@ -657,7 +657,7 @@ function PoolManage({
             </strong>
           </div>
           <div className="pool-card__row">
-            <span>Fiyat</span>
+            <span>Price</span>
             <span>
               {fmtNum(poolInfo.price)} {poolInfo.mintB.symbol}
             </span>
@@ -880,8 +880,7 @@ function PoolLock({
       <h2>Lock Liquidity</h2>
       <p className="subtab-desc">
         Lock your LP tokens for a period you choose, so that nobody, you included, can withdraw
-        them — a way of proving on chain to buyers that you will not pull the liquidity
-        yolu.
+        them — a way of proving on chain to buyers that you will not pull the liquidity.
       </p>
 
       <div className="alert alert--warning">
