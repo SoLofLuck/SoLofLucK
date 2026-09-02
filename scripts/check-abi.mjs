@@ -729,6 +729,20 @@ for (const v of oyunVektorleri) {
     true)
   check('value: no SOL price still gives SOL figures', close(noUsd.valueSol, 20), true)
 
+  // The hourly reading of the presale price in dollars. The presale price is
+  // fixed in SOL, so deriving its dollar figure from a 30-second feed made a
+  // price the page calls fixed visibly move; hourIndex is what decides when a
+  // new reading is actually due.
+  const HOUR = 3_600_000
+  check('value: the same hour has one index',
+    value.hourIndex(1_000_000 * HOUR) === value.hourIndex(1_000_000 * HOUR + HOUR - 1), true)
+  check('value: the next hour has the next index',
+    value.hourIndex(1_000_000 * HOUR + HOUR) === value.hourIndex(1_000_000 * HOUR) + 1, true)
+  check('value: the index never goes backwards in time',
+    Array.from({ length: 50 }, (_, i) => value.hourIndex(i * 137_000))
+      .every((h, i, all) => i === 0 || h >= all[i - 1]),
+    true)
+
   // Junk in the amount box must not produce NaN on screen.
   for (const bad of [NaN, -1, Infinity, 0]) {
     const r = value.projectValue(bad, 5, 100)

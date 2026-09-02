@@ -66,6 +66,19 @@ export function sliderFromMultiple(multiple: number): number {
   return Math.log(clamped / MULTIPLE_MIN) / Math.log(MULTIPLE_MAX / MULTIPLE_MIN)
 }
 
+/**
+ * Which hour a moment belongs to, as a whole number of hours since the epoch.
+ *
+ * The presale price is FIXED in SOL, so re-deriving its dollar figure every 30
+ * seconds made a fixed price visibly wobble on screen — which reads as an
+ * unstable price rather than as a moving exchange rate. The dollar figure is
+ * therefore pinned once an hour and shown with the time it was read, and this
+ * is the comparison that decides when a new reading is due.
+ */
+export function hourIndex(ms: number): number {
+  return Math.floor(ms / 3_600_000)
+}
+
 /** The $LUCK price at the presale rate, in USD, given a SOL price. */
 export function tgePriceUsd(solUsd: number | null): number | null {
   return solUsd === null ? null : solUsd / PRESALE_TOKENS_PER_SOL

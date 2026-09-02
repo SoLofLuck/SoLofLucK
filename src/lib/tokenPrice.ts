@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { hourIndex } from './luckValue'
 
 // ---------------------------------------------------------------------------
 // Live token prices (Jupiter)
@@ -142,4 +143,46 @@ export function useTokenUsdPrice(mint: string | null | undefined): PriceSnapshot
   }, [mint])
 
   return snapshot
+}
+
+/**
+ * Pins a value once an hour and reports when it was taken.
+ *
+ * Used for the dollar figure of the presale price. The underlying SOL price
+ * refreshes every 30 seconds, which is right for anything quoting a live
+ * market, and wrong for a price we describe as fixed: the number changed
+ * under the reader's eyes while the text beside it said it never moves.
+ *
+ * The first non-null value is pinned immediately rather than waiting for the
+ * next hour — otherwise the card would sit empty for up to an hour after the
+ * page loaded.
+ */
+export function useHourlySnapshot(value: number | null): {
+  value: number | null
+  takenAt: number | null
+} {
+  const [snapshot, setSnapshot] = useState<{
+    value: number | null
+    takenAt: number | null
+    hour: number | null
+  }>({ value: null, takenAt: null, hour: null })
+
+  useEffect(() => {
+    const tick = () => {
+      if (value === null) return
+      const now = Date.now()
+      const hour = hourIndex(now)
+      setSnapshot((prev) =>
+        prev.value !== null && prev.hour === hour ? prev : { value, takenAt: now, hour },
+      )
+    }
+    tick()
+    // Checked every minute rather than scheduled for the exact turn of the
+    // hour: a timer set an hour ahead does not survive a phone locking the
+    // tab, and being a minute late with an hourly figure costs nothing.
+    const id = setInterval(tick, 60_000)
+    return () => clearInterval(id)
+  }, [value])
+
+  return { value: snapshot.value, takenAt: snapshot.takenAt }
 }

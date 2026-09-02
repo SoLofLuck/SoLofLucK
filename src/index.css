@@ -2706,7 +2706,3 @@ button {
   margin-top: 6px;
   border-top: 1px solid var(--panel-border);
 }
-
-.luck-value__disclaimer {
-  margin-top: 1.25rem;
-}

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { LUCK_TOKEN, PRESALE_TICKET_UNIT_SOL, PRESALE_TOKENS_PER_SOL } from '../../config'
 import { useSolUsdPrice } from '../../lib/solPrice'
-import { useTokenUsdPrice } from '../../lib/tokenPrice'
+import { useHourlySnapshot, useTokenUsdPrice } from '../../lib/tokenPrice'
 import {
   MULTIPLE_MARKS,
   MULTIPLE_MAX,
@@ -23,13 +23,13 @@ function formatUsdPrice(n: number | null): string {
 function formatUsd(n: number | null): string {
   if (n === null) return '—'
   const abs = Math.abs(n)
-  const digits = abs >= 100 ? 0 : abs >= 1 ? 2 : 4
+  const digits = abs === 0 || abs >= 100 ? (abs === 0 ? 2 : 0) : abs >= 1 ? 2 : 4
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
 }
 
 function formatSol(n: number): string {
   const abs = Math.abs(n)
-  const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4
+  const digits = abs === 0 ? 2 : abs >= 1000 ? 0 : abs >= 1 ? 2 : 4
   return `${n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })} SOL`
 }
 
@@ -39,6 +39,11 @@ function formatTokens(n: number): string {
 
 function formatMultiple(m: number): string {
   return `${m.toLocaleString('en-US', { maximumFractionDigits: m < 10 ? 2 : 1 })}×`
+}
+
+function formatClock(ms: number | null): string {
+  if (ms === null) return ''
+  return new Date(ms).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function formatPercent(p: number): string {
@@ -62,6 +67,14 @@ export function ValueTab() {
 
   const amountSol = Number(amountText)
 
+  // The presale price in dollars, read once an hour. See useHourlySnapshot:
+  // the price is fixed in SOL, so re-deriving the dollar figure every 30
+  // seconds made a price we call fixed visibly move on screen.
+  const hourly = useHourlySnapshot(solUsd)
+  const tgeUsdHourly = tgePriceUsd(hourly.value)
+
+  // The calculator keeps the live rate: those figures are conversions of a
+  // number the visitor just typed, and there is nothing fixed about them.
   const tgeUsd = tgePriceUsd(solUsd)
   const projection = useMemo(
     () => projectValue(amountSol, multiple, solUsd),
@@ -109,15 +122,18 @@ export function ValueTab() {
         <div className="luck-value__card">
           <span className="luck-value__card-label">Presale price — fixed</span>
           <strong className="luck-value__card-value">
-            1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK
+            {/* Without a SOL price there is no dollar figure at all, and a dash
+                where the price goes reads as "the price is nothing" rather
+                than "we have not got it yet". */}
+            1 $LUCK = {tgeUsdHourly === null ? '...' : formatUsdPrice(tgeUsdHourly)}
           </strong>
           <span className="luck-value__card-note">
-            {/* Without a SOL price there is no dollar figure to show, and
-                printing a dash where the price goes reads as "the price is
-                nothing" rather than "we have not got it yet". */}
-            {solUsd === null
-              ? 'The dollar price needs the live SOL price, which has not loaded yet.'
-              : `1 $LUCK = ${formatUsdPrice(tgeUsd)} at a SOL price of ${formatUsd(solUsd)}.`}
+            1 SOL = {formatTokens(PRESALE_TOKENS_PER_SOL)} $LUCK, and that rate never changes.{' '}
+            {hourly.value === null
+              ? 'The dollar figure is waiting for the SOL price.'
+              : `The dollar figure is read once an hour — last at ${formatClock(
+                  hourly.takenAt,
+                )}, with SOL at ${formatUsd(hourly.value)}.`}
           </span>
         </div>
 
@@ -131,9 +147,13 @@ export function ValueTab() {
 
         <div className="luck-value__card">
           <span className="luck-value__card-label">Valuation at the presale price</span>
-          <strong className="luck-value__card-value">{formatSol(TGE_FDV_SOL)}</strong>
+          <strong className="luck-value__card-value">
+            {hourly.value === null
+              ? formatSol(TGE_FDV_SOL)
+              : formatUsd(TGE_FDV_SOL * hourly.value)}
+          </strong>
           <span className="luck-value__card-note">
-            {solUsd === null ? '' : `${formatUsd(TGE_FDV_SOL * solUsd)}. `}
+            {hourly.value === null ? '' : `${formatSol(TGE_FDV_SOL)}. `}
             All {formatTokens(LUCK_TOKEN.totalSupply)} $LUCK priced at what the presale charges.
             This is the number a multiplier multiplies.
           </span>
@@ -153,6 +173,9 @@ export function ValueTab() {
             value={amountText}
             onChange={(e) => setAmountText(e.target.value)}
           />
+          {amountSol > 0 && projection.valueAtTgeUsd !== null && (
+            <small>{formatUsd(projection.valueAtTgeUsd)}</small>
+          )}
         </label>
         <div className="luck-value__quick">
           {QUICK_AMOUNTS.map((a) => (
@@ -215,8 +238,12 @@ export function ValueTab() {
         <div className="luck-value__result">
           <div className="luck-value__result-main">
             <span>Your {formatSol(amountSol > 0 ? amountSol : 0)} would be worth</span>
-            <strong>{formatSol(projection.valueSol)}</strong>
-            {projection.valueUsd !== null && <small>{formatUsd(projection.valueUsd)}</small>}
+            <strong>
+              {projection.valueUsd === null
+                ? formatSol(projection.valueSol)
+                : formatUsd(projection.valueUsd)}
+            </strong>
+            {projection.valueUsd !== null && <small>{formatSol(projection.valueSol)}</small>}
           </div>
           <div
             className={`luck-value__result-delta ${
@@ -226,12 +253,14 @@ export function ValueTab() {
             <span>{breakEven ? 'Break even' : profitPositive ? 'Gain' : 'Loss'}</span>
             <strong>
               {breakEven ? '' : profitPositive ? '+' : ''}
-              {formatSol(projection.profitSol)}
+              {projection.profitUsd === null
+                ? formatSol(projection.profitSol)
+                : formatUsd(projection.profitUsd)}
             </strong>
             {projection.profitUsd !== null && (
               <small>
-                {profitPositive ? '+' : ''}
-                {formatUsd(projection.profitUsd)}
+                {breakEven ? '' : profitPositive ? '+' : ''}
+                {formatSol(projection.profitSol)}
               </small>
             )}
           </div>
@@ -245,10 +274,9 @@ export function ValueTab() {
           <li>
             <span>Worth at the TGE price</span>
             <strong>
-              {formatSol(projection.valueAtTgeSol)}
               {projection.valueAtTgeUsd === null
-                ? ''
-                : ` · ${formatUsd(projection.valueAtTgeUsd)}`}
+                ? formatSol(projection.valueAtTgeSol)
+                : `${formatUsd(projection.valueAtTgeUsd)} · ${formatSol(projection.valueAtTgeSol)}`}
             </strong>
           </li>
           <li>
@@ -264,20 +292,12 @@ export function ValueTab() {
           <li className="luck-value__rows-emph">
             <span>The whole coin at this price</span>
             <strong>
-              {formatSol(projection.fdvSol)}
-              {projection.fdvUsd === null ? '' : ` · ${formatUsd(projection.fdvUsd)}`}
+              {projection.fdvUsd === null
+                ? formatSol(projection.fdvSol)
+                : `${formatUsd(projection.fdvUsd)} · ${formatSol(projection.fdvSol)}`}
             </strong>
           </li>
         </ul>
-      </div>
-
-      <div className="alert alert--warning luck-value__disclaimer">
-        <strong>The multiple is a number you chose, not a forecast.</strong> Nobody knows where the
-        price goes, us included. <strong>The price can also fall below the presale price, and this
-        bar does not show that</strong> — it only goes up, so read it as one half of the picture.
-        Before you take a big number here as a plan, look at the last row: it says what the whole
-        coin would have to be worth for that price to be real. Everything above is arithmetic on
-        numbers you typed, and none of it is investment advice.
       </div>
     </div>
   )

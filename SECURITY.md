@@ -21,7 +21,7 @@ What has been done:
 | Chaos test (game) | 8 seeds x 400 random steps, 7 invariants checked at every step |
 | Chaos test (distribution) | 4 seeds, 8 invariants at every step plus forged-claim attempts |
 | Sabotage test | Every check was proven to ACTUALLY fail when removed |
-| ABI check | 245 checks — that the client and the program speak the same bytes |
+| ABI check | 248 checks — that the client and the program speak the same bytes |
 | Tokenomics check | 73 checks — that the published numbers agree with the on-chain rules |
 | End-to-end rehearsal | On devnet: contribution -> list -> merkle -> distributor -> claim |
 | `clippy` (strict) | On every PR, warnings count as errors |
