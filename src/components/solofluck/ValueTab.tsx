@@ -3,10 +3,9 @@ import { LUCK_TOKEN, PRESALE_TICKET_UNIT_SOL, PRESALE_TOKENS_PER_SOL } from '../
 import { useSolUsdPrice } from '../../lib/solPrice'
 import { useTokenUsdPrice } from '../../lib/tokenPrice'
 import {
+  MULTIPLE_MARKS,
   MULTIPLE_MAX,
-  MULTIPLE_MIN,
   TGE_FDV_SOL,
-  TGE_UNLOCK_FRACTION,
   multipleFromSlider,
   projectValue,
   sliderFromMultiple,
@@ -47,9 +46,7 @@ function formatPercent(p: number): string {
   return `${sign}${p.toLocaleString('en-US', { maximumFractionDigits: p > -10 && p < 10 ? 1 : 0 })}%`
 }
 
-// The marks under the slider. They are the ratios a person actually thinks in,
-// not evenly spaced numbers, which is also how the track itself is spaced.
-const MARKS = [0.1, 0.5, 1, 2, 5, 10, 25, 100]
+const MARKS = MULTIPLE_MARKS
 const QUICK_AMOUNTS = [0.5, 1, 5, 10, 25]
 
 export function ValueTab() {
@@ -57,10 +54,13 @@ export function ValueTab() {
   const live = useTokenUsdPrice(LUCK_TOKEN.mint || null)
 
   const [amountText, setAmountText] = useState('1')
-  const [slider, setSlider] = useState(() => sliderFromMultiple(2))
+  // The MULTIPLE is the state, not the thumb position. Storing the position
+  // instead put the range input's 0.001 step between a clicked mark and the
+  // number it prints: clicking "2×" landed on 1.9998, which rounded to "2×" in
+  // the heading while the rows below quietly showed a gain of 0.9998 SOL.
+  const [multiple, setMultiple] = useState(2)
 
   const amountSol = Number(amountText)
-  const multiple = multipleFromSlider(slider)
 
   const tgeUsd = tgePriceUsd(solUsd)
   const projection = useMemo(
@@ -170,7 +170,7 @@ export function ValueTab() {
         <div className="luck-value__slider-block">
           <div className="luck-value__slider-head">
             <span>Price, as a multiple of the presale price</span>
-            <strong className={projection.percentChange >= 0 ? 'is-up' : 'is-down'}>
+            <strong className={breakEven ? '' : 'is-up'}>
               {`${formatMultiple(multiple)} · ${formatPercent(projection.percentChange)}`}
             </strong>
           </div>
@@ -180,8 +180,8 @@ export function ValueTab() {
             min={0}
             max={1}
             step={0.001}
-            value={slider}
-            onChange={(e) => setSlider(Number(e.target.value))}
+            value={sliderFromMultiple(multiple)}
+            onChange={(e) => setMultiple(multipleFromSlider(Number(e.target.value)))}
             aria-label="Price as a multiple of the presale price"
           />
           <div className="luck-value__marks">
@@ -199,16 +199,16 @@ export function ValueTab() {
                         ? 'translateX(-100%)'
                         : 'translateX(-50%)',
                 }}
-                onClick={() => setSlider(sliderFromMultiple(m))}
+                onClick={() => setMultiple(m)}
               >
                 {m}×
               </button>
             ))}
           </div>
           <p className="luck-value__slider-foot">
-            The bar runs from {MULTIPLE_MIN}× to {MULTIPLE_MAX}× and moves in ratios, not steps, so
-            the left of {formatMultiple(1)} is a loss and every equal slide is an equal ratio. The
-            multiple applies to the price in SOL and in dollars alike.
+            The bar starts at the presale price and runs to {MULTIPLE_MAX}×. It moves in ratios
+            rather than steps, so every equal slide is an equal ratio. The multiple applies to the
+            price in SOL and in dollars alike.
           </p>
         </div>
 
@@ -243,15 +243,17 @@ export function ValueTab() {
             <strong>{formatTokens(projection.tokens)} $LUCK</strong>
           </li>
           <li>
-            <span>$LUCK price here</span>
-            <strong>{formatUsdPrice(projection.priceUsd)}</strong>
+            <span>Worth at the TGE price</span>
+            <strong>
+              {formatSol(projection.valueAtTgeSol)}
+              {projection.valueAtTgeUsd === null
+                ? ''
+                : ` · ${formatUsd(projection.valueAtTgeUsd)}`}
+            </strong>
           </li>
           <li>
-            <span>Claimable at TGE ({Math.round(TGE_UNLOCK_FRACTION * 100)}%)</span>
-            <strong>
-              {formatTokens(projection.tokensAtTge)} $LUCK ·{' '}
-              {formatSol(projection.tgeClaimableValueSol)}
-            </strong>
+            <span>$LUCK price here</span>
+            <strong>{formatUsdPrice(projection.priceUsd)}</strong>
           </li>
           <li>
             <span>Raffle tickets</span>
@@ -271,10 +273,11 @@ export function ValueTab() {
 
       <div className="alert alert--warning luck-value__disclaimer">
         <strong>The multiple is a number you chose, not a forecast.</strong> Nobody knows where the
-        price goes, us included, and the bar slides below {formatMultiple(1)} for the same reason it
-        slides above it. Before you read a big number here as a plan, look at the last row: it says
-        what the whole coin would have to be worth for that price to be real. Everything above is
-        arithmetic on numbers you typed, and none of it is investment advice.
+        price goes, us included. <strong>The price can also fall below the presale price, and this
+        bar does not show that</strong> — it only goes up, so read it as one half of the picture.
+        Before you take a big number here as a plan, look at the last row: it says what the whole
+        coin would have to be worth for that price to be real. Everything above is arithmetic on
+        numbers you typed, and none of it is investment advice.
       </div>
     </div>
   )

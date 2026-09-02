@@ -625,9 +625,11 @@ for (const v of oyunVektorleri) {
 //   there does not throw — it just puts 1x in the wrong place and silently
 //   reframes a loss as a gain.
 //
-//   The TGE unlock share. Only 9% of a presale allocation can be claimed on
-//   TGE day. If that fraction drifts away from VESTING_SCHEDULE, the page
-//   overstates the day-one position by more than ten times.
+//   The slider's floor. The bar deliberately starts AT the presale price and
+//   never goes below it, so a visitor is never shown a projected fall. The
+//   maths underneath still handles multiples under 1 — that separation is the
+//   thing worth pinning, because collapsing it would mean a later widening of
+//   the range silently clamps instead of showing a loss.
 {
   const value = await import(pathToFileURL(join(out, 'lib/luckValue.js')).href)
   const close = (a, b) => Math.abs(a - b) < 1e-9
@@ -645,35 +647,37 @@ for (const v of oyunVektorleri) {
     true,
   )
 
-  // The TGE unlock share must be the presale bucket's first vesting step, not
-  // a number typed twice.
-  const presaleVesting = config.VESTING_SCHEDULE.find((v) => v.key === 'presale')
-  const presaleTotal = config.LUCK_TOKEN.totalSupply *
-    (config.TOKENOMICS.find((t) => t.key === 'presale').percent / 100)
-  check(
-    'value: the TGE unlock share matches VESTING_SCHEDULE',
-    close(value.TGE_UNLOCK_FRACTION, presaleVesting.steps[0].amount / presaleTotal),
-    true,
-  )
-
-  // The slider's ends, and the fact that 1x is INSIDE the range rather than at
-  // one edge of it: a bar that cannot show a loss is not a calculator.
+  // The slider's ends. Its floor is the presale price itself, so no position
+  // on the bar can project a fall.
+  check('value: the slider starts at the presale price', close(value.MULTIPLE_MIN, 1), true)
   check('value: the slider starts at the minimum', close(value.multipleFromSlider(0), value.MULTIPLE_MIN), true)
   check('value: the slider ends at the maximum', close(value.multipleFromSlider(1), value.MULTIPLE_MAX), true)
-  check('value: 1x sits inside the range',
-    value.MULTIPLE_MIN < 1 && value.MULTIPLE_MAX > 1, true)
   check('value: out-of-range input is clamped, not extrapolated',
     close(value.multipleFromSlider(-5), value.MULTIPLE_MIN) &&
       close(value.multipleFromSlider(9), value.MULTIPLE_MAX),
     true)
 
+  // Swept across the whole track, not just at its ends: no thumb position may
+  // produce a multiple under 1, and the bar must rise from left to right.
+  const sweep = Array.from({ length: 201 }, (_, i) => value.multipleFromSlider(i / 200))
+  check('value: no position on the bar is below the presale price',
+    sweep.every((m) => m >= 1 - 1e-12), true)
+  check('value: the bar rises from left to right',
+    sweep.every((m, i) => i === 0 || m > sweep[i - 1]), true)
+
   // Round trip: the marks under the bar are positioned with sliderFromMultiple
   // and read back with multipleFromSlider. If the two disagree, every mark
   // points at a different number than the one printed on it.
-  const drift = [0.1, 0.5, 1, 2, 5, 10, 25, 100]
+  const drift = value.MULTIPLE_MARKS
     .filter((m) => !close(value.multipleFromSlider(value.sliderFromMultiple(m)), m))
   check('value: every mark lands on its own number',
     drift.length === 0 ? true : `drifting: ${drift.join(', ')}`, true)
+  const outside = value.MULTIPLE_MARKS
+    .filter((m) => m < value.MULTIPLE_MIN || m > value.MULTIPLE_MAX)
+  check('value: every mark is inside the bar',
+    outside.length === 0 ? true : `outside: ${outside.join(', ')}`, true)
+  check('value: the marks run low to high',
+    value.MULTIPLE_MARKS.every((m, i) => i === 0 || m > value.MULTIPLE_MARKS[i - 1]), true)
 
   // The scale is logarithmic, so equal slides are equal RATIOS. Checked by
   // ratio rather than by position, which is the property the UI text claims.
@@ -699,11 +703,18 @@ for (const v of oyunVektorleri) {
   check('value: profit excludes what was paid', close(at10.profitSol, 18), true)
   check('value: the valuation scales with the price',
     close(at10.fdvSol, value.TGE_FDV_SOL * 10), true)
-  check('value: only the unlocked share is claimable at TGE',
-    close(at10.tgeClaimableValueSol, 20 * value.TGE_UNLOCK_FRACTION), true)
+  // The TGE row is the anchor the multiple is measured from: at the presale
+  // price an allocation is worth exactly what was paid for it, whatever the
+  // slider says.
+  check('value: the TGE-price value is what was paid', close(at10.valueAtTgeSol, 2), true)
+  check('value: the TGE-price value ignores the multiple',
+    close(value.projectValue(2, 1, 100).valueAtTgeSol, at10.valueAtTgeSol), true)
+  check('value: the TGE-price value in dollars follows the SOL price',
+    close(at10.valueAtTgeUsd, 200), true)
 
-  // Below 1x the numbers must go NEGATIVE rather than clamp at zero. A
-  // calculator that cannot show a loss is worse than no calculator.
+  // The slider cannot reach below 1x, but projectValue must still handle it
+  // without clamping. If it ever clamped, widening the range again would show
+  // a flat zero instead of a loss and nothing would report the difference.
   const half = value.projectValue(2, 0.5, 100)
   check('value: below 1x the value falls', close(half.valueSol, 1), true)
   check('value: below 1x the profit is negative', close(half.profitSol, -1), true)
@@ -714,7 +725,7 @@ for (const v of oyunVektorleri) {
   const noUsd = value.projectValue(2, 10, null)
   check('value: no SOL price -> no dollar figures',
     noUsd.valueUsd === null && noUsd.profitUsd === null && noUsd.priceUsd === null &&
-      noUsd.fdvUsd === null,
+      noUsd.fdvUsd === null && noUsd.valueAtTgeUsd === null,
     true)
   check('value: no SOL price still gives SOL figures', close(noUsd.valueSol, 20), true)
 

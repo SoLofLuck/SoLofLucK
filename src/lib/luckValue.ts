@@ -24,28 +24,41 @@ export const TGE_PRICE_SOL = 1 / PRESALE_TOKENS_PER_SOL
 export const TGE_FDV_SOL = LUCK_TOKEN.totalSupply / PRESALE_TOKENS_PER_SOL
 
 /**
- * The share of a presale allocation that can actually be claimed on TGE day.
- * The rest unlocks weekly (see VESTING_SCHEDULE) — so "what it is worth at
- * TGE" and "what you can sell at TGE" are two different numbers, and showing
- * only the first would overstate the day-one position by more than ten times.
+ * The slider's range, in multiples of the presale price.
+ *
+ * It starts AT the presale price rather than below it: the bar is for asking
+ * "what if it goes up", and a downward half made it read as a prediction of a
+ * fall. projectValue itself still handles multiples under 1 correctly — the
+ * restriction is the slider's, not the maths' — so re-widening the range later
+ * is a one-line change and nothing silently clamps in the meantime.
+ *
+ * The page says in plain words that the price can fall below the presale
+ * price and that this bar does not show it. A one-sided tool is defensible;
+ * a one-sided tool that pretends to be two-sided is not.
  */
-export const TGE_UNLOCK_FRACTION = 0.09
-
-/** The slider's range, in multiples of the presale price. */
-export const MULTIPLE_MIN = 0.1
+export const MULTIPLE_MIN = 1
 export const MULTIPLE_MAX = 100
 
 /**
- * The slider is logarithmic. On a linear 0.1x-100x bar, everything from a total
- * loss up to 5x would be squeezed into the first 5% of the track and be
- * unusable — while the far end, which is the least likely part, would get all
- * the room. In log space each equal step is an equal RATIO, so 1x lands at
- * exactly one third of the track and the downside stays reachable.
+ * The slider is logarithmic. On a linear 1x-100x bar, everything from 1x to 5x
+ * would be squeezed into the first 4% of the track and be unusable — while the
+ * far end, which is the least likely part, would get all the room. In log
+ * space each equal step is an equal RATIO, so the ordinary multiples stay
+ * reachable with a thumb.
  */
 export function multipleFromSlider(t: number): number {
   const clamped = Math.min(1, Math.max(0, t))
   return MULTIPLE_MIN * Math.pow(MULTIPLE_MAX / MULTIPLE_MIN, clamped)
 }
+
+/**
+ * The multiples printed under the bar, which are also the ones a person thinks
+ * in. They live here rather than in the component so the check that each mark
+ * lands on its own number reads the SAME list the page draws — with the list
+ * copied into the checker, changing the range left the check passing against
+ * marks that no longer existed.
+ */
+export const MULTIPLE_MARKS = [1, 2, 5, 10, 25, 100]
 
 /** The inverse — where a given multiple sits on the track, as 0..1. */
 export function sliderFromMultiple(multiple: number): number {
@@ -61,8 +74,6 @@ export function tgePriceUsd(solUsd: number | null): number | null {
 export interface Projection {
   /** Tokens bought with `amountSol` at the fixed presale price. */
   tokens: number
-  /** Of those, the part claimable on TGE day. */
-  tokensAtTge: number
   /** The chosen price as a multiple of the presale price. */
   multiple: number
   /** The same thing as a percentage change: 2x is +100%. */
@@ -75,8 +86,13 @@ export interface Projection {
   /** Profit or loss against what was paid. */
   profitSol: number
   profitUsd: number | null
-  /** What the day-one claimable part would be worth. */
-  tgeClaimableValueSol: number
+  /**
+   * What the allocation is worth at the presale price itself — the anchor the
+   * multiple is measured from. In SOL this is what was paid, by definition;
+   * the figure people actually want is the dollar one beside it.
+   */
+  valueAtTgeSol: number
+  valueAtTgeUsd: number | null
   /** The fully diluted valuation that price implies. */
   fdvSol: number
   fdvUsd: number | null
@@ -103,7 +119,6 @@ export function projectValue(
 
   return {
     tokens,
-    tokensAtTge: tokens * TGE_UNLOCK_FRACTION,
     multiple,
     percentChange: (multiple - 1) * 100,
     priceUsd,
@@ -111,7 +126,8 @@ export function projectValue(
     valueUsd: solUsd === null ? null : valueSol * solUsd,
     profitSol: valueSol - spent,
     profitUsd: solUsd === null ? null : (valueSol - spent) * solUsd,
-    tgeClaimableValueSol: valueSol * TGE_UNLOCK_FRACTION,
+    valueAtTgeSol: spent,
+    valueAtTgeUsd: solUsd === null ? null : spent * solUsd,
     fdvSol,
     fdvUsd: solUsd === null ? null : fdvSol * solUsd,
   }
