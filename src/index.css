@@ -2479,3 +2479,234 @@ button {
 .luck-presale__quota {
   margin-bottom: 0.75rem;
 }
+
+/* ---------------------------------------------------------------------------
+   Value tab: the price cards and the multiplier calculator
+   ------------------------------------------------------------------------ */
+
+.luck-value__cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 1rem 0 1.5rem;
+}
+
+.luck-value__card {
+  flex: 1 1 220px;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.luck-value__card-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.luck-value__card-value {
+  font-size: 1.05rem;
+  line-height: 1.35;
+  /* Prices run long and the card is narrow on a phone; breaking inside the
+     number is better than pushing the card off the screen. */
+  overflow-wrap: anywhere;
+}
+
+.luck-value__card-note {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.luck-value__calc {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.15rem 1.25rem;
+}
+
+.luck-value__calc-head {
+  margin: 0 0 1rem;
+  font-size: 1.05rem;
+}
+
+.luck-value__amount {
+  margin-bottom: 10px;
+}
+
+.luck-value__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 1.4rem;
+}
+
+.luck-value__chip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.luck-value__chip--on {
+  border-color: var(--accent-b);
+  color: var(--text);
+}
+
+.luck-value__slider-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.luck-value__slider-head strong {
+  font-size: 1.15rem;
+  /* Wraps as one piece: broken across two lines it left the separator
+     stranded on a line of its own. */
+  white-space: nowrap;
+}
+
+.luck-value__slider-head .is-up,
+.luck-value__result-delta.is-up strong,
+.luck-value__result-delta.is-up small {
+  color: var(--success);
+}
+
+.luck-value__slider-head .is-down,
+.luck-value__result-delta.is-down strong,
+.luck-value__result-delta.is-down small {
+  color: var(--danger);
+}
+
+.luck-value__slider {
+  width: 100%;
+  margin: 0;
+  /* A finger, not a mouse, drives this control on the device it was built for. */
+  height: 34px;
+  accent-color: var(--accent-b);
+}
+
+.luck-value__marks {
+  position: relative;
+  height: 26px;
+  margin-bottom: 4px;
+}
+
+.luck-value__mark {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  background: none;
+  border: none;
+  padding: 4px 2px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.luck-value__slider-foot {
+  margin: 0 0 1.2rem;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.luck-value__result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 1rem;
+}
+
+.luck-value__result-main,
+.luck-value__result-delta {
+  flex: 1 1 200px;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.luck-value__result-main span,
+.luck-value__result-delta span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.luck-value__result-main strong,
+.luck-value__result-delta strong {
+  font-size: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.luck-value__result-main small,
+.luck-value__result-delta small {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.luck-value__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.luck-value__rows li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--panel-border);
+  font-size: 0.9rem;
+}
+
+.luck-value__rows li:last-child {
+  border-bottom: none;
+}
+
+.luck-value__rows span {
+  color: var(--text-muted);
+}
+
+.luck-value__rows strong {
+  text-align: right;
+  /* NOT overflow-wrap: anywhere here. On a narrow row that breaks inside the
+     number itself, and "4,440.0 SOL" came out as "4,440." above "0 SOL" —
+     a number split across two lines is a number nobody can read. */
+  white-space: nowrap;
+}
+
+/* The valuation row is the reality check on every number above it, so it does
+   not read as just another line item. */
+.luck-value__rows-emph {
+  margin-top: 6px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.luck-value__disclaimer {
+  margin-top: 1.25rem;
+}

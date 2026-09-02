@@ -4,18 +4,19 @@ import { hashFromRoute, routeFromHash } from '../../lib/deepLink'
 import { MatrixBackground } from './MatrixBackground'
 import { AboutTab } from './AboutTab'
 import { TokenomicsTab } from './TokenomicsTab'
+import { ValueTab } from './ValueTab'
 import { PresaleTab } from './PresaleTab'
 import { GameTab } from './GameTab'
 import { ClaimTab } from './ClaimTab'
 
-type SubTab = 'about' | 'tokenomics' | 'presale' | 'claim' | 'game'
+type SubTab = 'about' | 'tokenomics' | 'value' | 'presale' | 'claim' | 'game'
 
 // The same routing definition as in App.tsx. The two must not drift apart;
 // check-abi verifies that.
 const ROUTES = {
   pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
   defaultPage: 'create' as const,
-  subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'] as const,
+  subTabs: ['about', 'tokenomics', 'value', 'presale', 'claim', 'game'] as const,
   defaultSubTab: 'about' as const,
   subTabPage: 'solofluck' as const,
 }
@@ -23,6 +24,7 @@ const ROUTES = {
 const SUBTABS: { id: SubTab; label: string }[] = [
   { id: 'about', label: 'About' },
   { id: 'tokenomics', label: 'Tokenomics' },
+  { id: 'value', label: '📈 Value' },
   { id: 'presale', label: 'Presale' },
   { id: 'claim', label: '🎁 My Share' },
   { id: 'game', label: '🎰 Game' },
@@ -90,6 +92,7 @@ export function SoLofLuckPage({ network }: Props) {
         <div className="luck-panel">
           {tab === 'about' && <AboutTab />}
           {tab === 'tokenomics' && <TokenomicsTab />}
+          {tab === 'value' && <ValueTab />}
           {tab === 'presale' && <PresaleTab network={network} />}
           {tab === 'claim' && <ClaimTab network={network} />}
           {tab === 'game' && <GameTab />}

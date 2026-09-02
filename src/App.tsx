@@ -34,7 +34,7 @@ type Page = 'create' | 'liquidity' | 'privacy' | 'solofluck'
 const ROUTES = {
   pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
   defaultPage: 'create' as const,
-  subTabs: ['about', 'tokenomics', 'presale', 'claim', 'game'] as const,
+  subTabs: ['about', 'tokenomics', 'value', 'presale', 'claim', 'game'] as const,
   defaultSubTab: 'about' as const,
   subTabPage: 'solofluck' as const,
 }

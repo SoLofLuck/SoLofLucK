@@ -76,6 +76,7 @@ try {
       'src/lib/sendTx.ts',
       'src/lib/presale.ts',
       'src/lib/deepLink.ts',
+      'src/lib/luckValue.ts',
       '--outDir', out,
       '--module', 'esnext',
       '--target', 'es2022',
@@ -612,6 +613,117 @@ for (const v of oyunVektorleri) {
     accidentallyOpen.length === 0 ? true : `accidentally open: ${accidentallyOpen.join(', ')}`,
     true,
   )
+}
+
+// --- The Value tab's maths --------------------------------------------------
+//
+// This module turns "what if it goes up 10x" into money on screen, and it is
+// the one place on the site where a visitor reads a number about their own
+// pocket. Two things can go wrong quietly:
+//
+//   The slider's scale. It is logarithmic on purpose, so an arithmetic slip
+//   there does not throw — it just puts 1x in the wrong place and silently
+//   reframes a loss as a gain.
+//
+//   The TGE unlock share. Only 9% of a presale allocation can be claimed on
+//   TGE day. If that fraction drifts away from VESTING_SCHEDULE, the page
+//   overstates the day-one position by more than ten times.
+{
+  const value = await import(pathToFileURL(join(out, 'lib/luckValue.js')).href)
+  const close = (a, b) => Math.abs(a - b) < 1e-9
+
+  // The presale price, restated from the config rather than hard-coded, so the
+  // check moves when the price does.
+  check(
+    'value: the presale price is 1 / tokens-per-SOL',
+    close(value.TGE_PRICE_SOL, 1 / config.PRESALE_TOKENS_PER_SOL),
+    true,
+  )
+  check(
+    'value: the valuation at the presale price is supply / tokens-per-SOL',
+    close(value.TGE_FDV_SOL, config.LUCK_TOKEN.totalSupply / config.PRESALE_TOKENS_PER_SOL),
+    true,
+  )
+
+  // The TGE unlock share must be the presale bucket's first vesting step, not
+  // a number typed twice.
+  const presaleVesting = config.VESTING_SCHEDULE.find((v) => v.key === 'presale')
+  const presaleTotal = config.LUCK_TOKEN.totalSupply *
+    (config.TOKENOMICS.find((t) => t.key === 'presale').percent / 100)
+  check(
+    'value: the TGE unlock share matches VESTING_SCHEDULE',
+    close(value.TGE_UNLOCK_FRACTION, presaleVesting.steps[0].amount / presaleTotal),
+    true,
+  )
+
+  // The slider's ends, and the fact that 1x is INSIDE the range rather than at
+  // one edge of it: a bar that cannot show a loss is not a calculator.
+  check('value: the slider starts at the minimum', close(value.multipleFromSlider(0), value.MULTIPLE_MIN), true)
+  check('value: the slider ends at the maximum', close(value.multipleFromSlider(1), value.MULTIPLE_MAX), true)
+  check('value: 1x sits inside the range',
+    value.MULTIPLE_MIN < 1 && value.MULTIPLE_MAX > 1, true)
+  check('value: out-of-range input is clamped, not extrapolated',
+    close(value.multipleFromSlider(-5), value.MULTIPLE_MIN) &&
+      close(value.multipleFromSlider(9), value.MULTIPLE_MAX),
+    true)
+
+  // Round trip: the marks under the bar are positioned with sliderFromMultiple
+  // and read back with multipleFromSlider. If the two disagree, every mark
+  // points at a different number than the one printed on it.
+  const drift = [0.1, 0.5, 1, 2, 5, 10, 25, 100]
+    .filter((m) => !close(value.multipleFromSlider(value.sliderFromMultiple(m)), m))
+  check('value: every mark lands on its own number',
+    drift.length === 0 ? true : `drifting: ${drift.join(', ')}`, true)
+
+  // The scale is logarithmic, so equal slides are equal RATIOS. Checked by
+  // ratio rather than by position, which is the property the UI text claims.
+  const step = 0.1
+  const ratios = [0, 0.2, 0.4, 0.6, 0.8].map(
+    (t) => value.multipleFromSlider(t + step) / value.multipleFromSlider(t),
+  )
+  check('value: equal slides are equal ratios',
+    ratios.every((r) => close(r, ratios[0])), true)
+
+  // The projection itself. At 1x a contribution is worth exactly what was paid
+  // for it — no gain, no loss — which is the anchor the whole page rests on.
+  const at1 = value.projectValue(2, 1, 100)
+  check('value: 1x returns exactly what was paid', close(at1.valueSol, 2), true)
+  check('value: 1x shows no profit', close(at1.profitSol, 0), true)
+  check('value: 1x is 0%', close(at1.percentChange, 0), true)
+  check('value: tokens follow the fixed price',
+    close(at1.tokens, 2 * config.PRESALE_TOKENS_PER_SOL), true)
+
+  const at10 = value.projectValue(2, 10, 100)
+  check('value: 10x is +900%', close(at10.percentChange, 900), true)
+  check('value: 10x multiplies the value', close(at10.valueSol, 20), true)
+  check('value: profit excludes what was paid', close(at10.profitSol, 18), true)
+  check('value: the valuation scales with the price',
+    close(at10.fdvSol, value.TGE_FDV_SOL * 10), true)
+  check('value: only the unlocked share is claimable at TGE',
+    close(at10.tgeClaimableValueSol, 20 * value.TGE_UNLOCK_FRACTION), true)
+
+  // Below 1x the numbers must go NEGATIVE rather than clamp at zero. A
+  // calculator that cannot show a loss is worse than no calculator.
+  const half = value.projectValue(2, 0.5, 100)
+  check('value: below 1x the value falls', close(half.valueSol, 1), true)
+  check('value: below 1x the profit is negative', close(half.profitSol, -1), true)
+  check('value: below 1x the percentage is negative', close(half.percentChange, -50), true)
+
+  // Without a SOL price the dollar figures must be null, never 0 — "$0.00" and
+  // "we do not know yet" are different statements.
+  const noUsd = value.projectValue(2, 10, null)
+  check('value: no SOL price -> no dollar figures',
+    noUsd.valueUsd === null && noUsd.profitUsd === null && noUsd.priceUsd === null &&
+      noUsd.fdvUsd === null,
+    true)
+  check('value: no SOL price still gives SOL figures', close(noUsd.valueSol, 20), true)
+
+  // Junk in the amount box must not produce NaN on screen.
+  for (const bad of [NaN, -1, Infinity, 0]) {
+    const r = value.projectValue(bad, 5, 100)
+    check(`value: an amount of ${bad} is treated as zero`,
+      r.tokens === 0 && r.valueSol === 0 && r.profitSol === 0, true)
+  }
 }
 
 // --- PlayerState's byte layout: the site's REAL reader ---------------------
