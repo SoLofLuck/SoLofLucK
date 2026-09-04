@@ -133,12 +133,24 @@ uses the first real block after it, prints which one it used, and puts both
 output. **Do not change the slot choice by hand** — changing the rule destroys
 the verifiability.
 
+Before the draw, fill this round's 3 hand-picked winners from that week's
+Twitter/X campaign into `data/twitter-winners.json` (see `data/README.md`) —
+this file is meant to be editable directly on GitHub, by whoever is running
+the raffle that week, without needing the codebase or an AI session open.
+
 Once the slot has passed:
 
 ```bash
-node scripts/draw-raffle.mjs --buyers buyers.json --slot <slot> --winners 7 > winners-1.json
+node scripts/draw-raffle.mjs --buyers buyers.json --slot <slot> --winners 7 > winners-ticket-1.json
+node scripts/combine-raffle-winners.mjs --ticket-winners winners-ticket-1.json --round 1 > winners-1.json
 node scripts/build-merkle.mjs --amount 1110000000000000 winners-1.json > public/merkle/round-1.json
 ```
+
+`combine-raffle-winners.mjs` merges the 7 on-chain ticket winners with the 3
+Twitter winners from `data/twitter-winners.json`, and refuses to run if that
+round is not exactly 3 valid, unique addresses that did not already win the
+ticket half — catching a hand-entry mistake here, not after it is locked
+on-chain.
 
 > `--amount` is in **the smallest unit**: 1,110,000 $LUCK x 10⁹.
 > `npm run check:tokenomics` verifies that this number agrees with the config.

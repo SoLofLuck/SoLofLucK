@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check:tokenomics": "node scripts/check-tokenomics.mjs",
-    "check:scripts": "node scripts/build-merkle.mjs --selftest && node scripts/draw-raffle.mjs --selftest && node scripts/presale-buyers.mjs --selftest",
+    "check:scripts": "node scripts/build-merkle.mjs --selftest && node scripts/draw-raffle.mjs --selftest && node scripts/presale-buyers.mjs --selftest && node scripts/combine-raffle-winners.mjs --selftest",
     "verify": "npm run check:language && npm run check:tokenomics && npm run check:scripts && npm run check:abi && npm run check:tx-path && npm run check:error-codes && npm run check:runbook",
     "build": "npm run verify && tsc -b && vite build",
     "lint": "oxlint",
