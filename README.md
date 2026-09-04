@@ -15,7 +15,7 @@ Tokenomics and Presale sub-tabs.
 
 ## Features
 
-### The general toolbox (based on 0nRCoin)
+### The general toolbox
 
 - Wallet connection (Phantom, Solflare), Devnet/Mainnet network selection.
 - **Create Token**: an SPL Mint, logo upload (Irys/Arweave), on-chain metadata,

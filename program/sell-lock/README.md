@@ -1,7 +1,7 @@
 # sell-lock — the Anti-Snipe Sell Lock (a Token-2022 Transfer Hook)
 
 This is a Solana program (a smart contract) that runs on the chain,
-**separately** from the main `0nRCoin` website. Its purpose: once a token pool
+**separately** from the main website. Its purpose: once a token pool
 has been created, **nobody** (the creator of the pool included) can **sell** into
 that pool for a chosen period (15 min / 1 hour / 5 hours / 24 hours) — buying
 stays open the whole time. When the period is over, selling opens up for everyone

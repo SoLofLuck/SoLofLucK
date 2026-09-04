@@ -830,12 +830,12 @@ for (const v of oyunVektorleri) {
   check('dice vector: the tier', Number(digest.readBigUInt64LE(8) % 10_000n), 4_556)
 
   // Does the description in the document use the same hash function as the code.
-  const guvenlik = readFileSync(`${repoRoot}SECURITY.md`, 'utf8')
+  const securityDoc = readFileSync(`${repoRoot}SECURITY.md`, 'utf8')
   const rust = readFileSync(
     `${repoRoot}program/luck-game/programs/luck-game/src/lib.rs`,
     'utf8',
   )
-  const docSaysSha = /digest\s*=\s*sha256\(/.test(guvenlik)
+  const docSaysSha = /digest\s*=\s*sha256\(/.test(securityDoc)
   const codeUsesSha = /hash::hash\(&preimage\)/.test(rust)
   check('dice vector: the document says sha256', docSaysSha, true)
   check('dice vector: the code uses sha256', codeUsesSha, true)
@@ -843,7 +843,7 @@ for (const v of oyunVektorleri) {
   // if one is updated and the other forgotten, it is caught.
   check(
     'dice vector: the digest in the document matches the code',
-    guvenlik.includes(digest.toString('hex')),
+    securityDoc.includes(digest.toString('hex')),
     true,
   )
 }
