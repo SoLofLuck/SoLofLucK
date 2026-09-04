@@ -68,6 +68,19 @@ independently of us.
   smallest unit)? If `baseUnits` is missing, the list was produced by an older
   version.
 
+The presale ending IS TGE. Write the exact moment into `src/config.ts` ->
+`TGE_ISO`, then run:
+
+```bash
+node scripts/raffle-schedule.mjs --generate --out public/raffle-schedule.json
+```
+
+This computes all 14 raffle rounds' due dates from `TGE_ISO` and
+`RAFFLE.firstRoundDay`/`intervalDays`, and publishes them on the Tokenomics
+tab under "Raffle Schedule" — each with a ready-to-copy public-announcement
+line for that round, ahead of picking its slot. Commit and push
+`public/raffle-schedule.json` together with the config change.
+
 ---
 
 ## 4. Build the merkle tree

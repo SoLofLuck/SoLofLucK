@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   LUCK_TOKEN,
   MARKETING_BREAKDOWN,
@@ -7,10 +8,12 @@ import {
   PRESALE_TARGET_SOL,
   PRESALE_TOKENS_PER_SOL,
   PUBLIC_WALLETS,
+  RAFFLE,
   TOKENOMICS,
   VESTING_SCHEDULE,
 } from '../../config'
 import { PRESALE_OPS_FEE_PERCENT } from '../../lib/presale'
+import { fetchRaffleSchedule, type RaffleScheduleEntry } from '../../lib/raffleSchedule'
 import { CopyButton } from '../CopyButton'
 
 function solscanUrl(address: string) {
@@ -39,6 +42,86 @@ function WalletRow({ label, address }: { label: string; address: string }) {
 
 function formatSupply(n: number) {
   return n.toLocaleString('en-US')
+}
+
+function formatRoundDate(iso: string) {
+  return new Date(iso).toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'UTC',
+    timeZoneName: 'short',
+  })
+}
+
+function announcementText(round: number, iso: string) {
+  return (
+    `Round ${round} of the $LUCK raffle draws on ${formatRoundDate(iso)}. ` +
+    'The exact slot number will be posted here shortly before the draw.'
+  )
+}
+
+// The round's due date, computed ahead of time so it can be announced before
+// the slot itself is known; the announced/actual slot only appear afterward,
+// once run-raffle-round.yml has really drawn that round (see
+// scripts/raffle-schedule.mjs) — a permanent, public record that the
+// announcement really did happen before the result did.
+function RaffleScheduleRow({ entry }: { entry: RaffleScheduleEntry }) {
+  return (
+    <li className="luck-tokenomics__raffle-row">
+      <span className="luck-tokenomics__wallet-label">Round {entry.round}</span>
+      {entry.dueIso ? (
+        <strong className="luck-tokenomics__raffle-date">{formatRoundDate(entry.dueIso)}</strong>
+      ) : (
+        <strong className="luck-tokenomics__raffle-date">TBD</strong>
+      )}
+      {entry.dueIso && !entry.drawnAtIso && (
+        <CopyButton value={announcementText(entry.round, entry.dueIso)} label="Copy announcement" />
+      )}
+      {entry.drawnAtIso && (
+        <span className="luck-tokenomics__raffle-drawn">
+          ✓ Drawn — announced slot {entry.announcedSlot?.toLocaleString('en-US')}
+          {entry.actualSlot !== null && entry.actualSlot !== entry.announcedSlot && (
+            <> (skipped — block {entry.actualSlot.toLocaleString('en-US')} used instead)</>
+          )}
+        </span>
+      )}
+    </li>
+  )
+}
+
+function RaffleSchedule() {
+  const [schedule, setSchedule] = useState<RaffleScheduleEntry[]>([])
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetchRaffleSchedule()
+      .then((rows) => !cancelled && setSchedule(rows))
+      .catch((err) => !cancelled && setError(err instanceof Error ? err.message : 'Could not load the raffle schedule.'))
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (error) return <div className="alert alert--error">{error}</div>
+  if (schedule.length === 0) return null
+  if (schedule.every((r) => !r.dueIso)) {
+    return (
+      <p className="subtab-desc">
+        The TGE date has not been set yet — round dates will appear here once it has.
+      </p>
+    )
+  }
+  return (
+    <ul className="luck-tokenomics__raffle-list">
+      {schedule.map((entry) => (
+        <RaffleScheduleRow key={entry.round} entry={entry} />
+      ))}
+    </ul>
+  )
 }
 
 export function TokenomicsTab() {
@@ -153,6 +236,17 @@ export function TokenomicsTab() {
           </div>
         ))}
       </div>
+
+      <h3 className="luck-tokenomics__subhead">Raffle Schedule</h3>
+      <p className="subtab-desc">
+        {RAFFLE.rounds} weekly rounds, one every {RAFFLE.intervalDays} days starting{' '}
+        {RAFFLE.firstRoundDay} days after TGE. Each date below is computed from the TGE timestamp,
+        ready to copy into a public announcement <strong>before</strong> that round's slot is
+        picked — the announcement has to come first, or picking a future, unknowable slot proves
+        nothing. Once a round has actually been drawn, the slot that was announced and the block
+        that was really used replace the button here, as a permanent record.
+      </p>
+      <RaffleSchedule />
 
       <h3 className="luck-tokenomics__subhead">Inside The Marketing Bucket</h3>
       <p className="subtab-desc">

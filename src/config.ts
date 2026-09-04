@@ -176,6 +176,15 @@ export const PRESALE_DURATION_WEEKS = 7
 // end is PRESALE_DURATION_WEEKS weeks after the start.
 export const PRESALE_START_ISO = ''
 
+// The real TGE timestamp — ISO 8601, filled in ONCE, on the day the presale
+// actually closes (which may be earlier than PRESALE_START_ISO +
+// PRESALE_DURATION_WEEKS, if the target is reached early). Left empty until
+// then. scripts/raffle-schedule.mjs uses it, together with RAFFLE, to compute
+// each of the 14 raffle rounds' due date — the dates the Tokenomics tab shows
+// under "Raffle Schedule" for the operator to copy into a public announcement
+// ahead of each draw.
+export const TGE_ISO = ''
+
 // 1 raffle ticket per 0.5 SOL — regardless of WHICH MODE it was sent with.
 //
 // Tickets used to be granted only in "fixed package" mode. That had two

@@ -105,18 +105,34 @@ jobs:
             winners-${{ inputs.round_id }}.json
             public/merkle/round-${{ inputs.round_id }}.json
 
+      # Gated on dry_run, same reasoning as the merkle file below: a
+      # rehearsal's announced/actual slot must not become part of the public
+      # record before the round it belongs to is actually locked.
+      - name: Record the drawn slot in the public schedule
+        if: inputs.dry_run != true
+        run: |
+          ANNOUNCED=$(jq -r '.announcedSlot' winners-ticket-${{ inputs.round_id }}.json)
+          ACTUAL=$(jq -r '.slot' winners-ticket-${{ inputs.round_id }}.json)
+          node scripts/raffle-schedule.mjs --generate --out public/raffle-schedule.json
+          node scripts/raffle-schedule.mjs --record \
+            --out public/raffle-schedule.json \
+            --round "${{ inputs.round_id }}" \
+            --announced-slot "$ANNOUNCED" \
+            --actual-slot "$ACTUAL" \
+            --drawn-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
       # Gated on dry_run: a rehearsal must not change what the live site or
       # the chain believe this round is. Publishing here, before the lock
       # below, is what makes the file the Claim tab will read agree with what
       # gets written on chain in the next step.
-      - name: Publish round-${{ inputs.round_id }}.json to the site
+      - name: Publish this round's files to the site
         if: inputs.dry_run != true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/merkle/round-${{ inputs.round_id }}.json
+          git add public/merkle/round-${{ inputs.round_id }}.json public/raffle-schedule.json
           if git diff --cached --quiet; then
-            echo "round-${{ inputs.round_id }}.json is unchanged — nothing to publish."
+            echo "Nothing changed — nothing to publish."
           else
             git commit -m "chore(raffle): publish round ${{ inputs.round_id }} (announced slot ${{ inputs.announced_slot }})"
             git push
