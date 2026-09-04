@@ -138,25 +138,38 @@ Twitter/X campaign into `data/twitter-winners.json` (see `data/README.md`) —
 this file is meant to be editable directly on GitHub, by whoever is running
 the raffle that week, without needing the codebase or an AI session open.
 
-Once the slot has passed:
+**The whole rest of this step — draw, merge, publish, lock — runs as one
+GitHub Actions workflow:** *Actions → Raffle — Draw, Publish and Lock a
+Weekly Round → Run workflow*. Fill in the round id and the slot you already
+announced; leave `dry_run` at its default (`true`) first. A rehearsal draws
+the round and attaches the result as a downloadable Artifact on the run,
+without publishing it to the site or writing anything to chain. Once you have
+checked it, run the workflow again with `dry_run: false` — that run publishes
+`round-N.json` to the site and, immediately after, locks the round on chain
+with `initialize-round.mjs`, using the `LUCK_GAME_DEPLOY_KEY` secret so the
+key never has to leave GitHub.
+
+The equivalent by hand, if the workflow is ever unavailable:
 
 ```bash
+RPC_URL=<mainnet-rpc> node scripts/presale-buyers.mjs > buyers.json
 node scripts/draw-raffle.mjs --buyers buyers.json --slot <slot> --winners 7 > winners-ticket-1.json
 node scripts/combine-raffle-winners.mjs --ticket-winners winners-ticket-1.json --round 1 > winners-1.json
-node scripts/build-merkle.mjs --amount 1110000000000000 winners-1.json > public/merkle/round-1.json
+node scripts/build-merkle.mjs --amount $(node scripts/raffle-amount.mjs) winners-1.json > public/merkle/round-1.json
 ```
 
 `combine-raffle-winners.mjs` merges the 7 on-chain ticket winners with the 3
 Twitter winners from `data/twitter-winners.json`, and refuses to run if that
 round is not exactly 3 valid, unique addresses that did not already win the
 ticket half — catching a hand-entry mistake here, not after it is locked
-on-chain.
+on-chain. `raffle-amount.mjs` prints the per-winner prize in **the smallest
+unit** (1,110,000 $LUCK x 10⁹) straight from `RAFFLE.perWinnerTokens` and
+`DEFAULT_DECIMALS`, so this command can't drift from the config the way a
+hardcoded number could.
 
-> `--amount` is in **the smallest unit**: 1,110,000 $LUCK x 10⁹.
-> `npm run check:tokenomics` verifies that this number agrees with the config.
-
-Then open the round as in step 5 — except that a raffle schedule is a single
-item: `CLIFF_BPS=10000 PERIOD_BPS=0 PERIODS=0`.
+Then commit and push the published `public/merkle/round-1.json`, and open the
+round as in step 5 — except that a raffle schedule is a single item:
+`CLIFF_BPS=10000 PERIOD_BPS=0 PERIODS=0`.
 
 **Verify:** with the same `buyers.json` and the same **announced** slot, anyone
 must be able to reproduce the same winners — even if the announced slot was

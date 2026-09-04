@@ -1,0 +1,152 @@
+name: Raffle — Draw, Publish and Lock a Weekly Round (Devnet or Mainnet)
+
+# The weekly raffle in one button instead of five manual commands
+# (TGE-RUNBOOK.md, "The weekly raffles"): draw the 7 on-chain ticket winners,
+# merge in the 3 hand-entered Twitter winners from data/twitter-winners.json,
+# build the round's merkle file, publish it to the live site, and — only when
+# dry_run is turned off — lock the round on chain.
+#
+# The slot must already be PUBLICLY ANNOUNCED before this runs (see
+# TGE-RUNBOOK.md, step 6): the input below is what makes that announcement
+# real, not a substitute for it. Announcing after seeing this run's result
+# would defeat the whole point of picking a future, unknowable slot.
+#
+# Like init-luck-distributor.yml, this cannot be undone once dry_run is
+# false — the claim program has no "give it back" instruction. The default is
+# always a rehearsal.
+
+on:
+  workflow_dispatch:
+    inputs:
+      round_id:
+        description: 'Round id, 1..14 (RAFFLE.rounds in src/config.ts)'
+        required: true
+        type: string
+      announced_slot:
+        description: 'The slot number you already announced publicly, before this run'
+        required: true
+        type: string
+      program_id:
+        description: 'luck-distributor Program ID (CLAIM_CONFIG.programId)'
+        required: true
+        type: string
+      mint:
+        description: '$LUCK mint address (LUCK_TOKEN.mint)'
+        required: true
+        type: string
+      start_iso:
+        description: "This round's unlock time, UTC ISO (e.g. 2026-10-07T12:00:00Z) — the raffle schedule (100% at this instant) means it should be the moment you intend to announce winners, not TGE"
+        required: true
+        type: string
+      network:
+        description: 'devnet (DEFAULT, test network) or mainnet-beta (the live one)'
+        required: false
+        type: choice
+        default: devnet
+        options: [devnet, mainnet-beta]
+      dry_run:
+        description: 'REHEARSAL (default): draws and publishes round-N.json but does NOT lock anything on chain'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  run-round:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ABI and tokenomics audits
+        run: npm run verify
+
+      - name: Extract the presale buyer list (for ticket counts)
+        env:
+          RPC_URL: ${{ inputs.network == 'mainnet-beta' && 'https://api.mainnet-beta.solana.com' || 'https://api.devnet.solana.com' }}
+        run: node scripts/presale-buyers.mjs > buyers.json
+
+      - name: Draw the 7 ticket winners
+        env:
+          RPC_URL: ${{ inputs.network == 'mainnet-beta' && 'https://api.mainnet-beta.solana.com' || 'https://api.devnet.solana.com' }}
+        run: |
+          node scripts/draw-raffle.mjs \
+            --buyers buyers.json \
+            --slot "${{ inputs.announced_slot }}" \
+            --winners 7 \
+            > winners-ticket-${{ inputs.round_id }}.json
+
+      - name: Merge in this round's Twitter winners
+        run: |
+          node scripts/combine-raffle-winners.mjs \
+            --ticket-winners winners-ticket-${{ inputs.round_id }}.json \
+            --round "${{ inputs.round_id }}" \
+            > winners-${{ inputs.round_id }}.json
+
+      - name: Build the round's merkle file
+        run: |
+          AMOUNT=$(node scripts/raffle-amount.mjs)
+          node scripts/build-merkle.mjs --amount "$AMOUNT" winners-${{ inputs.round_id }}.json \
+            > public/merkle/round-${{ inputs.round_id }}.json
+
+      - name: Upload the rehearsal result for review
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: round-${{ inputs.round_id }}-rehearsal
+          path: |
+            winners-${{ inputs.round_id }}.json
+            public/merkle/round-${{ inputs.round_id }}.json
+
+      # Gated on dry_run: a rehearsal must not change what the live site or
+      # the chain believe this round is. Publishing here, before the lock
+      # below, is what makes the file the Claim tab will read agree with what
+      # gets written on chain in the next step.
+      - name: Publish round-${{ inputs.round_id }}.json to the site
+        if: inputs.dry_run != true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/merkle/round-${{ inputs.round_id }}.json
+          if git diff --cached --quiet; then
+            echo "round-${{ inputs.round_id }}.json is unchanged — nothing to publish."
+          else
+            git commit -m "chore(raffle): publish round ${{ inputs.round_id }} (announced slot ${{ inputs.announced_slot }})"
+            git push
+          fi
+
+      - name: Write the deploy key
+        if: inputs.dry_run != true
+        run: |
+          mkdir -p ~/.config/solana
+          cat > ~/.config/solana/id.json <<'KEYFILE'
+          ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
+          KEYFILE
+
+      - name: Lock the round on chain
+        env:
+          PROGRAM_ID: ${{ inputs.program_id }}
+          MINT: ${{ inputs.mint }}
+          ROUND_ID: ${{ inputs.round_id }}
+          MERKLE_FILE: public/merkle/round-${{ inputs.round_id }}.json
+          START_ISO: ${{ inputs.start_iso }}
+          CLIFF_BPS: '10000'
+          PERIOD_BPS: '0'
+          PERIODS: '0'
+          KEYPAIR_PATH: /home/runner/.config/solana/id.json
+          RPC_URL: ${{ inputs.network == 'mainnet-beta' && 'https://api.mainnet-beta.solana.com' || 'https://api.devnet.solana.com' }}
+          DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
+        run: node program/luck-distributor/scripts/initialize-round.mjs
+
+      - name: Rehearsal notice
+        if: inputs.dry_run == true
+        run: |
+          echo "::notice::That was a REHEARSAL — round-${{ inputs.round_id }}.json was drawn but NOT published or locked." \
+               "Download it from this run's Artifacts, check it, then run this workflow again with dry_run=false."
