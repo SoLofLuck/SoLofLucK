@@ -567,6 +567,10 @@ export function GameTab() {
     if (autoResolveTriesRef.current.tries >= AUTO_RESOLVE_MAX_TRIES) return
     autoResolveTriesRef.current.tries += 1
     void handleResolve()
+    // handleResolve is recreated every render but only reads state already
+    // listed below; adding it here would re-fire this effect on every
+    // unrelated render and break the per-attempt try counter above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, spinAuthoritySigner, activeOwnerPublicKey, gameConfig, playerState, currentSlot])
 
   if (!configured) {

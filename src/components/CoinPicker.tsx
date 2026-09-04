@@ -100,7 +100,10 @@ export function CoinPicker({ token2022Only = false, allowSol = false, explorerCl
     }
   }, [connection, wallet.publicKey, token2022Only])
 
-  const fullList = allowSol ? [SOL_ENTRY, ...(tokens ?? [])] : tokens
+  const fullList = useMemo(
+    () => (allowSol ? [SOL_ENTRY, ...(tokens ?? [])] : tokens),
+    [allowSol, tokens],
+  )
 
   const displayList = useMemo(() => {
     if (!fullList) return fullList
