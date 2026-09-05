@@ -328,7 +328,7 @@ cd program/luck-game && cargo test chaos -- --nocapture
 npm run verify
 
 # That the on-chain program matches the source (in the deploy logs)
-solana program dump Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5 onchain.so
+solana program dump 37Hxwu9LYYyEBiB4peAaJVm1mD5gk7CKmeXiobDuv2iu onchain.so
 ```
 
 Producing the buyer list independently of us:

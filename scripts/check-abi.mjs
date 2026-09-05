@@ -962,23 +962,23 @@ for (const v of oyunVektorleri) {
 {
   // The parsers fetch a transaction from a Connection; a fake connection is
   // enough, because what we are testing is byte reading, not the network.
-  const sahteBaglanti = (hex) => ({
+  const fakeConnection = (hex) => ({
     getTransaction: async () => ({
       meta: {
         logMessages: [
-          'Program Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5 invoke [1]',
+          'Program 37Hxwu9LYYyEBiB4peAaJVm1mD5gk7CKmeXiobDuv2iu invoke [1]',
           `Program data: ${Buffer.from(hex, 'hex').toString('base64')}`,
-          'Program Fr38cTAzyYJZTjHUsZXTVBCuA387j8vaQYir7Pr2FqC5 success',
+          'Program 37Hxwu9LYYyEBiB4peAaJVm1mD5gk7CKmeXiobDuv2iu success',
         ],
       },
     }),
   })
 
-  const OYUNCU_HEX = '07'.repeat(32)
+  const PLAYER_HEX = '07'.repeat(32)
 
   const resolved = await game.parsePlayResolvedFromTx(
-    sahteBaglanti(
-      `8cb617b4df501e9d${OYUNCU_HEX}01d20296490000000000012a9ab70e00000000`,
+    fakeConnection(
+      `8cb617b4df501e9d${PLAYER_HEX}01d20296490000000000012a9ab70e00000000`,
     ),
     'forged-signature',
   )
@@ -990,7 +990,7 @@ for (const v of oyunVektorleri) {
   check('event PlayResolved: ops_fee_paid', resolved?.opsFeePaidLamports, 246_913_578n)
 
   const committed = await game.parsePlayCommittedFromTx(
-    sahteBaglanti(`0f6a7973baf30b2c${OYUNCU_HEX}0b0000001600000001cedf201d00000000`),
+    fakeConnection(`0f6a7973baf30b2c${PLAYER_HEX}0b0000001600000001cedf201d00000000`),
     'forged-signature',
   )
   check('event PlayCommitted: could be read', committed !== null, true)
@@ -1000,7 +1000,7 @@ for (const v of oyunVektorleri) {
   check('event PlayCommitted: commit_slot', committed?.commitSlot, 488_693_710n)
 
   const purchased = await game.parseSpinsPurchasedFromTx(
-    sahteBaglanti(`c39218f3ce200ed2${OYUNCU_HEX}03140000000008af2f0000000017000000`),
+    fakeConnection(`c39218f3ce200ed2${PLAYER_HEX}03140000000008af2f0000000017000000`),
     'forged-signature',
   )
   check('event SpinsPurchased: could be read', purchased !== null, true)
@@ -1012,7 +1012,7 @@ for (const v of oyunVektorleri) {
   // If the discriminator does NOT match, the event must not be read — otherwise
   // another event's bytes would be taken for PlayResolved and misdecoded.
   const foreignDiscriminator = await game.parsePlayResolvedFromTx(
-    sahteBaglanti(`0f6a7973baf30b2c${OYUNCU_HEX}01d20296490000000000012a9ab70e00000000`),
+    fakeConnection(`0f6a7973baf30b2c${PLAYER_HEX}01d20296490000000000012a9ab70e00000000`),
     'forged-signature',
   )
   check('event PlayResolved: a foreign discriminator is rejected', foreignDiscriminator, null)
