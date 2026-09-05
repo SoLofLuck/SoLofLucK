@@ -36,7 +36,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 // keypair by `anchor keys sync` during deploy (see the deploy workflow).
 // Leaving the system program's address (111...) here would clash in the tests,
 // so a valid but unused address sits here instead.
-declare_id!("G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e");
+declare_id!("8hUZNdjHPR6jtKMwH2U28pHeNZfEgKdJ7x4CDsjuBzwJ");
 
 const DISTRIBUTOR_SEED: &[u8] = b"distributor";
 const VAULT_SEED: &[u8] = b"vault";

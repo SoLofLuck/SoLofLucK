@@ -251,7 +251,7 @@ export const TOKENOMICS = [
 // While `programId` is empty the Claim tab says "not configured yet" and no
 // button works — the same safety-brake pattern as the presale wallet.
 export const CLAIM_CONFIG = {
-  programId: 'G8hKTeAbpMCwNTn7WzKnT6PFxnVfLJuvQFg5XBTX2E8e',
+  programId: '8hUZNdjHPR6jtKMwH2U28pHeNZfEgKdJ7x4CDsjuBzwJ',
   /** Round ids: 0 = presale vesting, 1..14 = the weekly raffles. */
   presaleRoundId: 0,
   /**
