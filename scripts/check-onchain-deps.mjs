@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { cfgIsTrue, edgeApplies, sbfDependencies } from './lib/sbf-deps.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const PROGRAMS = ['luck-game', 'luck-distributor']
+const PROGRAMS = ['luck-game', 'luck-distributor', 'sell-lock']
 const PIN_FILE = `${root}scripts/onchain-dependencies.json`
 
 // --- selftest: the cfg evaluator -------------------------------------------

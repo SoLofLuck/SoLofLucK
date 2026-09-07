@@ -72,6 +72,27 @@ if (!Number.isFinite(Number(START_TS)) || START_TS <= 0n) {
   process.exit(1)
 }
 
+// A typo'd year or a timezone slip in START_ISO would land this round's
+// vesting clock in the past — and since there is no instruction to change
+// the schedule after initialize() (see the file header), that mistake is
+// PERMANENT: claimants could immediately withdraw far more than the cliff
+// intends. A generous one-hour grace window covers the real gap between
+// picking the timestamp and actually running this script; anything further
+// in the past is almost certainly a mistake, not intent.
+// Skipped under PRINT_IX: that mode only serialises the instruction bytes for
+// the ABI golden-vector check (check-abi.mjs) against a fixed example date —
+// it never touches a keypair or the chain, so there is nothing to protect.
+const ONE_HOUR_S = 3600n
+const nowTs = BigInt(Math.floor(Date.now() / 1000))
+if (process.env.PRINT_IX !== '1' && START_TS < nowTs - ONE_HOUR_S) {
+  console.error(
+    `START_ISO (${new Date(Number(START_TS) * 1000).toISOString()}) is more than an hour in the past ` +
+      `(now: ${new Date(Number(nowTs) * 1000).toISOString()}). This schedule can never be changed after ` +
+      'initialize() — check for a typo (wrong year, timezone) before running this again.',
+  )
+  process.exit(1)
+}
+
 // Schedule check — the program enforces the same thing (ScheduleNotComplete),
 // but we want to see the error BEFORE sending money to the chain.
 const totalBps = CLIFF_BPS + PERIODS * PERIOD_BPS

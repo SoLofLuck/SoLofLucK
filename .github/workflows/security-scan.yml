@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        program: [luck-game, luck-distributor]
+        program: [luck-game, luck-distributor, sell-lock]
     steps:
       - uses: actions/checkout@v4
       # DELIBERATELY `stable`, not a pinned version.
@@ -78,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        program: [luck-game, luck-distributor]
+        program: [luck-game, luck-distributor, sell-lock]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

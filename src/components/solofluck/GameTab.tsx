@@ -419,6 +419,12 @@ export function GameTab() {
   async function handleForfeit() {
     if (!forfeitSigner) return
     setError('')
+    // A forfeit means the automatic resolve could not settle this round on its
+    // own (see the windowExpired effect below, which is what brings this
+    // button up in the first place while Auto-Spin is running) — stop
+    // Auto-Spin here rather than silently chaining into a fresh spin right
+    // after a manual recovery action.
+    setAutoSpin(false)
     setBusy('forfeit')
     try {
       await forfeitStuckPlay(connection, forfeitSigner, setStatus)
@@ -594,6 +600,22 @@ export function GameTab() {
     // unrelated render and break the per-attempt try counter above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, spinAuthoritySigner, activeOwnerPublicKey, gameConfig, playerState, currentSlot])
+
+  // If the automatic resolve above exhausts its retries (RPC trouble) and the
+  // resolve window then closes for good, SlotMachine cancels the round
+  // WITHOUT ever calling onLanded (see its "the game errored out" branch) —
+  // and onLanded is the only place that chains Auto-Spin into the next round
+  // or turns it off. Left alone, Auto-Spin would say "running" forever with
+  // nothing left to do, and the only way out would be the player noticing and
+  // pressing Stop by hand. So: the moment a pending game's window expires
+  // while Auto-Spin is on, stop it here — same "Clear Attempt" recovery flow
+  // as the manual path, just not silently stuck first.
+  useEffect(() => {
+    if (!autoSpin || !gameConfig || !playerState || currentSlot === null) return
+    if (!playerState.pending) return
+    const slotsLeft = Number(playerState.commitSlot + gameConfig.revealDelaySlots) - currentSlot
+    if (-slotsLeft > GAME_CONFIG.maxResolveWindowSlots) setAutoSpin(false)
+  }, [autoSpin, gameConfig, playerState, currentSlot])
 
   if (!configured) {
     return (
