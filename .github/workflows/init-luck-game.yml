@@ -34,6 +34,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Determine the RPC endpoint
+        run: |
+          if [ "${{ inputs.network }}" = "mainnet-beta" ]; then
+            if [ -n "${{ secrets.HELIUS_API_KEY }}" ]; then
+              echo "RPC_URL=https://mainnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}" >> "$GITHUB_ENV"
+            else
+              echo "RPC_URL=https://api.mainnet-beta.solana.com" >> "$GITHUB_ENV"
+            fi
+          else
+            if [ -n "${{ secrets.HELIUS_API_KEY }}" ]; then
+              echo "RPC_URL=https://devnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}" >> "$GITHUB_ENV"
+            else
+              echo "RPC_URL=https://api.devnet.solana.com" >> "$GITHUB_ENV"
+            fi
+          fi
+
       - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
@@ -46,5 +62,4 @@ jobs:
           PROGRAM_ID: ${{ inputs.program_id }}
           TREASURY_WALLET: ${{ inputs.treasury_wallet }}
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
-          RPC_URL: ${{ inputs.network == 'mainnet-beta' && 'https://api.mainnet-beta.solana.com' || 'https://api.devnet.solana.com' }}
         run: node program/luck-game/scripts/initialize.mjs

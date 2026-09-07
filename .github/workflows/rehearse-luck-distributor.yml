@@ -44,13 +44,26 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
+      # The public devnet RPC rate-limits hard (429s) under the airdrop +
+      # multiple-transaction load a rehearsal generates — the same reason
+      # src/config.ts prefers Helius for the live site. Use it here too when
+      # the secret is set; the public endpoint is still the fallback so the
+      # workflow keeps working for anyone who has not added the secret.
+      - name: Determine the RPC endpoint
+        run: |
+          if [ -n "${{ secrets.HELIUS_API_KEY }}" ]; then
+            echo "RPC_URL=https://devnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}" >> "$GITHUB_ENV"
+          else
+            echo "RPC_URL=https://api.devnet.solana.com" >> "$GITHUB_ENV"
+          fi
+
       - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
           cat > ~/.config/solana/id.json <<'KEYFILE'
           ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
           KEYFILE
-          solana config set --url devnet --keypair ~/.config/solana/id.json
+          solana config set --url "$RPC_URL" --keypair ~/.config/solana/id.json
 
       - name: Devnet SOL
         run: |
@@ -66,7 +79,6 @@ jobs:
           PROGRAM_ID: ${{ inputs.program_id }}
           ROUND_ID: ${{ inputs.round_id }}
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
-          RPC_URL: https://api.devnet.solana.com
         run: node program/luck-distributor/scripts/rehearsal.mjs
 
   full-flow:
@@ -92,13 +104,21 @@ jobs:
           sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
 
+      - name: Determine the RPC endpoint
+        run: |
+          if [ -n "${{ secrets.HELIUS_API_KEY }}" ]; then
+            echo "RPC_URL=https://devnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}" >> "$GITHUB_ENV"
+          else
+            echo "RPC_URL=https://api.devnet.solana.com" >> "$GITHUB_ENV"
+          fi
+
       - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
           cat > ~/.config/solana/id.json <<'KEYFILE'
           ${{ secrets.LUCK_GAME_DEPLOY_KEY }}
           KEYFILE
-          solana config set --url devnet --keypair ~/.config/solana/id.json
+          solana config set --url "$RPC_URL" --keypair ~/.config/solana/id.json
 
       - name: Devnet SOL
         run: |
@@ -122,5 +142,4 @@ jobs:
           PROGRAM_ID: ${{ inputs.program_id }}
           ROUND_ID: '901'
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
-          RPC_URL: https://api.devnet.solana.com
         run: node program/luck-distributor/scripts/full-flow-rehearsal.mjs

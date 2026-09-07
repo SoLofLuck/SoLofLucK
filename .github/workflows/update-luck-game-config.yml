@@ -48,6 +48,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Determine the RPC endpoint
+        run: |
+          if [ -n "${{ secrets.HELIUS_API_KEY }}" ]; then
+            echo "RPC_URL=https://devnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}" >> "$GITHUB_ENV"
+          else
+            echo "RPC_URL=https://api.devnet.solana.com" >> "$GITHUB_ENV"
+          fi
+
       - name: Write the deploy key
         run: |
           mkdir -p ~/.config/solana
@@ -64,5 +72,4 @@ jobs:
           BIG_PRIZE_SOL: ${{ inputs.big_prize_sol }}
           VAULT_THRESHOLD_SOL: ${{ inputs.vault_threshold_sol }}
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
-          RPC_URL: https://api.devnet.solana.com
         run: node program/luck-game/scripts/update-config.mjs

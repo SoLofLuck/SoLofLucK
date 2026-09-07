@@ -77,6 +77,26 @@ jobs:
       - name: ABI and tokenomics audits
         run: npm run verify
 
+      # Prefer Helius (when the HELIUS_API_KEY secret is set) over the public
+      # RPC — the public one rate-limits hard (429s) under the burst of reads
+      # this script does. Falls back to the public endpoint so the workflow
+      # still works without the secret.
+      - name: Determine the RPC endpoint
+        run: |
+          if [ "${{ inputs.network }}" = "mainnet-beta" ]; then
+            if [ -n "${{ secrets.HELIUS_API_KEY }}" ]; then
+              echo "RPC_URL=https://mainnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}" >> "$GITHUB_ENV"
+            else
+              echo "RPC_URL=https://api.mainnet-beta.solana.com" >> "$GITHUB_ENV"
+            fi
+          else
+            if [ -n "${{ secrets.HELIUS_API_KEY }}" ]; then
+              echo "RPC_URL=https://devnet.helius-rpc.com/?api-key=${{ secrets.HELIUS_API_KEY }}" >> "$GITHUB_ENV"
+            else
+              echo "RPC_URL=https://api.devnet.solana.com" >> "$GITHUB_ENV"
+            fi
+          fi
+
       - name: Write the deploy key
         if: inputs.dry_run != true
         run: |
@@ -96,7 +116,6 @@ jobs:
           PERIOD_BPS: ${{ inputs.period_bps }}
           PERIODS: ${{ inputs.periods }}
           KEYPAIR_PATH: /home/runner/.config/solana/id.json
-          RPC_URL: ${{ inputs.network == 'mainnet-beta' && 'https://api.mainnet-beta.solana.com' || 'https://api.devnet.solana.com' }}
           DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
         run: node program/luck-distributor/scripts/initialize-round.mjs
 
