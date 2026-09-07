@@ -100,7 +100,7 @@ export const LUCK_TOKEN = {
   name: 'SoLofLuck',
   symbol: '$LUCK',
   // Enter the mint address here once the coin has been created.
-  mint: '', // e.g. 'ELuCKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+  mint: '3xLAsgzvxE4HRbtseTC6kS5rppxQ7V7R795bVf2F4FgK', // devnet — created from wallet #10
   // A total supply that fits the "777" theme.
   totalSupply: 777_000_000,
   decimals: DEFAULT_DECIMALS,
