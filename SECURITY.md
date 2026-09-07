@@ -80,6 +80,29 @@ There are two gates:
 `cargo tree --target sbf-solana-solana` cannot be used: standard `rustc` does
 not know that target (Solana ships its own `rustc` fork).
 
+### The npm side (the frontend)
+
+`npm audit` runs against the whole frontend dependency tree — mostly wallet
+adapters, token/metadata SDKs and their own transitive dependencies. As of
+this writing it reports two findings worth naming rather than leaving
+unmentioned:
+
+- **`protobufjs` (critical)** — pulled in only through the optional Trezor
+  hardware-wallet adapter (`@solana/wallet-adapter-trezor` →
+  `@trezor/connect`). Reachable only if a visitor chooses to connect a Trezor
+  device; a fixed release exists upstream but requires a breaking major-version
+  bump of the whole wallet-adapter-wallets bundle to reach it.
+- **`bigint-buffer` (high)** — a buffer-overflow advisory in the library
+  `@solana/spl-token` uses to decode mint/token-account data (reached whenever
+  the Liquidity/Lock tools read an arbitrary, user-supplied mint address). No
+  fixed version has been published upstream at all — this is a currently
+  unfixable known risk we are tracking, not one we have silently accepted
+  without looking.
+
+Two other advisories (`ws`, `toml`) were fixed with non-breaking version
+overrides in `package.json`, each verified with a full rebuild and a live
+smoke test before merging.
+
 ---
 
 ## What the chaos test guarantees
