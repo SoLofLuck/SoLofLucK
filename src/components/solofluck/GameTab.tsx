@@ -137,6 +137,16 @@ export function GameTab() {
   // part of the flow.
   const [autoResolveFailed, setAutoResolveFailed] = useState(false)
   const [purchaseNotice, setPurchaseNotice] = useState('')
+  // Auto-Spin: repeats handlePlay() on its own, once per landed round, until
+  // the player runs out of spins, an error occurs, or they press Stop. A ref
+  // mirrors the state so the SlotMachine onLanded callback (created fresh each
+  // render but invoked from a timer set up on an earlier render) always reads
+  // the latest value rather than the one captured when its timer was scheduled.
+  const [autoSpin, setAutoSpin] = useState(false)
+  const autoSpinRef = useRef(false)
+  useEffect(() => {
+    autoSpinRef.current = autoSpin
+  }, [autoSpin])
   const [convertAmount, setConvertAmount] = useState('')
 
   // Devnet-only debugging mode: it lets us complete the game with a local,
@@ -349,9 +359,21 @@ export function GameTab() {
       setError(friendlyErrorMessage(err))
       setStatus('')
       setSpinAnimating(false)
+      // Never leave Auto-Spin retrying against the same error in a loop.
+      setAutoSpin(false)
     } finally {
       setBusy(null)
     }
+  }
+
+  function handleStartAutoSpin() {
+    if (busy !== null || spinAnimating || !canPlay) return
+    setAutoSpin(true)
+    void handlePlay()
+  }
+
+  function handleStopAutoSpin() {
+    setAutoSpin(false)
   }
 
   async function handleResolve() {
@@ -782,6 +804,17 @@ export function GameTab() {
               setSpinAnimating(false)
               setRevealedResult(lastResult)
               if (lastResult?.won) refreshLeaderboard()
+              // Auto-Spin: chain into the next round once this one has fully
+              // landed on screen. `playableSpins` already reflects the refresh()
+              // that ran inside handlePlay/handleResolve well before this timer
+              // fired, so it is not stale.
+              if (autoSpinRef.current) {
+                if (playableSpins > 0) {
+                  void handlePlay()
+                } else {
+                  setAutoSpin(false)
+                }
+              }
             }}
           />
 
@@ -826,17 +859,46 @@ export function GameTab() {
               type="button"
               className="btn btn--primary btn--block luck-game__play-btn"
               onClick={handlePlay}
-              disabled={busy !== null || spinAnimating || !canPlay}
+              disabled={busy !== null || spinAnimating || !canPlay || autoSpin}
             >
-              {spinAnimating
-                ? '🎰 Reels are spinning...'
-                : !isActive
-                  ? '🔒 Connect your wallet'
-                  : playableSpins > 0
-                    ? `🎰 Spin (${playableSpins} spins left)`
-                    : needsDelegateSetup
-                      ? '🔒 Activate the game wallet (buy spins)'
-                      : '🔒 No spins left — buy a package'}
+              {autoSpin
+                ? '🎰 Auto-Spin running...'
+                : spinAnimating
+                  ? '🎰 Reels are spinning...'
+                  : !isActive
+                    ? '🔒 Connect your wallet'
+                    : playableSpins > 0
+                      ? `🎰 Spin (${playableSpins} spins left)`
+                      : needsDelegateSetup
+                        ? '🔒 Activate the game wallet (buy spins)'
+                        : '🔒 No spins left — buy a package'}
+            </button>
+          )}
+
+          {/* Auto-Spin: for a player who bought a big package (e.g. 50 spins) and
+              does not want to press Spin 50 times by hand. It just calls handlePlay
+              again every time SlotMachine's onLanded fires (see above) — same
+              15-20s-per-round pacing as a manual spin, nothing sped up. Stops on
+              its own when spins run out or a spin errors; Stop always works even
+              mid-round, it just lets the round in progress finish normally. */}
+          {!autoSpin ? (
+            playableSpins > 1 && (
+              <button
+                type="button"
+                className="btn btn--secondary btn--block luck-game__autospin-btn"
+                onClick={handleStartAutoSpin}
+                disabled={busy !== null || spinAnimating || !canPlay}
+              >
+                🔁 Auto-Spin All ({playableSpins} spins)
+              </button>
+            )
+          ) : (
+            <button
+              type="button"
+              className="btn btn--secondary btn--block luck-game__autospin-btn"
+              onClick={handleStopAutoSpin}
+            >
+              ⏹ Stop Auto-Spin ({playableSpins} left)
             </button>
           )}
 
@@ -907,7 +969,7 @@ export function GameTab() {
                   type="button"
                   className="luck-game__tariff-card"
                   onClick={() => handleBuySpins(i)}
-                  disabled={busy !== null || !paymentSigner || !gameConfig}
+                  disabled={busy !== null || !paymentSigner || !gameConfig || autoSpin}
                 >
                   <strong>{tier.count} Spins</strong>
                   <span>{fmtSol(tier.priceSol)} SOL</span>
@@ -927,13 +989,13 @@ export function GameTab() {
                   placeholder="SOL amount (e.g. 0.4)"
                   value={convertAmount}
                   onChange={(e) => setConvertAmount(e.target.value)}
-                  disabled={busy !== null}
+                  disabled={busy !== null || autoSpin}
                 />
                 <button
                   type="button"
                   className="btn btn--secondary"
                   onClick={handleConvert}
-                  disabled={busy !== null || !convertPreview || !paymentSigner || !gameConfig}
+                  disabled={busy !== null || !convertPreview || !paymentSigner || !gameConfig || autoSpin}
                 >
                   {busy === 'convert' ? 'Converting...' : 'Convert'}
                 </button>
