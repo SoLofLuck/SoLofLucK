@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { PublicKey } from '@solana/web3.js'
 import type { ApiV3PoolInfoStandardItemCpmm, CpmmKeys } from '@raydium-io/raydium-sdk-v2'
@@ -278,6 +278,14 @@ function PoolCreate({
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [result, setResult] = useState<CreatePoolResult | null>(null)
+  // A user who already created a pool for this exact pair and comes back
+  // later (a page refresh, forgetting they already did it, trying to "fix" a
+  // wrong opening price) would otherwise create a SECOND, competing pool at a
+  // different price with no warning at all — splitting liquidity for no
+  // reason. `existingPoolWarning` holds that message once found; the user
+  // must explicitly press "Create Anyway" (setting the ref below) to proceed.
+  const [existingPoolWarning, setExistingPoolWarning] = useState('')
+  const skipDuplicateCheckRef = useRef(false)
 
   useEffect(() => {
     if (!mintAAddr) {
@@ -322,6 +330,7 @@ function PoolCreate({
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     setError('')
+    setExistingPoolWarning('')
     setResult(null)
 
     if (!wallet.connected || !wallet.publicKey) {
@@ -334,7 +343,7 @@ function PoolCreate({
     }
     const amtA = Number(amountA)
     const amtB = Number(amountB)
-    if (!amountA || !amountB || amtA <= 0 || amtB <= 0) {
+    if (!amountA || !amountB || !Number.isFinite(amtA) || !Number.isFinite(amtB) || amtA <= 0 || amtB <= 0) {
       setError('Enter an initial amount greater than zero for both tokens.')
       return
     }
@@ -356,6 +365,30 @@ function PoolCreate({
       }
 
       const raydium = await loadRaydium(connection, wallet, network)
+
+      // Pool search only covers Mainnet (see the "Find Pool" tab's own
+      // network check), and an indexer hiccup here must never block a
+      // legitimate creation — so this is a best-effort warning, not a gate.
+      if (network !== 'devnet' && !skipDuplicateCheckRef.current) {
+        try {
+          setStatus('Checking whether a pool for this pair already exists...')
+          const existing = await searchPoolsByMint(raydium, mintAAddr.trim(), mintBAddr.trim())
+          if (existing.length > 0) {
+            setExistingPoolWarning(
+              `A pool already exists for this exact pair (${existing.length} found). Creating another one ` +
+                'splits liquidity across two pools at two different prices instead of adding to the existing ' +
+                'one. If you really mean to create a second pool, press "Create Anyway" below.',
+            )
+            setStatus('')
+            setLoading(false)
+            return
+          }
+        } catch {
+          // Indexer unavailable — proceed rather than block on it.
+        }
+      }
+      skipDuplicateCheckRef.current = false
+
       const res = await createCpmmPool(raydium, network, mintA, mintB, amountA, amountB, setStatus)
       setResult(res)
       setStatus('')
@@ -366,6 +399,12 @@ function PoolCreate({
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleCreateAnyway() {
+    skipDuplicateCheckRef.current = true
+    setExistingPoolWarning('')
+    void handleCreate({ preventDefault() {} } as FormEvent)
   }
 
   if (result) {
@@ -488,6 +527,16 @@ function PoolCreate({
 
       {error && <div className="alert alert--error">{error}</div>}
       {status && !error && <div className="alert alert--info">{status}</div>}
+      {existingPoolWarning && (
+        <div className="alert alert--warning">
+          {existingPoolWarning}
+          <div style={{ marginTop: 10 }}>
+            <button type="button" className="btn btn--secondary" onClick={handleCreateAnyway} disabled={loading}>
+              Create Anyway
+            </button>
+          </div>
+        </div>
+      )}
 
       <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
         {loading ? 'Creating...' : wallet.connected ? 'Create Pool' : 'Connect A Wallet First'}
