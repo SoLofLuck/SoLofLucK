@@ -317,12 +317,16 @@ write access to the repository, a private key, or access to the deploy wallet.
 ## If you want to verify it yourself
 
 ```bash
-# All the tests
-cd program/luck-game        && cargo test
-cd program/luck-distributor && cargo test
+# All the tests. --features integration-test is required: it is the ONLY
+# thing that lets the test harness's random Keypair stand in for the real
+# deploy wallet on initialize() — see DEPLOY_AUTHORITY in each program's
+# lib.rs. The feature is never enabled by anchor build / cargo build-sbf, so
+# the deployed program always enforces the real check.
+cd program/luck-game        && cargo test --features integration-test
+cd program/luck-distributor && cargo test --features integration-test
 
 # The chaos test with detailed output
-cd program/luck-game && cargo test chaos -- --nocapture
+cd program/luck-game && cargo test --features integration-test chaos -- --nocapture
 
 # The ABI, tokenomics, tx-path and error-code checks
 npm run verify

@@ -14,6 +14,19 @@ use anchor_lang::system_program::{self, Transfer as SolTransfer};
 // when the workflow was rewritten the cache steps were removed entirely.
 declare_id!("37Hxwu9LYYyEBiB4peAaJVm1mD5gk7CKmeXiobDuv2iu");
 
+// The only wallet allowed to call initialize(). Without this check ANYONE
+// could call it first — `config` is a global singleton PDA created with
+// `init`, and there is no other admin gate on top of it — permanently
+// becoming `config.authority` and taking over every prize/fee/treasury
+// parameter through update_config(), with no way back (init cannot be
+// re-run, and there is no "reset admin" instruction).
+//
+// Update this constant to match the deploy wallet whenever it changes (see
+// TGE-RUNBOOK.md's declare_id!()/Program ID update step) — it must be the
+// same wallet as the LUCK_GAME_DEPLOY_KEY GitHub secret that actually signs
+// the initialize() transaction in .github/workflows/init-luck-game.yml.
+const DEPLOY_AUTHORITY: Pubkey = pubkey!("CKNm1zFB7w77CJZcXT9MwNu9qd6AvbvsKWYyqEx9nbdL");
+
 const CONFIG_SEED: &[u8] = b"config";
 const VAULT_SEED: &[u8] = b"vault";
 const PLAYER_SEED: &[u8] = b"player";
@@ -1006,7 +1019,18 @@ impl PlayerState {
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(mut)]
+    // `cfg!(feature = "integration-test")` short-circuits this check off ONLY
+    // in the local solana-program-test harness (tests/common/mod.rs uses a
+    // fresh, random Keypair as authority on every run — it has no way to sign
+    // as the real deploy wallet). The feature is off by default and never
+    // enabled by `anchor build`/`cargo build-sbf`, so the deployed program
+    // always enforces the real check; `cargo test` only passes with
+    // `--features integration-test` (see SECURITY.md).
+    #[account(
+        mut,
+        constraint = (cfg!(feature = "integration-test") || authority.key() == DEPLOY_AUTHORITY)
+            @ GameError::NotDeployAuthority,
+    )]
     pub authority: Signer<'info>,
 
     #[account(
@@ -1265,4 +1289,6 @@ pub enum GameError {
     InvalidSlotHashesAccount,
     #[msg("The target slot hash was not found in the SlotHashes sysvar.")]
     SlotHashNotFound,
+    #[msg("Only the deploy wallet may call initialize().")]
+    NotDeployAuthority,
 }

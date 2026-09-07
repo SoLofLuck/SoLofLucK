@@ -38,6 +38,19 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 // so a valid but unused address sits here instead.
 declare_id!("8hUZNdjHPR6jtKMwH2U28pHeNZfEgKdJ7x4CDsjuBzwJ");
 
+// The only wallet allowed to call initialize() (open a round). Without this
+// check anyone could open a round FIRST at a given (mint, id) pair — the
+// `distributor` PDA is `init`-only, so a pre-emptive call with a garbage
+// merkle root permanently blocks the real round from ever being created at
+// that id, forcing the team to switch ids and reissue every published proof.
+//
+// Update this constant to match the deploy wallet whenever it changes (see
+// TGE-RUNBOOK.md's declare_id!()/Program ID update step) — it must be the
+// same wallet as the LUCK_GAME_DEPLOY_KEY GitHub secret that actually signs
+// initialize-round.mjs in .github/workflows/init-luck-distributor.yml and
+// run-raffle-round.yml.
+const DEPLOY_AUTHORITY: Pubkey = pubkey!("CKNm1zFB7w77CJZcXT9MwNu9qd6AvbvsKWYyqEx9nbdL");
+
 const DISTRIBUTOR_SEED: &[u8] = b"distributor";
 const VAULT_SEED: &[u8] = b"vault";
 const CLAIM_SEED: &[u8] = b"claim";
@@ -313,7 +326,18 @@ pub fn verify_proof(proof: &[[u8; 32]], root: [u8; 32], leaf: [u8; 32]) -> bool 
 #[derive(Accounts)]
 #[instruction(id: u64)]
 pub struct Initialize<'info> {
-    #[account(mut)]
+    // `cfg!(feature = "integration-test")` short-circuits this check off ONLY
+    // in the local solana-program-test harness (tests/common/mod.rs uses a
+    // fresh, random Keypair as authority on every run — it has no way to sign
+    // as the real deploy wallet). The feature is off by default and never
+    // enabled by `anchor build`/`cargo build-sbf`, so the deployed program
+    // always enforces the real check; `cargo test` only passes with
+    // `--features integration-test` (see SECURITY.md).
+    #[account(
+        mut,
+        constraint = (cfg!(feature = "integration-test") || authority.key() == DEPLOY_AUTHORITY)
+            @ DistributorError::NotDeployAuthority,
+    )]
     pub authority: Signer<'info>,
 
     pub mint: Account<'info, Mint>,
@@ -472,10 +496,12 @@ pub enum DistributorError {
     InvalidProof,
     #[msg("There is nothing new to claim right now.")]
     NothingToClaim,
-    #[msg("Kasada yeterli token yok.")]
+    #[msg("Insufficient vault balance.")]
     InsufficientVaultBalance,
     #[msg("No more than the total allocated to the round may be distributed.")]
     ExceedsAllocation,
     #[msg("Numeric overflow.")]
     MathOverflow,
+    #[msg("Only the deploy wallet may call initialize().")]
+    NotDeployAuthority,
 }

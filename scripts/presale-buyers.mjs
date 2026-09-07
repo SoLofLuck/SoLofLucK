@@ -284,20 +284,19 @@ let processed = 0
 // transactions.
 let scannedNet = 0
 
-for (let i = 0; i < candidates.length; i += 100) {
-  const batch = candidates.slice(i, i + 100)
-  const txs = await withRetry(
-    () =>
-      connection.getParsedTransactions(
-        batch.map((s) => s.signature),
-        { maxSupportedTransactionVersion: 0 },
-      ),
-    'getParsedTransactions',
-  )
-
-  for (let j = 0; j < txs.length; j++) {
-    const tx = txs[j]
-    const sig = batch[j].signature
+// One call per signature, not a JSON-RPC batch: Helius's free plan (and
+// several other providers) reject batch requests outright ("Batch requests
+// are only available for paid plans"), which made this fail 403 the moment
+// HELIUS_API_KEY replaced the public RPC. Slower, but it works everywhere —
+// and withRetry still backs off per call if a provider rate-limits instead.
+for (let i = 0; i < candidates.length; i++) {
+  const candidate = candidates[i]
+  {
+    const tx = await withRetry(
+      () => connection.getParsedTransaction(candidate.signature, { maxSupportedTransactionVersion: 0 }),
+      'getParsedTransaction',
+    )
+    const sig = candidate.signature
     if (!tx || tx.meta?.err) continue
 
     // THE COMPLETENESS COUNTER — BEFORE the time-window filter, because the
@@ -340,7 +339,9 @@ for (let i = 0; i < candidates.length; i += 100) {
     buyers.set(sender, entry)
     processed += 1
   }
-  process.stderr.write(`  ${Math.min(i + 100, candidates.length)}/${candidates.length}\n`)
+  if ((i + 1) % 20 === 0 || i + 1 === candidates.length) {
+    process.stderr.write(`  ${i + 1}/${candidates.length}\n`)
+  }
 }
 
 // --- 2b) THE COMPLETENESS GATE ---------------------------------------------

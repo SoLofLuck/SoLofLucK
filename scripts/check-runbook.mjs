@@ -70,8 +70,11 @@ for (const path of paths) {
     }
   }
   const allTests = testSources.join('\n')
+  // Tolerates an optional `--features <name> ` in between (see
+  // integration-test in both programs' Cargo.toml) — the filter itself is
+  // still the last word, right before an optional `--`.
   const filters = new Set(
-    [...runbook.matchAll(/cargo test ([a-z0-9_]+)/g)].map((m) => m[1]),
+    [...runbook.matchAll(/cargo test (?:--features [a-z0-9_-]+ )?([a-z0-9_]+)/g)].map((m) => m[1]),
   )
   for (const filter of filters) {
     // cargo's filter is a substring match on the test path, which is exactly

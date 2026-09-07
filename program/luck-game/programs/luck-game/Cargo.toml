@@ -21,6 +21,12 @@ no-log-ix-name = []
 cpi = ["no-entrypoint"]
 idl-build = ["anchor-lang/idl-build"]
 default = []
+# Bypasses the DEPLOY_AUTHORITY check on initialize() — ONLY for the local
+# solana-program-test harness under tests/, which signs with a fresh random
+# Keypair it cannot make match the real deploy wallet. Never enabled by
+# anchor build / cargo build-sbf, so the deployed program is unaffected; run
+# tests with `cargo test --features integration-test <filter>`.
+integration-test = []
 
 [dependencies]
 # NOTE: as in sell-lock/locked-pool, these version numbers could not be built

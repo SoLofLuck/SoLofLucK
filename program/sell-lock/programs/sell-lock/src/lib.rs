@@ -95,6 +95,26 @@ pub mod sell_lock {
             SellLockError::InvalidDuration
         );
 
+        // Only the mint's own mint authority may register its launch lock.
+        // Without this check ANYONE could call register_launch() first —
+        // `launch_config` is `init`-only per mint, so a pre-emptive call
+        // (with the real pool's vault addresses, to shorten the lock to the
+        // minimum 15 minutes; or with throwaway accounts of the right mint,
+        // to disable the lock entirely since `fallback` would then never
+        // match the real pool's vaults) permanently neuters the anti-snipe
+        // protection for that mint — the PDA can never be re-initialized.
+        // Tying it to mint authority rather than a hardcoded wallet keeps
+        // this correct for whichever token creates a pool, without risking a
+        // wrong hardcoded address locking legitimate use out forever.
+        match ctx.accounts.mint.mint_authority {
+            anchor_lang::solana_program::program_option::COption::Some(authority) => {
+                require_keys_eq!(authority, ctx.accounts.signer.key(), SellLockError::NotMintAuthority);
+            }
+            anchor_lang::solana_program::program_option::COption::None => {
+                return err!(SellLockError::NoMintAuthority);
+            }
+        }
+
         // Verify that the vaults really belong to this mint and to the
         // Token-2022/Token program — this stops a fake or random "vault" address
         // being passed in and leaving the lock blocking nothing at all.
@@ -251,4 +271,8 @@ pub enum SellLockError {
     ExtraAccountMetaError,
     #[msg("Invalid transfer hook instruction.")]
     InvalidInstruction,
+    #[msg("Only this mint's mint authority may register its launch lock.")]
+    NotMintAuthority,
+    #[msg("This mint has no mint authority (it was revoked) — its launch lock can no longer be registered.")]
+    NoMintAuthority,
 }
