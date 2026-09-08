@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'r
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { createToken, type TokenFormData, type CreateTokenResult } from '../lib/createToken'
 import { uploadLogoAndMetadata } from '../lib/irys'
-import { resizeImageFile } from '../lib/image'
 import { DEFAULT_DECIMALS, FEE_WALLET, FEE_AMOUNT_SOL, type NetworkId } from '../config'
 import { ResultCard } from './ResultCard'
+import { LogoCropModal } from './LogoCropModal'
 
 // The upper bound on the raw (unprocessed) size of the chosen file — the file
 // actually uploaded will be far smaller than this, because it is automatically
@@ -45,6 +45,7 @@ export function TokenForm({ network }: Props) {
 
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string>('')
+  const [cropFile, setCropFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -61,7 +62,7 @@ export function TokenForm({ network }: Props) {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
-  async function handleLogoChange(e: ChangeEvent<HTMLInputElement>) {
+  function handleLogoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) {
@@ -73,33 +74,24 @@ export function TokenForm({ network }: Props) {
       return
     }
     setError('')
-    setStatus('Preparing the logo (scaling it down)...')
-    try {
-      // To make the upload faster and more reliable we scale the image down to
-      // a small logo size and recompress it — the original photo's size never
-      // goes to the network.
-      const resized = await resizeImageFile(file)
-      setLogoFile(resized)
-    } catch (err) {
-      console.error('Logo scaling error:', err)
-      // There used to be a fallback path here: if the processing failed but
-      // the file was small, the ORIGINAL file was accepted as-is. But if the
-      // processing failed it means the browser cannot decode that image in
-      // the first place — the result was a broken preview and an "the image
-      // could not be uploaded" error when creating the token. We do not
-      // accept a file we cannot verify: either the selection works and the
-      // preview appears, or we give a clear error.
-      setLogoFile(null)
-      if (fileInputRef.current) fileInputRef.current.value = ''
-      const isHeic = /heic|heif/i.test(file.type) || /\.(heic|heif)$/i.test(file.name)
-      setError(
-        isHeic
-          ? 'This image is in HEIC/HEIF format, which browsers cannot open. Convert it from your phone\'s gallery with "share/save as JPG" and try again.'
-          : 'The image could not be opened. Try a screenshot or a plain PNG/JPG file; you can also leave the logo empty and still create the token.',
-      )
-    } finally {
-      setStatus('')
-    }
+    // The actual scaling/compression now happens once the user confirms a
+    // crop (see handleCropConfirm) — this only opens the crop tool. Yesterday's
+    // "I uploaded a photo but it wasn't added" complaint traced back to a
+    // silently-swallowed upload failure further down the flow (see
+    // handleSubmit's logoWarning path); making the user actively pick and
+    // confirm a square region here, rather than auto-guessing one, is the fix
+    // this ticket asked for.
+    setCropFile(file)
+  }
+
+  function handleCropCancel() {
+    setCropFile(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  function handleCropConfirm(cropped: File) {
+    setLogoFile(cropped)
+    setCropFile(null)
   }
 
   function validate(): string | null {
@@ -263,7 +255,7 @@ export function TokenForm({ network }: Props) {
             <div className="logo-upload__placeholder">🖼️</div>
           )}
           <div className="logo-upload__text">
-            {logoFile ? logoFile.name : 'Click to choose an image (any size — it is scaled down automatically)'}
+            {logoFile ? 'Click to choose a different image' : 'Click to choose an image — you crop it to a square next'}
           </div>
         </div>
         <input
@@ -275,11 +267,16 @@ export function TokenForm({ network }: Props) {
         />
 
         <small>
-          The image you choose is written permanently to the network for a small fee you approve in
-          your wallet alongside the token creation — no need to sign up to a third-party site. If you
-          leave it empty the token is still created fine, just without a logo.
+          You crop it to a square right after choosing it, so the logo always comes out the right shape.
+          It is then written permanently to the network for a small fee you approve in your wallet
+          alongside the token creation — no need to sign up to a third-party site. If you leave it empty
+          the token is still created fine, just without a logo.
         </small>
       </div>
+
+      {cropFile && (
+        <LogoCropModal file={cropFile} onCancel={handleCropCancel} onConfirm={handleCropConfirm} />
+      )}
 
       <div className="form-grid">
         <label className="field">

@@ -26,6 +26,9 @@ interface DecodedImage {
   width: number
   height: number
   drawTo: (ctx: CanvasRenderingContext2D, width: number, height: number) => void
+  // Draws only the (sx, sy, sSize x sSize) natural-pixel square region,
+  // scaled to fill a dSize x dSize destination — the crop tool's draw path.
+  drawCropTo: (ctx: CanvasRenderingContext2D, sx: number, sy: number, sSize: number, dSize: number) => void
   release: () => void
 }
 
@@ -38,6 +41,8 @@ async function decodeWithImageBitmap(blob: Blob): Promise<DecodedImage> {
     width: bitmap.width,
     height: bitmap.height,
     drawTo: (ctx, width, height) => ctx.drawImage(bitmap, 0, 0, width, height),
+    drawCropTo: (ctx, sx, sy, sSize, dSize) =>
+      ctx.drawImage(bitmap, sx, sy, sSize, sSize, 0, 0, dSize, dSize),
     release: () => bitmap.close(),
   }
 }
@@ -70,6 +75,7 @@ async function decodeWithImgElement(blob: Blob): Promise<DecodedImage> {
       width,
       height,
       drawTo: (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h),
+      drawCropTo: (ctx, sx, sy, sSize, dSize) => ctx.drawImage(img, sx, sy, sSize, sSize, 0, 0, dSize, dSize),
       // We revoke the URL AFTER the drawing is done: revoking early leaves
       // drawImage silently blank in some browsers.
       release: () => URL.revokeObjectURL(url),
@@ -104,17 +110,23 @@ async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality
   return new Blob([bytes], { type: mimeType })
 }
 
-export async function resizeImageFile(file: File): Promise<File> {
-  // Read the bytes into memory immediately. On Android a File object coming
-  // from the gallery points at a content:// URI, and that URI can become
-  // unreadable shortly afterwards — at which point both the preview broke and
-  // the upload failed. Taking the buffer early ends that whole class of bug.
+// Reads a File's bytes into memory immediately (see the Android content://
+// note above), independent of what happens to it afterwards.
+async function readAsStableBlob(file: File): Promise<Blob> {
   const buffer = await file.arrayBuffer()
   if (buffer.byteLength === 0) {
     throw new Error('The selected file could not be read (it came back empty).')
   }
-  const sourceBlob = new Blob([buffer], { type: file.type || 'image/jpeg' })
+  return new Blob([buffer], { type: file.type || 'image/jpeg' })
+}
 
+function canvasBlobToFile(blob: Blob, file: File, keepPng: boolean): File {
+  const baseName = file.name.replace(/\.[^./]+$/, '') || 'logo'
+  return new File([blob], `${baseName}.${keepPng ? 'png' : 'jpg'}`, { type: blob.type })
+}
+
+export async function resizeImageFile(file: File): Promise<File> {
+  const sourceBlob = await readAsStableBlob(file)
   const decoded = await decodeImage(sourceBlob)
   try {
     const scale = Math.min(1, MAX_DIMENSION / Math.max(decoded.width, decoded.height))
@@ -136,8 +148,64 @@ export async function resizeImageFile(file: File): Promise<File> {
     const blob = await canvasToBlob(canvas, mimeType, keepPng ? undefined : JPEG_QUALITY)
     if (blob.size === 0) throw new Error('The image could not be compressed.')
 
-    const baseName = file.name.replace(/\.[^./]+$/, '') || 'logo'
-    return new File([blob], `${baseName}.${keepPng ? 'png' : 'jpg'}`, { type: mimeType })
+    return canvasBlobToFile(blob, file, keepPng)
+  } finally {
+    decoded.release()
+  }
+}
+
+// The fixed output size for a cropped logo. Square, and generous enough for
+// how a logo actually gets shown (explorer pages, this site's own coin
+// picker, wallet lists) without producing a needlessly large upload — a
+// token logo is decoration, not a photograph.
+export const LOGO_OUTPUT_SIZE = 512
+
+/** Reads just the natural width/height of an image file, for the crop tool to
+ *  size its viewport before the user starts dragging anything. Cheap: it
+ *  decodes the image once and immediately releases it without drawing. */
+export async function readImageNaturalSize(file: File): Promise<{ width: number; height: number }> {
+  const sourceBlob = await readAsStableBlob(file)
+  const decoded = await decodeImage(sourceBlob)
+  const size = { width: decoded.width, height: decoded.height }
+  decoded.release()
+  return size
+}
+
+/**
+ * Crops a file down to a single square region and resizes that region to
+ * LOGO_OUTPUT_SIZE x LOGO_OUTPUT_SIZE — the crop tool's actual output step.
+ * `region` is in the image's own natural pixels (not the crop UI's on-screen
+ * pixels): `x`/`y` is the square's top-left corner, `size` is its side length.
+ * Goes through the exact same decode path as resizeImageFile (ImageBitmap
+ * first, <img> fallback), so it inherits the same mobile-format robustness.
+ */
+export async function cropImageFile(
+  file: File,
+  region: { x: number; y: number; size: number },
+): Promise<File> {
+  const sourceBlob = await readAsStableBlob(file)
+  const decoded = await decodeImage(sourceBlob)
+  try {
+    // Clamp defensively — the crop UI keeps the region inside the image by
+    // construction, but a stale/rounded value should never be able to ask the
+    // canvas to read outside the source and throw an IndexSizeError.
+    const size = Math.max(1, Math.min(region.size, decoded.width, decoded.height))
+    const x = Math.max(0, Math.min(region.x, decoded.width - size))
+    const y = Math.max(0, Math.min(region.y, decoded.height - size))
+
+    const canvas = document.createElement('canvas')
+    canvas.width = LOGO_OUTPUT_SIZE
+    canvas.height = LOGO_OUTPUT_SIZE
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('Your browser does not support image processing.')
+    decoded.drawCropTo(ctx, x, y, size, LOGO_OUTPUT_SIZE)
+
+    const keepPng = file.type === 'image/png'
+    const mimeType = keepPng ? 'image/png' : 'image/jpeg'
+    const blob = await canvasToBlob(canvas, mimeType, keepPng ? undefined : JPEG_QUALITY)
+    if (blob.size === 0) throw new Error('The image could not be compressed.')
+
+    return canvasBlobToFile(blob, file, keepPng)
   } finally {
     decoded.release()
   }

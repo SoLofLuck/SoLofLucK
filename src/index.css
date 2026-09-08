@@ -906,6 +906,50 @@ button {
   gap: 10px;
 }
 
+.logo-crop__modal {
+  max-width: 380px;
+}
+
+.logo-crop__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.logo-crop__viewport {
+  position: relative;
+  overflow: hidden;
+  border-radius: 50%;
+  border: 2px solid var(--panel-border);
+  background: var(--bg-elevated);
+  touch-action: none;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.logo-crop__viewport:active {
+  cursor: grabbing;
+}
+
+.logo-crop__zoom {
+  width: 100%;
+}
+
+.logo-crop__zoom input[type='range'] {
+  width: 100%;
+}
+
+.logo-crop__actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.logo-crop__actions .btn {
+  flex: 1;
+}
+
 .coin-picker-field {
   margin-bottom: 12px;
 }
