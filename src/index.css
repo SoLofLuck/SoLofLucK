@@ -3158,3 +3158,35 @@ button {
   line-height: 1.6;
   color: var(--text-muted);
 }
+
+.raffle-operator__pat-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 1rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.raffle-operator__round {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.raffle-operator__round-summary {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.raffle-operator__run-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

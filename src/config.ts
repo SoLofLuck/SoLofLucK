@@ -100,7 +100,8 @@ export const LUCK_TOKEN = {
   name: 'SoLofLuck',
   symbol: '$LUCK',
   // Enter the mint address here once the coin has been created.
-  mint: '3xLAsgzvxE4HRbtseTC6kS5rppxQ7V7R795bVf2F4FgK', // devnet — created from wallet #10
+  mint: '3xLAsgzvxE4HRbtseTC6kS5rppxQ7V7R795bVf2F4FgK', // devnet test mint. The real mint will be created from the
+  // token-pool wallet (7iMBjeEbaHz2UEbP1FXceMx8tQ7FKFwEHkoCKaVX1RJK) at mainnet launch.
   // A total supply that fits the "777" theme.
   totalSupply: 777_000_000,
   decimals: DEFAULT_DECIMALS,
@@ -509,3 +510,32 @@ export const GAME_CONFIG = {
   // ~0.000013 SOL, so this threshold means "roughly 3-4 spins of gas left".
   delegateLowBalanceSol: 0.00005,
 }
+
+// ---------------------------------------------------------------------------
+// Raffle Operator page — wallet-gated, one-click weekly raffle trigger
+// ---------------------------------------------------------------------------
+// A hidden tab, only usable when the connected wallet matches OPERATOR_WALLET
+// (wallet #11, the raffle-approval wallet). Its job is to remove Claude/any single person
+// from the critical path of running the 14 weekly raffle rounds: it writes
+// that round's 3 Twitter-drawn winner addresses into data/twitter-winners.json
+// via the GitHub Contents API, then dispatches run-raffle-round.yml via the
+// GitHub Actions API — both calls made straight from the browser with a
+// GitHub Personal Access Token the operator pastes in once and that is kept
+// ONLY in that browser's localStorage (see src/lib/raffleOperator.ts). It is
+// NEVER bundled into the site's source and never leaves the browser except to
+// call api.github.com directly.
+//
+// IMPORTANT — this wallet check is a UX filter, not real security: the site is
+// static and fully client-side, so anyone can read this address (and the tab's
+// code) from the deployed bundle. The REAL access control is the PAT: without
+// a fine-grained token scoped to THIS repo with only Contents+Actions write,
+// nothing here can actually change or trigger anything. See SECURITY.md.
+export const OPERATOR_WALLET = '6ARHnqBpyxk2BA4FE8rNiSUZ5s4Gb7jBU3ucx8qGnxcP'
+
+export const GITHUB_REPO = {
+  owner: 'SoLofLuck',
+  repo: 'SoLofLuck',
+  branch: 'main',
+  twitterWinnersPath: 'data/twitter-winners.json',
+  raffleWorkflowFile: 'run-raffle-round.yml',
+} as const

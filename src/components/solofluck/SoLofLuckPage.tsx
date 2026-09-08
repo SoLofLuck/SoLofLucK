@@ -14,7 +14,7 @@ type SubTab = 'about' | 'tokenomics' | 'value' | 'presale' | 'claim' | 'game'
 // The same routing definition as in App.tsx. The two must not drift apart;
 // check-abi verifies that.
 const ROUTES = {
-  pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
+  pages: ['create', 'liquidity', 'privacy', 'solofluck', 'raffle-operator'] as const,
   defaultPage: 'create' as const,
   subTabs: ['about', 'tokenomics', 'value', 'presale', 'claim', 'game'] as const,
   defaultSubTab: 'about' as const,

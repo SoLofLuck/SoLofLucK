@@ -258,7 +258,7 @@ guarantee, at the price of an external dependency and additional cost.
 
 ## Points of centralisation — these do require trusting us
 
-To be honest, there are three.
+To be honest, there are four.
 
 ### 1. `update_config` — the game parameters
 
@@ -317,6 +317,33 @@ while.
 On every deploy the on-chain bytecode's sha256 is compared against the build's
 and written to the log, so the question "did the on-chain program come from this
 source?" can be answered.
+
+### 4. The Raffle Operator page
+
+The weekly raffle round is deliberately not automatic (see "no backend, no
+single point of failure" above) — a human has to trigger `run-raffle-round.yml`
+each week. The site has a hidden `#raffle-operator` page
+(`src/components/RaffleOperatorPage.tsx`) that does this with one click instead
+of five manual commands.
+
+**The wallet check that gates this page's UI is cosmetic, not real security.**
+The site is fully static and client-side; the operator wallet address
+(`OPERATOR_WALLET` in `src/config.ts`) and the page's code are both visible to
+anyone who opens the deployed bundle. Nothing stops someone from copying the
+page's logic and running it against a wallet of their own choosing.
+
+**The real access control is a GitHub Personal Access Token**, entered once by
+the operator and kept only in that browser's `localStorage` — never bundled
+into the site's source, never sent anywhere but `api.github.com`. It should be
+a **fine-grained** token, scoped to only the `SoLofLuck/SoLofLuck` repository,
+with only `Contents: Read and write` and `Actions: Read and write` permissions.
+With that scope, even a stolen token cannot touch funds, the deploy wallet, or
+any other repository: the worst it can do is dispatch a fake/duplicate raffle
+run or tamper with `data/twitter-winners.json` for one round — both of which a
+`dry_run` rehearsal, reviewed before the real (`dry_run=false`) run, is
+designed to catch. The deploy key that actually moves funds
+(`LUCK_GAME_DEPLOY_KEY`) never leaves GitHub Secrets and is never reachable
+from this page.
 
 ---
 

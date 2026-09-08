@@ -27,12 +27,20 @@ const SoLofLuckPage = lazy(() =>
   import('./components/solofluck/SoLofLuckPage').then((m) => ({ default: m.SoLofLuckPage })),
 )
 
-type Page = 'create' | 'liquidity' | 'privacy' | 'solofluck'
+// The Raffle Operator page is reachable only via its own hash route
+// (#/raffle-operator), never through the visible tab bar — it is not meant to
+// be discovered by casual visitors, only used by the one wallet it is gated
+// to (see src/components/RaffleOperatorPage.tsx and OPERATOR_WALLET).
+const RaffleOperatorPage = lazy(() =>
+  import('./components/RaffleOperatorPage').then((m) => ({ default: m.RaffleOperatorPage })),
+)
+
+type Page = 'create' | 'liquidity' | 'privacy' | 'solofluck' | 'raffle-operator'
 
 // Tab routing in the address bar. An unknown hash falls back to the default:
 // whatever the user types, the site must still open.
 const ROUTES = {
-  pages: ['create', 'liquidity', 'privacy', 'solofluck'] as const,
+  pages: ['create', 'liquidity', 'privacy', 'solofluck', 'raffle-operator'] as const,
   defaultPage: 'create' as const,
   subTabs: ['about', 'tokenomics', 'value', 'presale', 'claim', 'game'] as const,
   defaultSubTab: 'about' as const,
@@ -129,8 +137,13 @@ function App() {
               <SoLofLuckPage network={network} />
             </Suspense>
           )}
+          {page === 'raffle-operator' && (
+            <Suspense fallback={<div className="alert alert--info">Loading...</div>}>
+              <RaffleOperatorPage />
+            </Suspense>
+          )}
         </main>
-        {page !== 'solofluck' && <Footer />}
+        {page !== 'solofluck' && page !== 'raffle-operator' && <Footer />}
       </div>
     </WalletContextProvider>
   )
