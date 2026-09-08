@@ -37,6 +37,14 @@ export function ResultCard({ result, network = 'devnet', onReset }: Props) {
         </div>
       )}
 
+      {result.sellLockEnabled && (
+        <div className="alert alert--info">
+          🛡️ Anti-Snipe Sell Lock is ready (Token-2022 Transfer Hook). It does nothing yet — once you
+          create a liquidity pool for this mint, go to the Liquidity Pool tab right after and lock
+          selling into that pool for your chosen window before announcing it publicly.
+        </div>
+      )}
+
       <div className="result-card__links">
         <a
           className="btn btn--secondary"

@@ -17,6 +17,7 @@ import {
   getMintLen,
   getMinimumBalanceForRentExemptMint,
   createInitializeMintInstruction,
+  createInitializeTransferHookInstruction,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
@@ -32,6 +33,7 @@ import {
 import { FEE_WALLET, FEE_AMOUNT_SOL } from '../config'
 import { sendInstructions } from './sendTx'
 import { buildInitializeConfidentialTransferMintIx } from './confidentialTransfer'
+import { SELL_LOCK_PROGRAM_ID, buildInitializeExtraAccountMetaListIx } from './sellLock'
 
 export interface TokenFormData {
   name: string
@@ -50,6 +52,15 @@ export interface TokenFormData {
   // extension (see src/lib/confidentialTransfer.ts) — the transfer amount is
   // kept encrypted on chain. 0 = an ordinary SPL Token.
   confidentialTransferEnabled: boolean
+  // When true the mint is created with Token-2022 + a Transfer Hook bound to
+  // this site's own sell-lock program (see src/lib/sellLock.ts,
+  // program/sell-lock) — after a liquidity pool exists for this mint, its
+  // creator can register an anti-snipe lock that rejects sales into the
+  // pool's vaults for a chosen window. Mutually exclusive with confidential
+  // transfer in the UI: combining a transfer hook with confidential amounts
+  // is an unusual, effectively untested combination on Token-2022 and this
+  // form does not attempt it.
+  sellLockEnabled: boolean
 }
 
 export interface CreateTokenResult {
@@ -57,6 +68,7 @@ export interface CreateTokenResult {
   signature: string
   tokenAccount: string
   confidentialTransferEnabled: boolean
+  sellLockEnabled: boolean
 }
 
 function findMetadataPda(mint: PublicKey): PublicKey {
@@ -89,17 +101,25 @@ export async function createToken(
   const decimals = data.decimals
   const supplyRaw = BigInt(data.supply) * BigInt(10) ** BigInt(decimals)
 
-  // If Confidential Transfer was chosen the mint is created with Token-2022 plus
-  // that extension (see src/lib/confidentialTransfer.ts); otherwise the ordinary
-  // (legacy) SPL Token program is used.
+  // If Confidential Transfer or the sell-lock anti-snipe hook was chosen the
+  // mint is created with Token-2022 plus that extension (see
+  // src/lib/confidentialTransfer.ts / src/lib/sellLock.ts); otherwise the
+  // ordinary (legacy) SPL Token program is used. The form keeps the two
+  // mutually exclusive (see TokenFormData.sellLockEnabled), so at most one of
+  // these is ever true.
   const confidentialTransferEnabled = data.confidentialTransferEnabled
-  const tokenProgramId = confidentialTransferEnabled ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
+  const sellLockEnabled = data.sellLockEnabled
+  const tokenProgramId =
+    confidentialTransferEnabled || sellLockEnabled ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
 
   onStatus?.('Calculating the rent...')
   let mintSpace: number
   let rentLamports: number
   if (confidentialTransferEnabled) {
     mintSpace = getMintLen([ExtensionType.ConfidentialTransferMint])
+    rentLamports = await connection.getMinimumBalanceForRentExemption(mintSpace)
+  } else if (sellLockEnabled) {
+    mintSpace = getMintLen([ExtensionType.TransferHook])
     rentLamports = await connection.getMinimumBalanceForRentExemption(mintSpace)
   } else {
     mintSpace = MINT_SIZE
@@ -128,13 +148,26 @@ export async function createToken(
     }),
   )
 
-  // The Confidential Transfer extension must be set BEFORE the mint itself is
-  // initialized (a Token-2022 extension rule).
+  // The Confidential Transfer / Transfer Hook extension must be set BEFORE the
+  // mint itself is initialized (a Token-2022 extension rule).
   if (confidentialTransferEnabled) {
     tx.add(buildInitializeConfidentialTransferMintIx(mint, payer))
   }
+  if (sellLockEnabled) {
+    tx.add(createInitializeTransferHookInstruction(mint, payer, SELL_LOCK_PROGRAM_ID, tokenProgramId))
+  }
 
   tx.add(createInitializeMintInstruction(mint, decimals, payer, payer, tokenProgramId))
+
+  // The sell-lock program's "extra account meta list" — the account that
+  // tells Token-2022 which extra accounts (our LaunchConfig PDA) to resolve
+  // and pass into the hook on every transfer. Without this the hook is never
+  // actually invoked (see program/sell-lock's own comments), so it has to be
+  // created now, in the same transaction as the mint itself — there is no
+  // separate "finish setting up the hook" step later in this app.
+  if (sellLockEnabled) {
+    tx.add(buildInitializeExtraAccountMetaListIx(payer, mint))
+  }
 
   // 2) Create the associated token account (ATA) for the wallet
   tx.add(
@@ -155,12 +188,13 @@ export async function createToken(
   //    name, symbol, logo and description)
   //
   // For Token-2022 mints — especially those with "restrictive" extensions such as
-  // Confidential Transfer — the old CreateMetadataAccountV3 instruction assumes
-  // the mint is a "Programmable NFT" and rejects it (error 0x99). Instead we use
-  // the newer, unified "Create" instruction, where we can name the token program
-  // explicitly and mark the token standard as "Fungible" — that works correctly
-  // with both legacy SPL Token and Token-2022 mints.
-  if (confidentialTransferEnabled) {
+  // Confidential Transfer or a Transfer Hook — the old CreateMetadataAccountV3
+  // instruction assumes the mint is a "Programmable NFT" and rejects it (error
+  // 0x99). Instead we use the newer, unified "Create" instruction, where we can
+  // name the token program explicitly and mark the token standard as
+  // "Fungible" — that works correctly with both legacy SPL Token and Token-2022
+  // mints.
+  if (confidentialTransferEnabled || sellLockEnabled) {
     tx.add(
       createCreateInstruction(
         {
@@ -273,5 +307,6 @@ export async function createToken(
     signature,
     tokenAccount: associatedTokenAccount.toBase58(),
     confidentialTransferEnabled,
+    sellLockEnabled,
   }
 }

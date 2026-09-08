@@ -17,6 +17,12 @@ import {
   type PoolSummary,
 } from '../lib/raydium'
 import { LOCK_DURATION_OPTIONS, lockLpTokens, type LockResult } from '../lib/lock'
+import {
+  SELL_LOCK_DURATION_OPTIONS,
+  formatSellLockDuration,
+  hasSellLockHook,
+  registerLaunch,
+} from '../lib/sellLock'
 import { burnTokens, type BurnResult } from '../lib/burnToken'
 import { listAllWalletTokens, type WalletTokenBalance } from '../lib/walletTokens'
 import { getTokenMetadata, type TokenMeta } from '../lib/tokenMetadata'
@@ -287,6 +293,18 @@ function PoolCreate({
   const [existingPoolWarning, setExistingPoolWarning] = useState('')
   const skipDuplicateCheckRef = useRef(false)
 
+  // After a pool is created, is EITHER of its two mints one that was created
+  // with this site's sell-lock Transfer Hook (see src/lib/sellLock.ts)? If so
+  // the "lock selling into this pool" step below actually does something —
+  // for an ordinary mint (no hook registered) register_launch would either
+  // fail or silently protect nothing, so it is only offered when relevant.
+  const [sellLockMint, setSellLockMint] = useState<PublicKey | null>(null)
+  const [lockDuration, setLockDuration] = useState(SELL_LOCK_DURATION_OPTIONS[1].seconds)
+  const [lockStatus, setLockStatus] = useState('')
+  const [lockError, setLockError] = useState('')
+  const [lockSignature, setLockSignature] = useState('')
+  const [lockLoading, setLockLoading] = useState(false)
+
   useEffect(() => {
     if (!mintAAddr) {
       setMintAMeta(null)
@@ -407,6 +425,59 @@ function PoolCreate({
     void handleCreate({ preventDefault() {} } as FormEvent)
   }
 
+  useEffect(() => {
+    if (!result) {
+      setSellLockMint(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [aHasHook, bHasHook] = await Promise.all([
+          hasSellLockHook(connection, new PublicKey(mintAAddr.trim())),
+          hasSellLockHook(connection, new PublicKey(mintBAddr.trim())),
+        ])
+        if (cancelled) return
+        if (aHasHook) setSellLockMint(new PublicKey(mintAAddr.trim()))
+        else if (bHasHook) setSellLockMint(new PublicKey(mintBAddr.trim()))
+        else setSellLockMint(null)
+      } catch {
+        if (!cancelled) setSellLockMint(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // mintAAddr/mintBAddr are captured at the moment the pool was created —
+    // this only needs to run once per successful creation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result])
+
+  async function handleRegisterLaunch() {
+    if (!sellLockMint || !result) return
+    setLockError('')
+    setLockLoading(true)
+    try {
+      const sig = await registerLaunch(
+        connection,
+        wallet,
+        sellLockMint,
+        new PublicKey(result.vaultA),
+        new PublicKey(result.vaultB),
+        lockDuration,
+        setLockStatus,
+      )
+      setLockSignature(sig)
+      setLockStatus('')
+    } catch (err) {
+      console.error(err)
+      setLockError(err instanceof Error ? err.message : 'Something went wrong while locking the pool.')
+      setLockStatus('')
+    } finally {
+      setLockLoading(false)
+    }
+  }
+
   if (result) {
     const cluster = NETWORKS[network].explorerCluster
     return (
@@ -433,10 +504,53 @@ function PoolCreate({
           </a>
         </div>
 
+        {sellLockMint && !lockSignature && (
+          <div className="alert alert--warning" style={{ textAlign: 'left' }}>
+            <strong>🛡️ Anti-Snipe Sell Lock available</strong>
+            <p style={{ margin: '6px 0' }}>
+              {sellLockMint.toBase58()} was created with the sell-lock hook. Lock selling into this pool
+              now, before announcing it publicly — buying is never affected.
+            </p>
+            <label className="field" style={{ marginBottom: 10 }}>
+              <span>Lock Duration</span>
+              <select
+                value={lockDuration}
+                onChange={(e) => setLockDuration(Number(e.target.value))}
+                disabled={lockLoading}
+              >
+                {SELL_LOCK_DURATION_OPTIONS.filter((o) => o.seconds > 0).map((o) => (
+                  <option key={o.seconds} value={o.seconds}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {lockError && <div className="alert alert--error">{lockError}</div>}
+            {lockStatus && !lockError && <div className="alert alert--info">{lockStatus}</div>}
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={handleRegisterLaunch}
+              disabled={lockLoading}
+            >
+              {lockLoading ? 'Locking...' : `Lock Selling For ${formatSellLockDuration(lockDuration)}`}
+            </button>
+          </div>
+        )}
+        {lockSignature && (
+          <div className="alert alert--info">
+            🛡️ Sell lock registered for {formatSellLockDuration(lockDuration)}. Signature:{' '}
+            <code>{lockSignature}</code>
+          </div>
+        )}
+
         <button
           className="btn btn--primary"
           onClick={() => {
             setResult(null)
+            setSellLockMint(null)
+            setLockSignature('')
+            setLockError('')
             setMintAAddr('')
             setMintBAddr('')
             setAmountA('')

@@ -25,6 +25,7 @@ const initialState: TokenFormData = {
   revokeFreeze: false,
   immutable: false,
   confidentialTransferEnabled: false,
+  sellLockEnabled: false,
 }
 
 interface Props {
@@ -353,6 +354,7 @@ export function TokenForm({ network }: Props) {
           <input
             type="checkbox"
             checked={form.confidentialTransferEnabled}
+            disabled={form.sellLockEnabled}
             onChange={(e) => update('confidentialTransferEnabled', e.target.checked)}
           />
           <div>
@@ -362,6 +364,28 @@ export function TokenForm({ network }: Props) {
               the sender and recipient addresses always stay visible, only the amount is hidden. If you
               enable it the token is created with the Token-2022 standard; to use it you also have to
               configure your account from the "Confidential Amount Transfer" tab.
+              {form.sellLockEnabled && ' (Disabled while Anti-Snipe Lock is on — the two are not combined.)'}
+            </small>
+          </div>
+        </label>
+
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={form.sellLockEnabled}
+            disabled={form.confidentialTransferEnabled}
+            onChange={(e) => update('sellLockEnabled', e.target.checked)}
+          />
+          <div>
+            <strong>Anti-Snipe Sell Lock</strong>
+            <small>
+              Creates the token with Token-2022's Transfer Hook extension bound to this site's own
+              sell-lock program: once you create a liquidity pool for this token you can lock selling
+              INTO that pool for a chosen window (15 min – 24 h) from the Liquidity Pool tab, right after
+              the pool exists — buying is never affected. Enabling it makes the token Token-2022; it is
+              not combined with Confidential Transfer.
+              {form.confidentialTransferEnabled &&
+                ' (Disabled while Confidential Transfer is on — the two are not combined.)'}
             </small>
           </div>
         </label>
