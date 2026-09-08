@@ -160,12 +160,24 @@ export async function listRecentRuns(pat: string, limit = 5): Promise<WorkflowRu
 }
 
 /** Polls until a run created AFTER `afterIso` appears (GitHub's dispatch
- *  response carries no run id), then returns it. Gives up after ~60s. */
+ *  response carries no run id), then returns it. Gives up after ~60s.
+ *
+ * `listRecentRuns` comes back newest-first, so the run we just dispatched
+ * (the EARLIEST one that qualifies) is not necessarily the first list entry
+ * that satisfies "created_at >= after" — that would be whichever run is
+ * currently newest overall, which could be a later, unrelated dispatch (e.g.
+ * a second operator, or a manual trigger from the GitHub UI) if one landed in
+ * the same poll window. Picking the run with the SMALLEST created_at among
+ * those that qualify picks out ours specifically. A 5s buffer absorbs clock
+ * skew between this browser and GitHub's server clock. */
 export async function findDispatchedRun(pat: string, afterIso: string): Promise<WorkflowRunSummary> {
-  const after = new Date(afterIso).getTime()
+  const after = new Date(afterIso).getTime() - 5000
   for (let attempt = 0; attempt < 20; attempt++) {
     const runs = await listRecentRuns(pat, 10)
-    const match = runs.find((r) => new Date(r.created_at).getTime() >= after)
+    const candidates = runs.filter((r) => new Date(r.created_at).getTime() >= after)
+    const match = candidates.sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    )[0]
     if (match) return match
     await new Promise((resolve) => setTimeout(resolve, 3000))
   }

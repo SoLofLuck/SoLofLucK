@@ -186,6 +186,16 @@ export function RaffleOperatorPage() {
   async function handleConfirm() {
     setRunError('')
     if (!nextRound) return
+    // Belt-and-braces: the inputs are locked (disabled) once the rehearsal
+    // starts, so this should never actually fail here — but re-validating
+    // before the one irreversible call in this whole page costs nothing and
+    // guards against any future change that reintroduces an editable field.
+    const validationError = validateInputs()
+    if (validationError) {
+      setRunError(validationError)
+      setStep('dry-run-done')
+      return
+    }
     setStep('confirm-running')
     setConfirmResult(null)
     try {
@@ -281,6 +291,7 @@ export function RaffleOperatorPage() {
                   value={announcedSlot}
                   onChange={(e) => setAnnouncedSlot(e.target.value.replace(/[^\d]/g, ''))}
                   placeholder="e.g. 123456789"
+                  disabled={step !== 'idle'}
                 />
                 <small>
                   Must already be publicly announced (e.g. on Twitter) before you press Rehearse below — this is only
@@ -295,22 +306,29 @@ export function RaffleOperatorPage() {
                   value={startIso}
                   onChange={(e) => setStartIso(e.target.value)}
                   placeholder="2026-10-07T12:00:00Z"
+                  disabled={step !== 'idle'}
                 />
               </label>
 
               <h3>3. Twitter Winner Addresses (3)</h3>
               <label className="field">
                 <span>Winner address 1 *</span>
-                <input type="text" value={addr1} onChange={(e) => setAddr1(e.target.value)} />
+                <input type="text" value={addr1} onChange={(e) => setAddr1(e.target.value)} disabled={step !== 'idle'} />
               </label>
               <label className="field">
                 <span>Winner address 2 *</span>
-                <input type="text" value={addr2} onChange={(e) => setAddr2(e.target.value)} />
+                <input type="text" value={addr2} onChange={(e) => setAddr2(e.target.value)} disabled={step !== 'idle'} />
               </label>
               <label className="field">
                 <span>Winner address 3 *</span>
-                <input type="text" value={addr3} onChange={(e) => setAddr3(e.target.value)} />
+                <input type="text" value={addr3} onChange={(e) => setAddr3(e.target.value)} disabled={step !== 'idle'} />
               </label>
+              {step !== 'idle' && (
+                <small>
+                  Fields are locked once the rehearsal starts, so what you confirmed matches exactly what gets
+                  locked. Press "Start Over" below to change anything.
+                </small>
+              )}
 
               {runError && <div className="alert alert--error">{runError}</div>}
 
