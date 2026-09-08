@@ -4,4 +4,3 @@
 .anchor
 .DS_Store
 *.log
-Cargo.lock
