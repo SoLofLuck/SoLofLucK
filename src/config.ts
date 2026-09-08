@@ -534,7 +534,12 @@ export const OPERATOR_WALLET = '6ARHnqBpyxk2BA4FE8rNiSUZ5s4Gb7jBU3ucx8qGnxcP'
 
 export const GITHUB_REPO = {
   owner: 'SoLofLuck',
-  repo: 'SoLofLuck',
+  // The repository was renamed to "SoLofLucK" (capital K) at some point —
+  // GitHub's API redirects GET requests made to the old name for a while, but
+  // that is not guaranteed to keep working forever and is not guaranteed at
+  // all for the PUT/POST calls this page makes (Contents API write, Actions
+  // API dispatch). Always use the current, real name here.
+  repo: 'SoLofLucK',
   branch: 'main',
   twitterWinnersPath: 'data/twitter-winners.json',
   raffleWorkflowFile: 'run-raffle-round.yml',
