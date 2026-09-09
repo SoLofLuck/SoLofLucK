@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
-import { createToken, type TokenFormData, type CreateTokenResult } from '../lib/createToken'
+import { computeTokenFeeSol, createToken, type TokenFormData, type CreateTokenResult } from '../lib/createToken'
 import { uploadLogoAndMetadata } from '../lib/irys'
-import { DEFAULT_DECIMALS, FEE_WALLET, FEE_AMOUNT_SOL, type NetworkId } from '../config'
+import { DEFAULT_DECIMALS, FEE_WALLET, FEE_PER_AUTHORITY_SOL, type NetworkId } from '../config'
 import { ResultCard } from './ResultCard'
 import { LogoCropModal } from './LogoCropModal'
 
@@ -318,7 +318,10 @@ export function TokenForm({ network }: Props) {
             onChange={(e) => update('revokeMint', e.target.checked)}
           />
           <div>
-            <strong>Revoke Mint Authority</strong>
+            <div className="checkbox-field__title">
+              <strong>Revoke Mint Authority</strong>
+              {FEE_WALLET && <span className="checkbox-field__price">+{FEE_PER_AUTHORITY_SOL.revokeMint} SOL</span>}
+            </div>
             <small>After creation nobody, you included, can mint new tokens — the supply is fixed.</small>
           </div>
         </label>
@@ -330,7 +333,10 @@ export function TokenForm({ network }: Props) {
             onChange={(e) => update('revokeFreeze', e.target.checked)}
           />
           <div>
-            <strong>Revoke Freeze Authority</strong>
+            <div className="checkbox-field__title">
+              <strong>Revoke Freeze Authority</strong>
+              {FEE_WALLET && <span className="checkbox-field__price">+{FEE_PER_AUTHORITY_SOL.revokeFreeze} SOL</span>}
+            </div>
             <small>Token accounts can no longer be frozen.</small>
           </div>
         </label>
@@ -342,7 +348,10 @@ export function TokenForm({ network }: Props) {
             onChange={(e) => update('immutable', e.target.checked)}
           />
           <div>
-            <strong>Make Metadata Immutable</strong>
+            <div className="checkbox-field__title">
+              <strong>Make Metadata Immutable</strong>
+              {FEE_WALLET && <span className="checkbox-field__price">+{FEE_PER_AUTHORITY_SOL.immutable} SOL</span>}
+            </div>
             <small>The name, symbol and metadata can never be updated again.</small>
           </div>
         </label>
@@ -390,8 +399,9 @@ export function TokenForm({ network }: Props) {
 
       {FEE_WALLET && (
         <div className="fee-note">
-          Service fee: <strong>{FEE_AMOUNT_SOL} SOL</strong> plus the network transaction fee. The fee
-          is shown as part of the transaction you approve in your wallet.
+          Service fee: <strong>{computeTokenFeeSol(form)} SOL</strong> plus the network transaction fee (the base
+          fee plus the priced authorities checked above). The fee is shown as part of the transaction you approve
+          in your wallet.
         </div>
       )}
 

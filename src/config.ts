@@ -65,8 +65,22 @@ export const NETWORKS: Record<NetworkId, NetworkOption> = {
 // If you do not want to take a fee, leave FEE_WALLET empty and both are
 // automatically disabled.
 export const FEE_WALLET = '3fBhNn8BEoFyQVAXasWj1xcNrcc2FRpLVQexFhZTnw6F'
+// The base fee — always charged once, independent of which authorities are
+// revoked below.
 export const FEE_AMOUNT_SOL = 0.0777
 export const POOL_FEE_AMOUNT_SOL = 0.15
+
+// Modular pricing for the three authority checkboxes on Create Token —
+// matches the model competing tools (e.g. smithii.io) use: each one adds its
+// own charge on top of the base fee instead of a single flat price
+// regardless of what's selected. "Revoke Update" is this site's "Make
+// Metadata Immutable" checkbox (form.immutable) — same authority, different
+// label.
+export const FEE_PER_AUTHORITY_SOL = {
+  revokeMint: 0.1,
+  revokeFreeze: 0.1,
+  immutable: 0.1,
+}
 
 export const DEFAULT_DECIMALS = 9
 export const DEFAULT_NETWORK: NetworkId = 'devnet'

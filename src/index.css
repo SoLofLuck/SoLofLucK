@@ -593,11 +593,25 @@ button {
   flex-shrink: 0;
 }
 
-.checkbox-field strong {
-  display: block;
-  font-size: 0.9rem;
+.checkbox-field__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 2px;
+}
+
+.checkbox-field strong {
+  font-size: 0.9rem;
   color: var(--text);
+}
+
+.checkbox-field__price {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-a);
+  background: rgba(139, 92, 246, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
 }
 
 .checkbox-field small {

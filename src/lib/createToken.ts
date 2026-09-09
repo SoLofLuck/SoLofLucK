@@ -30,7 +30,7 @@ import {
   createCreateInstruction,
   TokenStandard,
 } from '@metaplex-foundation/mpl-token-metadata'
-import { FEE_WALLET, FEE_AMOUNT_SOL } from '../config'
+import { FEE_WALLET, FEE_AMOUNT_SOL, FEE_PER_AUTHORITY_SOL } from '../config'
 import { sendInstructions } from './sendTx'
 import { buildInitializeConfidentialTransferMintIx } from './confidentialTransfer'
 import { SELL_LOCK_PROGRAM_ID, buildInitializeExtraAccountMetaListIx } from './sellLock'
@@ -69,6 +69,27 @@ export interface CreateTokenResult {
   tokenAccount: string
   confidentialTransferEnabled: boolean
   sellLockEnabled: boolean
+}
+
+/**
+ * The total Create Token service fee: the flat base fee plus one
+ * FEE_PER_AUTHORITY_SOL charge for each of the three authority checkboxes the
+ * caller has turned on. Exported so TokenForm.tsx can show the live total as
+ * the user toggles checkboxes, using the exact same number this file will
+ * actually charge.
+ */
+export function computeTokenFeeSol(
+  data: Pick<TokenFormData, 'revokeMint' | 'revokeFreeze' | 'immutable'>,
+): number {
+  let total = FEE_AMOUNT_SOL
+  if (data.revokeMint) total += FEE_PER_AUTHORITY_SOL.revokeMint
+  if (data.revokeFreeze) total += FEE_PER_AUTHORITY_SOL.revokeFreeze
+  if (data.immutable) total += FEE_PER_AUTHORITY_SOL.immutable
+  // Floating-point addition of decimals like 0.0777 + 0.1 can land on
+  // 0.17770000000000002 — round to a sane precision so both the on-chain
+  // lamport amount and the on-screen total are exact, round numbers.
+  total = Math.round(total * 1e6) / 1e6
+  return total
 }
 
 function findMetadataPda(mint: PublicKey): PublicKey {
@@ -272,13 +293,16 @@ export async function createToken(
     )
   }
 
-  // 7) The optional service fee (added only if the site owner has set FEE_WALLET)
-  if (FEE_WALLET && FEE_AMOUNT_SOL > 0) {
+  // 7) The optional service fee (added only if the site owner has set FEE_WALLET) —
+  // the base fee plus a per-authority charge for each checkbox turned on; see
+  // computeTokenFeeSol above.
+  const totalFeeSol = computeTokenFeeSol(data)
+  if (FEE_WALLET && totalFeeSol > 0) {
     tx.add(
       SystemProgram.transfer({
         fromPubkey: payer,
         toPubkey: new PublicKey(FEE_WALLET),
-        lamports: Math.round(FEE_AMOUNT_SOL * LAMPORTS_PER_SOL),
+        lamports: Math.round(totalFeeSol * LAMPORTS_PER_SOL),
       }),
     )
   }
