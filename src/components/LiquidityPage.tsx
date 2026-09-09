@@ -293,6 +293,10 @@ function PoolCreate({
   // must explicitly press "Create Anyway" (setting the ref below) to proceed.
   const [existingPoolWarning, setExistingPoolWarning] = useState('')
   const skipDuplicateCheckRef = useRef(false)
+  // Set only if the pool was created successfully but the separate fee
+  // transaction afterward failed — the pool itself cannot be undone, so this
+  // is a soft warning shown alongside the result, not a blocking error.
+  const [feeWarning, setFeeWarning] = useState('')
 
   // After a pool is created, is EITHER of its two mints one that was created
   // with this site's sell-lock Transfer Hook (see src/lib/sellLock.ts)? If so
@@ -350,6 +354,7 @@ function PoolCreate({
     e.preventDefault()
     setError('')
     setExistingPoolWarning('')
+    setFeeWarning('')
     setResult(null)
 
     if (!wallet.connected || !wallet.publicKey) {
@@ -408,10 +413,28 @@ function PoolCreate({
       }
       skipDuplicateCheckRef.current = false
 
-      await chargePoolCreationFee(connection, wallet, setStatus)
+      // The fee is charged AFTER the pool is actually created, not before: it
+      // is a separate transaction from the Raydium-built pool-creation one
+      // (see chargePoolCreationFee's own comment), so the two cannot be made
+      // atomic. Charging first would mean a rejected or failed pool-creation
+      // signature (the wallet's SECOND popup) still costs the user the fee
+      // for a pool that was never created.
       const res = await createCpmmPool(raydium, network, mintA, mintB, amountA, amountB, setStatus)
       setResult(res)
       setStatus('')
+
+      try {
+        await chargePoolCreationFee(connection, wallet, setStatus)
+      } catch (feeErr) {
+        // The pool already exists at this point — that cannot be undone, so
+        // this is a warning about the fee, not a failure of the operation.
+        console.error('Pool creation fee error:', feeErr)
+        setFeeWarning(
+          feeErr instanceof Error
+            ? `The pool was created, but the service fee could not be charged: ${feeErr.message}`
+            : 'The pool was created, but the service fee could not be charged.',
+        )
+      }
     } catch (err) {
       console.error(err)
       setError(err instanceof Error ? err.message : 'Something went wrong while creating the pool.')
@@ -487,6 +510,7 @@ function PoolCreate({
         <div className="result-card__icon">✅</div>
         <h2>Pool Created!</h2>
         <p>Your liquidity pool was created on chain and the amounts you entered were deposited.</p>
+        {feeWarning && <div className="alert alert--warning">{feeWarning}</div>}
         <div className="result-card__row">
           <span>Pool ID</span>
           <code>{result.poolId}</code>
