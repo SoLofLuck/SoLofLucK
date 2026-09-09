@@ -136,7 +136,6 @@ const PINNED = {
   'CLAIM_CONFIG.programId': '8hUZNdjHPR6jtKMwH2U28pHeNZfEgKdJ7x4CDsjuBzwJ',
   'GAME_CONFIG.treasuryWallet': '5Zvz25PheDtC9PaMzwDRcnb3xKS6CU8d98PfEnKkgp9m',
   'PUBLIC_WALLETS.team': 'AHGDn3qqRyShYURf9qriMpVPHT8W6LwVTKUBXYMzuMxA',
-  'PUBLIC_WALLETS.community': '3fBhNn8BEoFyQVAXasWj1xcNrcc2FRpLVQexFhZTnw6F',
   'PUBLIC_WALLETS.marketing': 'BiWqNZzCPCfJtVPNhoCrvEb9s6unpCFXXf38GR3WnPWX',
   'cexReserve.1': 'CZ639Mx6MFiZfwpVFLecyMTecGp2Cv6HErdoWqgZG6HS',
   'cexReserve.2': '3cCqgaj4QzKQUFvSNnz1yqrqcPt7xiKsbh29AfVoGM8B',

@@ -384,11 +384,20 @@ export const MARKETING_BREAKDOWN = {
 // distribution promise can be verified one by one on chain — every balance and
 // every movement can be followed through these addresses on Solscan. None of the
 // addresses here contains a private key; they are public addresses only.
+//
+// There used to be a separate "Community / raffle" staging wallet here too,
+// meant to hold the whole community bucket (155,400,000 $LUCK) from TGE until
+// each week's round pulled its slice out of it. The raffle mechanism that got
+// built (program/luck-distributor/scripts/initialize-round.mjs) never actually
+// routes through a wallet like that — it transfers straight from the deploy
+// wallet's own token account into each round's on-chain vault — so that wallet
+// held no real balance and had no real role. Removed rather than wired up:
+// the deploy wallet is already publicly visible on chain (as the programs'
+// upgrade authority), so a second "proof of custody" address added nothing.
 export const PUBLIC_WALLETS = [
   { key: 'presale', label: 'Presale vault', address: PRESALE_WALLET },
   { key: 'ops', label: 'Operations share', address: PRESALE_OPS_WALLET },
   { key: 'team', label: 'Team', address: 'AHGDn3qqRyShYURf9qriMpVPHT8W6LwVTKUBXYMzuMxA' },
-  { key: 'community', label: 'Community / raffle', address: '3fBhNn8BEoFyQVAXasWj1xcNrcc2FRpLVQexFhZTnw6F' },
   { key: 'marketing', label: 'Marketing (flowing part)', address: 'BiWqNZzCPCfJtVPNhoCrvEb9s6unpCFXXf38GR3WnPWX' },
 ] as const
 
@@ -569,9 +578,17 @@ export const WALLET_DIRECTORY = [
   { number: 4, name: 'CEX vault 2', address: MARKETING_BREAKDOWN.cexReserve.addresses[1].address },
   { number: 5, name: 'CEX vault 3', address: MARKETING_BREAKDOWN.cexReserve.addresses[2].address },
   { number: 6, name: 'Team', address: PUBLIC_WALLETS[2].address },
-  { number: 7, name: 'Community', address: PUBLIC_WALLETS[3].address },
-  { number: 8, name: 'Marketing', address: PUBLIC_WALLETS[4].address },
+  // Number 7 ("Community / raffle staging wallet") was retired — see the
+  // comment on PUBLIC_WALLETS above for why. Left out rather than
+  // renumbered, so this stays the same external index the operator's own
+  // spreadsheet uses.
+  { number: 8, name: 'Marketing', address: PUBLIC_WALLETS[3].address },
   { number: 9, name: 'Game treasury', address: GAME_CONFIG.treasuryWallet },
   { number: 10, name: 'Token pool / mint creation wallet', address: TOKEN_POOL_WALLET },
   { number: 11, name: 'Raffle approval wallet', address: OPERATOR_WALLET },
+  // The CI deploy wallet (program upgrade authority; see DEPLOY_AUTHORITY in
+  // both programs' lib.rs). Not otherwise named in this file since nothing
+  // client-side ever needs to reference it — kept here only so the numbered
+  // directory matches the operator's full list.
+  { number: 12, name: 'Deploy wallet', address: 'CKNm1zFB7w77CJZcXT9MwNu9qd6AvbvsKWYyqEx9nbdL' },
 ] as const
