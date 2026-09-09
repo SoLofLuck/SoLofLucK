@@ -1,0 +1,280 @@
+name: sell-lock — Build and Deploy (Devnet or Mainnet)
+
+on:
+  workflow_dispatch:
+    inputs:
+      first_deploy:
+        description: "false: UPGRADE the program at the declare_id address in the source - the address does not change. true (DEFAULT): generate a NEW address and deploy for the first time. Defaults to true because sell-lock's existing Devnet deploy was made through Solana Playground (see program/sell-lock/README.md), NOT this workflow — this workflow does not hold that program's upgrade authority, so an upgrade attempt against it will fail. Use first_deploy=true to open a fresh program this workflow (and the SELL_LOCK_DEPLOY_KEY secret) actually controls, on either network."
+        required: false
+        type: boolean
+        default: true
+      network:
+        description: "The chain to deploy to. devnet is the test network and its SOL is free. mainnet-beta is REAL MONEY: the deploy costs about 2.3 SOL of permanent rent and the result is public. sell-lock has never been deployed to mainnet-beta at all."
+        required: false
+        type: choice
+        default: devnet
+        options: [devnet, mainnet-beta]
+      confirm_mainnet:
+        description: "Only for network=mainnet-beta. Type exactly: I UNDERSTAND THIS IS REAL MONEY"
+        required: false
+        type: string
+        default: ''
+
+# Prepared ahead of the mainnet migration so that step is not a scramble on the
+# day it matters. Mirrors deploy-luck-game.yml/deploy-luck-distributor.yml —
+# see those files for the reasoning behind each step (buffer cleanup, the
+# committed Cargo.lock, the byte-for-byte verification at the end, etc.); this
+# file only calls out what is DIFFERENT for sell-lock.
+#
+# THE ONE THING THAT IS DIFFERENT AND MATTERS: unlike luck-game and
+# luck-distributor (which this workflow's siblings have deployed and upgraded
+# from day one), sell-lock's Devnet program was opened by hand through Solana
+# Playground (beta.solpg.io) — see program/sell-lock/README.md. This workflow
+# was never involved and does not hold that program's upgrade authority, so
+# first_deploy defaults to true here (opening a fresh program this workflow
+# DOES control) rather than false.
+#
+# A FIRST DEPLOY GENERATES A NEW ADDRESS. Running first_deploy=true for
+# mainnet-beta will NOT reuse the Devnet program ID
+# (3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5) unless this workflow happens
+# to already hold that program's own keypair (it does not, by default) — so
+# after the run, `src/lib/sellLock.ts`'s SELL_LOCK_PROGRAM_ID has to become
+# NETWORK-AWARE (one address for devnet, a different one for mainnet-beta),
+# the same way NETWORKS in src/config.ts already picks an RPC endpoint per
+# network. That code change is deliberately NOT made here — it needs the real
+# printed mainnet address first, and sell-lock is used across BOTH networks
+# live (whichever the visitor picks in the Header), unlike GAME_CONFIG/
+# CLAIM_CONFIG which only ever target one fixed PROGRAM_DEPLOYMENT_NETWORK.
+#
+# One-off setup required before running this against mainnet-beta: repo
+# Settings → Secrets and variables → Actions → "New repository secret" →
+# SELL_LOCK_DEPLOY_KEY, a JSON array of 64 numbers (solana-keygen's format)
+# for a wallet holding real SOL. A Devnet run can reuse a throwaway key with
+# the same secret name and devnet-only value if you want to exercise this
+# workflow before mainnet day.
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: program/sell-lock -> target
+
+      - name: Install the Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Solana toolchain compatibility shim
+        run: |
+          BIN_DIR="$HOME/.local/share/solana/install/active_release/bin"
+          if [ ! -e "$BIN_DIR/solana-install" ]; then
+            if [ -e "$BIN_DIR/agave-install" ]; then
+              ln -s "$BIN_DIR/agave-install" "$BIN_DIR/solana-install"
+            else
+              ln -s "$BIN_DIR/solana" "$BIN_DIR/solana-install"
+            fi
+          fi
+          command -v solana-install && solana-install --version || echo "solana-install still not found"
+
+      - name: Install the Anchor CLI
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/avm" install 0.30.1
+          "$HOME/.cargo/bin/avm" use 0.30.1
+
+      - name: Confirm the mainnet deploy
+        if: inputs.network == 'mainnet-beta'
+        run: |
+          if [ "${{ inputs.confirm_mainnet }}" != "I UNDERSTAND THIS IS REAL MONEY" ]; then
+            echo "::error::network=mainnet-beta requires confirm_mainnet to read exactly" \
+                 "'I UNDERSTAND THIS IS REAL MONEY'. Nothing was deployed."
+            exit 1
+          fi
+          echo "Mainnet deploy confirmed."
+
+      - name: Write the deploy key
+        run: |
+          mkdir -p ~/.config/solana
+          cat > ~/.config/solana/id.json <<'KEYFILE'
+          ${{ secrets.SELL_LOCK_DEPLOY_KEY }}
+          KEYFILE
+
+      - name: Configure the cluster
+        run: |
+          solana config set --url "${{ inputs.network || 'devnet' }}" \
+                            --keypair ~/.config/solana/id.json
+          echo "CLUSTER=${{ inputs.network || 'devnet' }}" >> "$GITHUB_ENV"
+          solana config get
+
+      - name: Devnet SOL airdrop (for the deploy fee)
+        if: env.CLUSTER == 'devnet'
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            if solana airdrop 2 || solana airdrop 1; then break; fi
+            echo "Airdrop attempt $i failed, retrying in 20s..."
+            sleep 20
+          done
+          echo "Deploy wallet: $(solana address)"
+          solana balance
+
+      - name: Close leftover buffers (before the deploy)
+        run: |
+          solana program close --buffers --bypass-warning || \
+            echo "No buffers to close."
+          solana balance
+
+      - name: Verify Cargo.lock (the lockfile in the repository will be used)
+        working-directory: program/sell-lock
+        run: |
+          if [ ! -f Cargo.lock ]; then
+            echo "Cargo.lock is not in the repository — it has to be committed." >&2
+            exit 1
+          fi
+          head -n 3 Cargo.lock
+          cargo metadata --locked --format-version 1 > /dev/null
+          echo "The lockfile is consistent with Cargo.toml."
+
+      # See the note at the top of this file: sell-lock's Devnet deploy was
+      # made through Solana Playground, so this workflow does not hold its
+      # upgrade authority and first_deploy defaults to true here.
+      - name: Generate a new program keypair (only when first_deploy=true)
+        if: inputs.first_deploy == true
+        working-directory: program/sell-lock
+        run: |
+          mkdir -p target/deploy
+          rm -f target/deploy/sell_lock-keypair.json
+          solana-keygen new --no-bip39-passphrase --silent -o target/deploy/sell_lock-keypair.json
+          anchor keys sync
+          echo "New declare_id!():"
+          grep declare_id programs/sell-lock/src/lib.rs
+
+      - name: Determine the target Program ID
+        working-directory: program/sell-lock
+        run: |
+          PROGRAM_ID=$(grep -oP 'declare_id!\("\K[^"]+' programs/sell-lock/src/lib.rs)
+          if [ -z "$PROGRAM_ID" ]; then
+            echo "declare_id!() could not be read" >&2
+            exit 1
+          fi
+          echo "PROGRAM_ID=$PROGRAM_ID" >> "$GITHUB_ENV"
+          echo "Target Program ID: $PROGRAM_ID"
+
+      - name: anchor build
+        working-directory: program/sell-lock
+        run: anchor build --no-idl
+
+      - name: Did the lockfile stay unchanged
+        working-directory: program/sell-lock
+        run: |
+          if ! git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock changed during the build — stopping the deploy." >&2
+            git diff -- Cargo.lock | head -n 40
+            exit 1
+          fi
+          echo "The lockfile stayed unchanged throughout the build."
+
+      - name: First deploy (only when first_deploy=true)
+        if: inputs.first_deploy == true
+        working-directory: program/sell-lock
+        run: anchor deploy --provider.cluster "$CLUSTER" --provider.wallet ~/.config/solana/id.json
+
+      - name: Upgrade (only when first_deploy=false)
+        if: inputs.first_deploy != true
+        working-directory: program/sell-lock
+        run: |
+          ensure_balance() {
+            local needed="$1" label="$2" current
+            current=$(solana balance | awk '{print $1}')
+            echo "$label needs ~$needed SOL - currently $current SOL"
+            awk "BEGIN{exit !($current < $needed)}" || return 0
+            echo "Balance too low - trying an airdrop."
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              solana airdrop 2 || solana airdrop 1 || true
+              current=$(solana balance | awk '{print $1}')
+              awk "BEGIN{exit !($current >= $needed)}" && break
+              echo "$current SOL after attempt $i, retrying in 30s."
+              sleep 30
+            done
+            solana balance
+            current=$(solana balance | awk '{print $1}')
+            if awk "BEGIN{exit !($current < $needed)}"; then
+              echo "::error::$label needs ~$needed SOL, the wallet holds $current SOL" \
+                   "on $CLUSTER. Fix: send $CLUSTER SOL to $(solana address) and run this workflow again."
+              exit 1
+            fi
+          }
+
+          if ! solana program show "$PROGRAM_ID" >/dev/null 2>&1; then
+            echo "::error::There is no program installed at $PROGRAM_ID under this workflow's" \
+                 "deploy key. If this is sell-lock's original Solana-Playground-deployed" \
+                 "Devnet program, this workflow does not hold its upgrade authority and cannot" \
+                 "touch it — run with first_deploy=true to open a program this workflow controls."
+            exit 1
+          fi
+          echo "The current program:"
+          solana program show "$PROGRAM_ID"
+
+          NEW_LEN=$(stat -c%s target/deploy/sell_lock.so)
+          CUR_LEN=$(solana program show "$PROGRAM_ID" | awk '/Data Length/ {print $3}')
+          echo "New build: $NEW_LEN bytes · space on chain: $CUR_LEN bytes"
+          if [ -n "$CUR_LEN" ] && [ "$NEW_LEN" -gt "$CUR_LEN" ]; then
+            EXTRA=$(( NEW_LEN - CUR_LEN + 16384 ))
+            ensure_balance "$(awk "BEGIN{printf \"%.4f\", $EXTRA * 0.00000696 + 0.05}")" "the extend"
+            echo "Not enough space — extending by $EXTRA bytes."
+            solana program extend "$PROGRAM_ID" "$EXTRA"
+            solana program show "$PROGRAM_ID" | grep 'Data Length'
+          fi
+
+          ensure_balance "$(awk "BEGIN{printf \"%.4f\", $NEW_LEN * 0.00000696 + 0.2}")" "the deploy"
+
+          solana program deploy \
+            --program-id "$PROGRAM_ID" \
+            --upgrade-authority ~/.config/solana/id.json \
+            target/deploy/sell_lock.so
+
+      - name: Close buffers left by a failed deploy
+        if: failure()
+        run: |
+          solana program close --buffers --bypass-warning || \
+            echo "No buffers found to close (or closing them failed)."
+          solana balance
+
+      - name: Verify the result
+        working-directory: program/sell-lock
+        run: |
+          echo "================================================"
+          echo " PROGRAM ID: $PROGRAM_ID"
+          echo "================================================"
+          solana program show "$PROGRAM_ID"
+
+          solana program dump "$PROGRAM_ID" /tmp/onchain.so
+          LOCAL_LEN=$(stat -c%s target/deploy/sell_lock.so)
+          head -c "$LOCAL_LEN" /tmp/onchain.so > /tmp/onchain-trimmed.so
+          LOCAL_HASH=$(sha256sum target/deploy/sell_lock.so | awk '{print $1}')
+          CHAIN_HASH=$(sha256sum /tmp/onchain-trimmed.so | awk '{print $1}')
+          echo "local    sha256: $LOCAL_HASH ($LOCAL_LEN bytes)"
+          echo "on chain sha256: $CHAIN_HASH"
+          if [ "$LOCAL_HASH" != "$CHAIN_HASH" ]; then
+            echo "::error::The bytecode on chain is NOT THE SAME as what we built." \
+                 "The deploy command reported no error but the upgrade did not land." \
+                 "Run this workflow again; if it happens again, check the upgrade authority" \
+                 "($(solana address)) and the address $PROGRAM_ID."
+            exit 1
+          fi
+          echo "The bytecode on chain is byte-for-byte identical to the build."
+
+          if [ "${{ inputs.first_deploy }}" != "false" ]; then
+            echo "::notice::A NEW program was opened on ${{ inputs.network || 'devnet' }} at $PROGRAM_ID." \
+                 "This is a SEPARATE address from the existing Devnet program" \
+                 "(3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5) unless it happened to match by" \
+                 "chance. Next: make SELL_LOCK_PROGRAM_ID in src/lib/sellLock.ts network-aware" \
+                 "(one address per network, the same way src/config.ts's NETWORKS picks an RPC" \
+                 "endpoint per network) and write this address in for ${{ inputs.network || 'devnet' }}."
