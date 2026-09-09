@@ -364,7 +364,14 @@ export function TokenForm({ network }: Props) {
             onChange={(e) => update('confidentialTransferEnabled', e.target.checked)}
           />
           <div>
-            <strong>Confidential Amount Transfer (Confidential Transfer)</strong>
+            <div className="checkbox-field__title">
+              <strong>Confidential Amount Transfer (Confidential Transfer)</strong>
+              {FEE_WALLET && (
+                <span className="checkbox-field__price">
+                  +{FEE_PER_AUTHORITY_SOL.confidentialTransferEnabled} SOL
+                </span>
+              )}
+            </div>
             <small>
               With Token-2022's official extension the AMOUNT transferred is kept encrypted on chain —
               the sender and recipient addresses always stay visible, only the amount is hidden. If you
@@ -383,7 +390,12 @@ export function TokenForm({ network }: Props) {
             onChange={(e) => update('sellLockEnabled', e.target.checked)}
           />
           <div>
-            <strong>Anti-Snipe Sell Lock</strong>
+            <div className="checkbox-field__title">
+              <strong>Anti-Snipe Sell Lock</strong>
+              {FEE_WALLET && (
+                <span className="checkbox-field__price">+{FEE_PER_AUTHORITY_SOL.sellLockEnabled} SOL</span>
+              )}
+            </div>
             <small>
               Creates the token with Token-2022's Transfer Hook extension bound to this site's own
               sell-lock program: once you create a liquidity pool for this token you can lock selling

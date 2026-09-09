@@ -73,18 +73,22 @@ export interface CreateTokenResult {
 
 /**
  * The total Create Token service fee: the flat base fee plus one
- * FEE_PER_AUTHORITY_SOL charge for each of the three authority checkboxes the
- * caller has turned on. Exported so TokenForm.tsx can show the live total as
- * the user toggles checkboxes, using the exact same number this file will
- * actually charge.
+ * FEE_PER_AUTHORITY_SOL charge for each priced option the caller has turned
+ * on. Exported so TokenForm.tsx can show the live total as the user toggles
+ * checkboxes, using the exact same number this file will actually charge.
  */
 export function computeTokenFeeSol(
-  data: Pick<TokenFormData, 'revokeMint' | 'revokeFreeze' | 'immutable'>,
+  data: Pick<
+    TokenFormData,
+    'revokeMint' | 'revokeFreeze' | 'immutable' | 'confidentialTransferEnabled' | 'sellLockEnabled'
+  >,
 ): number {
   let total = FEE_AMOUNT_SOL
   if (data.revokeMint) total += FEE_PER_AUTHORITY_SOL.revokeMint
   if (data.revokeFreeze) total += FEE_PER_AUTHORITY_SOL.revokeFreeze
   if (data.immutable) total += FEE_PER_AUTHORITY_SOL.immutable
+  if (data.confidentialTransferEnabled) total += FEE_PER_AUTHORITY_SOL.confidentialTransferEnabled
+  if (data.sellLockEnabled) total += FEE_PER_AUTHORITY_SOL.sellLockEnabled
   // Floating-point addition of decimals like 0.0777 + 0.1 can land on
   // 0.17770000000000002 — round to a sane precision so both the on-chain
   // lamport amount and the on-screen total are exact, round numbers.

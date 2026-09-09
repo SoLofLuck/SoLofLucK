@@ -80,6 +80,14 @@ export const FEE_PER_AUTHORITY_SOL = {
   revokeMint: 0.1,
   revokeFreeze: 0.1,
   immutable: 0.1,
+  // Confidential Transfer and Anti-Snipe Sell Lock are both Token-2022
+  // extensions that add real, non-trivial setup work on top of a plain mint
+  // (an extra extension-init instruction each, plus, for sell-lock, the
+  // ExtraAccountMetaList account) — priced well above the plain revoke
+  // checkboxes above to reflect that. Mutually exclusive on the form, so at
+  // most one of the two is ever added to a single token's total.
+  confidentialTransferEnabled: 0.3,
+  sellLockEnabled: 0.3,
 }
 
 export const DEFAULT_DECIMALS = 9
