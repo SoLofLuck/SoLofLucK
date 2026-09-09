@@ -22,7 +22,7 @@ What has been done:
 | Chaos test (distribution) | 4 seeds, 8 invariants at every step plus forged-claim attempts |
 | Sabotage test | Every check was proven to ACTUALLY fail when removed |
 | ABI check | 248 checks — that the client and the program speak the same bytes |
-| Tokenomics check | 72 checks — that the published numbers agree with the on-chain rules |
+| Tokenomics check | 73 checks — that the published numbers agree with the on-chain rules |
 | End-to-end rehearsal | On devnet: contribution -> list -> merkle -> distributor -> claim |
 | `clippy` (strict) | On every PR, warnings count as errors |
 | `cargo-audit` / `cargo-deny` | On every PR plus weekly — dependency advisories |

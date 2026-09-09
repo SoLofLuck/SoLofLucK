@@ -41,18 +41,32 @@ export const NETWORKS: Record<NetworkId, NetworkOption> = {
 }
 
 // ---------------------------------------------------------------------------
-// Service fee (optional)
+// Service fee (Create Token + Liquidity Pool tools)
 // ---------------------------------------------------------------------------
-// If you publish this site as your own product, you may want to take a small fee
-// on token creation (that is the business model of tools like smithii.io). The
-// fee is sent transparently from the user's wallet to the wallet YOU choose,
-// inside the same transaction; the user sees the recipient address and the
-// amount in their wallet before signing.
+// This site's Create Token and Liquidity Pool tabs are general-purpose tools —
+// anyone can use them to launch and pool ANY token, not just $LUCK — so this
+// fee is unrelated to $LUCK's own tokenomics (RAFFLE, TOKENOMICS, PUBLIC_WALLETS
+// above). That is deliberate: it is a fee for using this SITE's tooling (the
+// business model of tools like smithii.io), not a $LUCK allocation, so it does
+// NOT appear on the Tokenomics tab.
 //
-// If you do not want to take a fee, leave FEE_WALLET empty and it is
+// Both fees are sent transparently from the user's own wallet — the token fee
+// inside the SAME transaction as token creation (see createToken.ts), the pool
+// fee as a separate, small transaction sent right before pool creation (see
+// chargePoolCreationFee in raydium.ts, called from LiquidityPage.tsx) because
+// the pool-creation transaction itself is built by the Raydium SDK. Either way
+// the user sees the recipient address and the amount in their wallet before
+// signing.
+//
+// FEE_WALLET reuses wallet #7 (WALLET_DIRECTORY below) — previously a
+// "Community / raffle" staging wallet for $LUCK that was never wired into the
+// real distribution flow (see the PUBLIC_WALLETS comment) and sat unused.
+//
+// If you do not want to take a fee, leave FEE_WALLET empty and both are
 // automatically disabled.
-export const FEE_WALLET = '' // e.g. 'YourSolanaWalletAddressHere...'
-export const FEE_AMOUNT_SOL = 0.1
+export const FEE_WALLET = '3fBhNn8BEoFyQVAXasWj1xcNrcc2FRpLVQexFhZTnw6F'
+export const FEE_AMOUNT_SOL = 0.0777
+export const POOL_FEE_AMOUNT_SOL = 0.15
 
 export const DEFAULT_DECIMALS = 9
 export const DEFAULT_NETWORK: NetworkId = 'devnet'
@@ -578,10 +592,11 @@ export const WALLET_DIRECTORY = [
   { number: 4, name: 'CEX vault 2', address: MARKETING_BREAKDOWN.cexReserve.addresses[1].address },
   { number: 5, name: 'CEX vault 3', address: MARKETING_BREAKDOWN.cexReserve.addresses[2].address },
   { number: 6, name: 'Team', address: PUBLIC_WALLETS[2].address },
-  // Number 7 ("Community / raffle staging wallet") was retired — see the
-  // comment on PUBLIC_WALLETS above for why. Left out rather than
-  // renumbered, so this stays the same external index the operator's own
-  // spreadsheet uses.
+  // Number 7 used to be a "Community / raffle staging wallet" that was
+  // retired for never having a real role (see the comment on PUBLIC_WALLETS
+  // above) — repurposed as the Create Token / Liquidity Pool service fee
+  // wallet instead of sitting unused. Unrelated to $LUCK's own tokenomics.
+  { number: 7, name: 'Service fee wallet', address: FEE_WALLET },
   { number: 8, name: 'Marketing', address: PUBLIC_WALLETS[3].address },
   { number: 9, name: 'Game treasury', address: GAME_CONFIG.treasuryWallet },
   { number: 10, name: 'Token pool / mint creation wallet', address: TOKEN_POOL_WALLET },

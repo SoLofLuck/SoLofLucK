@@ -5,6 +5,7 @@ import type { ApiV3PoolInfoStandardItemCpmm, CpmmKeys } from '@raydium-io/raydiu
 import {
   NATIVE_SOL_MINT,
   addCpmmLiquidity,
+  chargePoolCreationFee,
   createCpmmPool,
   getMintInfo,
   getPoolById,
@@ -29,7 +30,7 @@ import { getTokenMetadata, type TokenMeta } from '../lib/tokenMetadata'
 import { useSolUsdPrice } from '../lib/solPrice'
 import { CoinPicker } from './CoinPicker'
 import { TokenIcon, SOL_ICON } from './TokenIcon'
-import { NETWORKS, type NetworkId } from '../config'
+import { FEE_WALLET, NETWORKS, POOL_FEE_AMOUNT_SOL, type NetworkId } from '../config'
 
 interface Props {
   network: NetworkId
@@ -407,6 +408,7 @@ function PoolCreate({
       }
       skipDuplicateCheckRef.current = false
 
+      await chargePoolCreationFee(connection, wallet, setStatus)
       const res = await createCpmmPool(raydium, network, mintA, mintB, amountA, amountB, setStatus)
       setResult(res)
       setStatus('')
@@ -638,6 +640,14 @@ function PoolCreate({
           />
         </label>
       </div>
+
+      {FEE_WALLET && (
+        <div className="fee-note">
+          Service fee: <strong>{POOL_FEE_AMOUNT_SOL} SOL</strong> plus the network transaction fee, charged as a
+          separate small transaction right before the pool is created. The fee is shown in your wallet before you
+          approve it.
+        </div>
+      )}
 
       {error && <div className="alert alert--error">{error}</div>}
       {status && !error && <div className="alert alert--info">{status}</div>}

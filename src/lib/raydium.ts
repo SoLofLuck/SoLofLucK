@@ -12,7 +12,7 @@ import {
   type CpmmKeys,
   type ApiV3Token,
 } from '@raydium-io/raydium-sdk-v2'
-import { Connection, PublicKey } from '@solana/web3.js'
+import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram } from '@solana/web3.js'
 import {
   getAssociatedTokenAddressSync,
   getMint,
@@ -22,7 +22,8 @@ import {
 import BN from 'bn.js'
 import Decimal from 'decimal.js'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
-import type { NetworkId } from '../config'
+import { FEE_WALLET, POOL_FEE_AMOUNT_SOL, type NetworkId } from '../config'
+import { sendInstructions } from './sendTx'
 
 export const NATIVE_SOL_MINT = 'So11111111111111111111111111111111111111112'
 
@@ -206,6 +207,42 @@ export interface CreatePoolResult {
   poolId: string
   vaultA: string
   vaultB: string
+}
+
+/**
+ * The optional service fee for using this site's Liquidity Pool tool (see the
+ * "Service fee" comment on FEE_WALLET/POOL_FEE_AMOUNT_SOL in config.ts).
+ *
+ * Sent as its own small transaction BEFORE pool creation, rather than bundled
+ * into the pool-creation transaction the way the Create Token fee is: that
+ * transaction is built and signed by the Raydium SDK's own `cpmm.createPool()`
+ * call, so there is no single hand-built `Transaction` here to append a
+ * transfer instruction to. A short extra wallet approval is a small price for
+ * not reaching into the SDK's internals.
+ */
+export async function chargePoolCreationFee(
+  connection: Connection,
+  wallet: WalletContextState,
+  onStatus?: (status: string) => void,
+): Promise<void> {
+  if (!FEE_WALLET || POOL_FEE_AMOUNT_SOL <= 0) return
+  if (!wallet.publicKey || !wallet.signTransaction) {
+    throw new Error('Connect your wallet first to continue.')
+  }
+  onStatus?.('Waiting for approval of the service fee...')
+  await sendInstructions(
+    connection,
+    { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction },
+    [
+      SystemProgram.transfer({
+        fromPubkey: wallet.publicKey,
+        toPubkey: new PublicKey(FEE_WALLET),
+        lamports: Math.round(POOL_FEE_AMOUNT_SOL * LAMPORTS_PER_SOL),
+      }),
+    ],
+    onStatus,
+    { confirmMessage: 'Waiting for approval of the service fee...' },
+  )
 }
 
 export async function createCpmmPool(
