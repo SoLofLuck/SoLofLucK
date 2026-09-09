@@ -544,3 +544,34 @@ export const GITHUB_REPO = {
   twitterWinnersPath: 'data/twitter-winners.json',
   raffleWorkflowFile: 'run-raffle-round.yml',
 } as const
+
+// The wallet the real (mainnet) $LUCK mint gets created from, and that also
+// pays the fee for creating a Raydium liquidity pool for it. Distinct from
+// PRESALE_WALLET (which only ever collects presale SOL and never touches
+// tokens) and from OPERATOR_WALLET (which never signs anything at all).
+export const TOKEN_POOL_WALLET = '7iMBjeEbaHz2UEbP1FXceMx8tQ7FKFwEHkoCKaVX1RJK'
+
+// ---------------------------------------------------------------------------
+// The numbered wallet directory
+// ---------------------------------------------------------------------------
+// The operator keeps this same numbered list outside the repo (in a
+// spreadsheet) to talk about wallets by number instead of by address. It is
+// reproduced here, built from the real constants above rather than retyped
+// addresses, so the two can never silently drift apart — and so
+// check-tokenomics.mjs's "every published address appears exactly once"
+// check (which exists to catch a wallet accidentally reused for two
+// different purposes) still means something: this is a VIEW over the real
+// constants, not a second copy of the addresses themselves.
+export const WALLET_DIRECTORY = [
+  { number: 1, name: 'Presale', address: PRESALE_WALLET },
+  { number: 2, name: 'Operations', address: PRESALE_OPS_WALLET },
+  { number: 3, name: 'CEX vault 1', address: MARKETING_BREAKDOWN.cexReserve.addresses[0].address },
+  { number: 4, name: 'CEX vault 2', address: MARKETING_BREAKDOWN.cexReserve.addresses[1].address },
+  { number: 5, name: 'CEX vault 3', address: MARKETING_BREAKDOWN.cexReserve.addresses[2].address },
+  { number: 6, name: 'Team', address: PUBLIC_WALLETS[2].address },
+  { number: 7, name: 'Community', address: PUBLIC_WALLETS[3].address },
+  { number: 8, name: 'Marketing', address: PUBLIC_WALLETS[4].address },
+  { number: 9, name: 'Game treasury', address: GAME_CONFIG.treasuryWallet },
+  { number: 10, name: 'Token pool / mint creation wallet', address: TOKEN_POOL_WALLET },
+  { number: 11, name: 'Raffle approval wallet', address: OPERATOR_WALLET },
+] as const
