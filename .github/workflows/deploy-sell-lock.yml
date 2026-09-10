@@ -278,3 +278,4 @@ jobs:
                  "chance. Next: make SELL_LOCK_PROGRAM_ID in src/lib/sellLock.ts network-aware" \
                  "(one address per network, the same way src/config.ts's NETWORKS picks an RPC" \
                  "endpoint per network) and write this address in for ${{ inputs.network || 'devnet' }}."
+          fi
