@@ -55,17 +55,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// Polls irys.getLoadedBalance() instead of a single fixed wait. irys.fund()
-// itself already waits for on-chain confirmation before returning, so a
-// thrown error from it almost always means Irys's OWN bundler node has not
-// caught up with a transfer that in fact landed — not that the money never
-// arrived. A single flat 8s sleep-then-give-up (the previous approach) was
-// too short on Devnet specifically (Irys's devnet nodes are the less-
-// maintained, less reliable ones): the user would hit the timeout, get asked
-// to sign and pay AGAIN for the same upload, and often the first payment
-// shows up moments later anyway — a real double-charge for one logo. Polling
-// for up to a minute, backing off between checks, gives the balance far more
-// realistic room to catch up before we ever ask for a second signature.
+// Polls irys.getLoadedBalance() instead of asking for a second signature.
+// irys.fund() itself already waits for the SOL transfer to confirm on-chain
+// before returning, so a thrown error from it almost always means Irys's OWN
+// bundler node (Devnet's are the less-maintained, less reliable ones) has not
+// yet indexed a payment that in fact landed — not that the money never
+// arrived. We ask the wallet to sign the fee transfer EXACTLY ONCE per
+// attempt (matching how other token launchpads behave — never 2-3 prompts
+// for one fee) and, if confirmation is slow, wait it out here with no new
+// transaction rather than firing a second, separately-charged payment.
 type IrysUploader = Awaited<ReturnType<typeof getIrysUploader>>
 type IrysPrice = Awaited<ReturnType<IrysUploader['getPrice']>>
 
@@ -74,7 +72,7 @@ async function pollForBalance(
   price: IrysPrice,
   onStatus?: (status: string) => void,
 ): Promise<boolean> {
-  const delaysMs = [3000, 3000, 5000, 5000, 8000, 8000, 8000]
+  const delaysMs = [3000, 3000, 5000, 5000, 8000, 8000, 8000, 8000, 8000, 8000, 8000, 8000]
   for (const delay of delaysMs) {
     await sleep(delay)
     const balance = await irys.getLoadedBalance()
@@ -85,13 +83,14 @@ async function pollForBalance(
 }
 
 // IMPORTANT: every call to irys.fund() creates a NEW SOL transfer and asks for
-// a NEW approval in the wallet — which is why we do not build the "it failed,
-// try again" logic here by calling fund() repeatedly (that would ask for several
-// wallet approvals back to back and take minutes, and risks charging the user
-// twice for the same upload — see pollForBalance above). Instead: after the
-// first attempt we poll for up to about a minute for the balance to catch up
-// WITHOUT sending any new transaction; only if it still has not shown up do we
-// try a second, separate payment (2 wallet approvals in total, worst case).
+// a NEW approval in the wallet. We only ever call it ONCE here — if it throws,
+// we spend up to ~90s polling the balance (see pollForBalance above) instead
+// of quietly sending a second, separately-charged transfer. If the balance
+// still has not shown up after that, we give up and tell the user to simply
+// retry: because the money may well be sitting there already, the price check
+// at the top of this function will see it on the next attempt and skip
+// funding entirely — so retrying costs at most zero extra signatures, never a
+// silent double-charge.
 async function ensureFunded(
   irys: Awaited<ReturnType<typeof getIrysUploader>>,
   connection: Connection,
@@ -106,7 +105,7 @@ async function ensureFunded(
     return
   }
 
-  let topUp = price.minus(balance).multipliedBy(1.15).integerValue()
+  const topUp = price.minus(balance).multipliedBy(1.15).integerValue()
 
   // Does the wallet actually hold that much SOL? If not, the wallet will
   // reject the transaction with "insufficient balance" anyway — detecting
@@ -122,37 +121,24 @@ async function ensureFunded(
   }
 
   onStatus?.(`Waiting for approval in your wallet for the storage fee (~${sol(topUp.toNumber())} SOL)...`)
-  let lastError: unknown
   try {
     await irys.fund(topUp)
     onStatus?.('The storage fee was confirmed.')
     return
   } catch (err) {
-    lastError = err
-  }
+    onStatus?.('The storage network did not confirm right away — waiting for it to catch up (no new transaction is sent)...')
+    if (await pollForBalance(irys, price, onStatus)) {
+      onStatus?.('The fee was confirmed in the meantime, continuing...')
+      return
+    }
 
-  onStatus?.('The storage network did not confirm right away — waiting for it to catch up (no new transaction is sent)...')
-  if (await pollForBalance(irys, price, onStatus)) {
-    onStatus?.('The fee was confirmed in the meantime, continuing...')
-    return
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(
+      `the storage network did not respond — ${detail}. Your payment may still be on its way; ` +
+        'please wait a moment and try creating the token again before paying a second time — ' +
+        'if the fee already landed, it will be detected automatically and you will not be charged again.',
+    )
   }
-
-  onStatus?.('One more approval request will appear in your wallet...')
-  try {
-    const balanceNow = await irys.getLoadedBalance()
-    topUp = price.minus(balanceNow).multipliedBy(1.15).integerValue()
-    await irys.fund(topUp)
-    onStatus?.('The storage fee was confirmed.')
-    return
-  } catch (err) {
-    lastError = err
-  }
-
-  throw new Error(
-    lastError instanceof Error
-      ? `the storage network did not respond — ${lastError.message}`
-      : 'the storage network did not respond',
-  )
 }
 
 export async function uploadLogoAndMetadata(
