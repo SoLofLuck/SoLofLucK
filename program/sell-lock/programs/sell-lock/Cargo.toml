@@ -34,3 +34,24 @@ anchor-lang = { version = "0.30", features = ["init-if-needed"] }
 anchor-spl = { version = "0.30", features = ["token_2022", "token_2022_extensions"] }
 spl-tlv-account-resolution = "0.6"
 spl-transfer-hook-interface = "0.6"
+# The exact same edition2024 chain documented in luck-game's Cargo.toml (this
+# crate shares the same anchor-lang/anchor-spl 0.30 dependency tree, so it hits
+# the identical problem): solana-program's unconstrained `blake3` dependency
+# lets cargo pick the newest blake3, which pulls in constant_time_eq/cpufeatures
+# requiring edition2024 — a feature the old rustc 1.75.0 anchor build's bundled
+# toolchain uses cannot read. Pinning blake3 to the 1.5.x series (edition2021)
+# cuts that chain. Found by actually running deploy-sell-lock.yml.
+blake3 = "~1.5"
+# arrayref 0.3.10, pulled in by blake3 1.5.0, needs a "proc-macro1" package that
+# no longer exists on crates.io. A range excluding 0.3.10 lets cargo pick a
+# version that has not been yanked (see luck-game's Cargo.toml for the same pin).
+arrayref = ">=0.3.5, <0.3.10"
+# anchor-syn 0.30.1 (compiled during Anchor's separate, host-toolchain IDL
+# generation step) calls a proc-macro2 API removed in newer releases — pin to
+# a version from around when anchor-syn 0.30.1 was published.
+proc-macro2 = "=1.0.81"
+# Keeps syn (which proc-macro2 above also constrains) old enough that
+# borsh-derive's newest version — arriving unconstrained through anchor-lang's
+# own borsh dependency — does not require a syn feature only added later.
+borsh = "=1.5.1"
+borsh-derive = "=1.5.1"
