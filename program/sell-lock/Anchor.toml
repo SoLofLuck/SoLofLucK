@@ -5,13 +5,18 @@ resolution = true
 skip-lint = false
 
 # Deployed to Devnet through Solana Playground (see program/sell-lock/README.md).
-# It has not been deployed to mainnet yet; until it is, the mainnet ID below is a
-# placeholder.
+# It has not been deployed to mainnet yet; until it is, the mainnet entry below
+# is a placeholder — reusing the Devnet address rather than an unrelated real
+# program's ID (the earlier placeholder here, a mistyped System Program
+# address, was not even a valid 32-byte pubkey and broke `anchor keys sync`
+# with "String is the wrong size"). `anchor keys sync` overwrites this with
+# the real address the moment sell-lock is actually opened on mainnet
+# (see .github/workflows/deploy-sell-lock.yml, first_deploy=true).
 [programs.devnet]
 sell_lock = "3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5"
 
 [programs.mainnet]
-sell_lock = "11111111111111111111111111111111111111112"
+sell_lock = "3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5"
 
 [registry]
 url = "https://api.apr.dev"
