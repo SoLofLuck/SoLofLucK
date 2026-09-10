@@ -3,6 +3,15 @@ name = "sell-lock"
 version = "0.1.0"
 description = "A Token-2022 Transfer Hook: it rejects transfers into a pool's vault (that is, sales) for a given period, and once the period is over it opens up to everyone automatically and permanently."
 edition = "2021"
+# anchor build falls back to a bundled toolchain with an old rustc (1.75.0,
+# same as luck-game/luck-distributor — see their Cargo.toml's own comment)
+# when it cannot find `solana-install` on PATH. Declaring rust-version here
+# makes `cargo generate-lockfile` resolve every dependency down to a version
+# that old compiler can actually build, and keeps the lockfile itself in the
+# v3 format that old cargo can parse (v4, cargo's modern default, fails with
+# "lock file version 4 requires -Znext-lockfile-bump" — found by actually
+# running deploy-sell-lock.yml, since this crate never had that constraint).
+rust-version = "1.75.0"
 
 [lib]
 crate-type = ["cdylib", "lib"]
