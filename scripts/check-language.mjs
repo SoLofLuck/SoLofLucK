@@ -179,7 +179,7 @@ fee fees pool pools liquidity supply mint burn lock locked unlock claim claimed 
 ticket tickets prize prizes spin spins game play player players win wins won lose lost
 error errors failed fails success ok cancel confirm try please note warning warnings info required
 optional name symbol decimals description logo website twitter telegram image file link url
-page tab tabs solana devnet mainnet phantom solflare raydium streamflow irys metadata authority
+page tab tabs solana devnet mainnet phantom solflare raydium streamflow pinata ipfs metadata authority
 day days week weeks month months hour hours minute minutes second seconds time date
 total left remaining available used spent paid free bonus small big jackpot house share shares
 program programs account accounts vault treasury owner delegate signer slot hash block chain

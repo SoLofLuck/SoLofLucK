@@ -18,7 +18,7 @@ Tokenomics and Presale sub-tabs.
 ### The general toolbox
 
 - Wallet connection (Phantom, Solflare), Devnet/Mainnet network selection.
-- **Create Token**: an SPL Mint, logo upload (Irys/Arweave), on-chain metadata,
+- **Create Token**: an SPL Mint, logo upload (IPFS via Pinata), on-chain metadata,
   revoking mint/freeze authority, immutable metadata, and the Sell Lock
   (anti-snipe).
 - **Liquidity Pool**: searching for and creating a Raydium CPMM pool, adding and
@@ -102,6 +102,6 @@ the right setting for a root domain.
   [@solana/spl-token](https://github.com/solana-labs/solana-program-library)
 - [@solana/wallet-adapter](https://github.com/anza-xyz/wallet-adapter)
 - [@metaplex-foundation/mpl-token-metadata](https://github.com/metaplex-foundation/mpl-token-metadata)
-- [Irys](https://irys.xyz/) (permanent storage for the logo/metadata)
+- [Pinata](https://pinata.cloud/) (IPFS storage for the logo/metadata)
 - [@raydium-io/raydium-sdk-v2](https://github.com/raydium-io/raydium-sdk-V2) (the liquidity pool)
 - [Streamflow](https://streamflow.finance) (locking liquidity)

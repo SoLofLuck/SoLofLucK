@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { computeTokenFeeSol, createToken, type TokenFormData, type CreateTokenResult } from '../lib/createToken'
-import { uploadLogoAndMetadata } from '../lib/irys'
+import { uploadLogoAndMetadata } from '../lib/pinata'
 import { DEFAULT_DECIMALS, FEE_WALLET, FEE_PER_AUTHORITY_SOL, type NetworkId } from '../config'
 import { ResultCard } from './ResultCard'
 import { LogoCropModal } from './LogoCropModal'
@@ -137,9 +137,6 @@ export function TokenForm({ network }: Props) {
               twitter: form.twitter,
               telegram: form.telegram,
             },
-            connection,
-            wallet,
-            network,
             setStatus,
           )
         } catch (logoErr) {
@@ -268,9 +265,8 @@ export function TokenForm({ network }: Props) {
 
         <small>
           You crop it to a square right after choosing it, so the logo always comes out the right shape.
-          It is then written permanently to the network for a small fee you approve in your wallet
-          alongside the token creation — no need to sign up to a third-party site. If you leave it empty
-          the token is still created fine, just without a logo.
+          It is then uploaded to decentralized storage automatically — no extra wallet approval needed.
+          If you leave it empty the token is still created fine, just without a logo.
         </small>
       </div>
 

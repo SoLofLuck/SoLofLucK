@@ -1,7 +1,7 @@
 // The image a user picks (a phone photo, say) can be several MB. Token logos
 // should be small — so before uploading we scale it down to a small square in
-// the browser and recompress it. That noticeably reduces both the storage fee
-// paid to Irys and the upload time (and with it the risk of a network timeout).
+// the browser and recompress it. That noticeably reduces the upload time (and
+// with it the risk of a network timeout).
 //
 // On mobile this is harder than it looks: on Android a file chosen from the
 // gallery is backed by a `content://` URI, and `createImageBitmap()` can fail

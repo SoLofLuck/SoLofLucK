@@ -29,9 +29,9 @@ export default defineConfig({
   plugins: [
     react(),
     copyIndexTo404(),
-    // The Irys/Solana libraries expect Node's built-in modules (crypto, stream,
-    // buffer and so on) in the browser; without them, image uploads (Irys) fail
-    // with a runtime error.
+    // The Solana libraries (@solana/web3.js, spl-token, wallet adapters) expect
+    // Node's built-in modules (crypto, stream, buffer and so on) in the
+    // browser; without them, they fail with a runtime error.
     nodePolyfills({
       include: ['crypto', 'stream', 'buffer', 'util', 'process'],
       globals: {
