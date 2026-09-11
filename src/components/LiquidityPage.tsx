@@ -667,9 +667,11 @@ function PoolCreate({
 
       {FEE_WALLET && (
         <div className="fee-note">
-          Service fee: <strong>{POOL_FEE_AMOUNT_SOL} SOL</strong> plus the network transaction fee, charged as a
-          separate small transaction right before the pool is created. The fee is shown in your wallet before you
-          approve it.
+          Service fee: <strong>{POOL_FEE_AMOUNT_SOL} SOL</strong>, charged as a separate small transaction right
+          after the pool is successfully created (never before — if pool creation fails, you are not charged).
+          On top of that, Solana itself charges a small network fee plus rent for the pool's accounts — a few
+          thousandths of a SOL, on top of the service fee above. Your wallet shows the exact total before you
+          approve anything.
         </div>
       )}
 
@@ -689,6 +691,11 @@ function PoolCreate({
       <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
         {loading ? 'Creating...' : wallet.connected ? 'Create Pool' : 'Connect A Wallet First'}
       </button>
+      {FEE_WALLET && (
+        <small className="fee-disclaimer">
+          + Solana network fee (varies, always shown in your wallet before you approve)
+        </small>
+      )}
     </form>
   )
 }

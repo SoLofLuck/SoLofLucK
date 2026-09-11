@@ -407,9 +407,9 @@ export function TokenForm({ network }: Props) {
 
       {FEE_WALLET && (
         <div className="fee-note">
-          Service fee: <strong>{computeTokenFeeSol(form)} SOL</strong> plus the network transaction fee (the base
-          fee plus the priced authorities checked above). The fee is shown as part of the transaction you approve
-          in your wallet.
+          Service fee: <strong>{computeTokenFeeSol(form)} SOL</strong>. On top of that, Solana itself charges a
+          small network fee plus rent for the accounts being created — a few thousandths of a SOL, on top of the
+          service fee above. Your wallet shows the exact total before you approve anything.
         </div>
       )}
 
@@ -420,6 +420,11 @@ export function TokenForm({ network }: Props) {
       <button type="submit" className="btn btn--primary btn--block" disabled={loading}>
         {loading ? 'Creating...' : wallet.connected ? 'Create Token' : 'Connect A Wallet First'}
       </button>
+      {FEE_WALLET && (
+        <small className="fee-disclaimer">
+          + Solana network fee (varies, always shown in your wallet before you approve)
+        </small>
+      )}
     </form>
   )
 }
