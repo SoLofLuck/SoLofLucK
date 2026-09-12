@@ -16,6 +16,7 @@ import {
   type MintRef,
   type PoolSummary,
 } from '../lib/raydium'
+import { createDlmmPool } from '../lib/meteora'
 import { LOCK_DURATION_OPTIONS, lockLpTokens, type LockResult } from '../lib/lock'
 import {
   SELL_LOCK_DURATION_OPTIONS,
@@ -381,6 +382,27 @@ function PoolCreate({
         mintB = await getMintInfo(connection, mintBAddr.trim())
       } catch {
         throw new Error('The token B mint address is invalid or was not found.')
+      }
+
+      // Raydium's CPMM program rejects any Token-2022 mint with a Transfer
+      // Hook extension outright (confirmed on chain: "Not support token_2022
+      // mint extension", custom error 6007) — sell-lock-enabled tokens use
+      // exactly that extension. Meteora's DLMM genuinely supports it instead
+      // (see meteora.ts's own comment), so those tokens' pools are created
+      // there rather than on Raydium; everything after pool creation (this
+      // result card, the "lock selling into this pool" step below) is
+      // unchanged either way.
+      setStatus('Checking the token for Anti-Snipe Sell Lock...')
+      const usesSellLock =
+        (await hasSellLockHook(connection, new PublicKey(mintAAddr.trim()))) ||
+        (await hasSellLockHook(connection, new PublicKey(mintBAddr.trim())))
+
+      if (usesSellLock) {
+        const res = await createDlmmPool(connection, wallet, network, mintA, mintB, amountA, amountB, payer, setStatus)
+        setResult(res)
+        setStatus('')
+        setLoading(false)
+        return
       }
 
       const raydium = await loadRaydium(connection, wallet, network)
