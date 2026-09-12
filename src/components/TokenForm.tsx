@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'r
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { computeTokenFeeSol, createToken, type TokenFormData, type CreateTokenResult } from '../lib/createToken'
 import { uploadLogoAndMetadata } from '../lib/pinata'
+import { stabilizeImageFile } from '../lib/image'
 import { DEFAULT_DECIMALS, FEE_WALLET, FEE_PER_AUTHORITY_SOL, type NetworkId } from '../config'
 import { ResultCard } from './ResultCard'
 import { LogoCropModal } from './LogoCropModal'
@@ -62,7 +63,7 @@ export function TokenForm({ network }: Props) {
     setForm((f) => ({ ...f, [key]: value }))
   }
 
-  function handleLogoChange(e: ChangeEvent<HTMLInputElement>) {
+  async function handleLogoChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) {
@@ -74,6 +75,27 @@ export function TokenForm({ network }: Props) {
       return
     }
     setError('')
+    // Read the file's bytes into memory right now, as early as possible,
+    // before ever opening the crop tool. On Android a file picked from the
+    // gallery can be backed by a content:// URI whose OS-granted access is
+    // short-lived and can race with (or expire before) whatever reads it —
+    // reported live as both the crop preview failing to render AND, after an
+    // earlier fix moved the preview onto this same stabilized path, the read
+    // itself throwing outright ("This file could not be read"). Doing it
+    // immediately here, synchronously with the pick, and with the retries
+    // inside stabilizeImageFile, gives it the best chance of succeeding.
+    let stableFile: File
+    try {
+      stableFile = await stabilizeImageFile(file)
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `${err.message} Try picking the image again, or a different file.`
+          : 'The selected file could not be read. Try picking the image again, or a different file.',
+      )
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
     // The actual scaling/compression now happens once the user confirms a
     // crop (see handleCropConfirm) — this only opens the crop tool. Yesterday's
     // "I uploaded a photo but it wasn't added" complaint traced back to a
@@ -81,7 +103,7 @@ export function TokenForm({ network }: Props) {
     // handleSubmit's logoWarning path); making the user actively pick and
     // confirm a square region here, rather than auto-guessing one, is the fix
     // this ticket asked for.
-    setCropFile(file)
+    setCropFile(stableFile)
   }
 
   function handleCropCancel() {

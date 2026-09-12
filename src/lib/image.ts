@@ -110,6 +110,10 @@ async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality
   return new Blob([bytes], { type: mimeType })
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 // Reads a File's bytes into memory immediately (see the Android content://
 // note above), independent of what happens to it afterwards. Exported so the
 // crop modal's own preview <img> (LogoCropModal.tsx) can go through the same
@@ -117,17 +121,50 @@ async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality
 // File — that direct path is exactly the fragile one described above, and a
 // content://-backed gallery pick failing to render there (rather than in the
 // resize/crop step, which already used this function) was reported live.
+//
+// file.arrayBuffer() itself can ALSO fail outright on some of these
+// content://-backed files (reported live as "This file could not be read"),
+// not just the <img src> path above — a transient race where the OS grants
+// the picker's URI permission a moment after the File object is handed to us,
+// rather than at the same instant. A couple of short retries clears it in
+// practice without meaningfully delaying the happy path.
 export async function readAsStableBlob(file: File): Promise<Blob> {
-  const buffer = await file.arrayBuffer()
-  if (buffer.byteLength === 0) {
-    throw new Error('The selected file could not be read (it came back empty).')
+  const delaysMs = [0, 150, 400]
+  let lastError: unknown
+  for (const delay of delaysMs) {
+    if (delay) await sleep(delay)
+    try {
+      const buffer = await file.arrayBuffer()
+      if (buffer.byteLength === 0) {
+        throw new Error('the file came back empty')
+      }
+      return new Blob([buffer], { type: file.type || 'image/jpeg' })
+    } catch (err) {
+      lastError = err
+    }
   }
-  return new Blob([buffer], { type: file.type || 'image/jpeg' })
+  throw new Error(
+    lastError instanceof Error
+      ? `The selected file could not be read: ${lastError.message}`
+      : 'The selected file could not be read.',
+  )
 }
 
 function canvasBlobToFile(blob: Blob, file: File, keepPng: boolean): File {
   const baseName = file.name.replace(/\.[^./]+$/, '') || 'logo'
   return new File([blob], `${baseName}.${keepPng ? 'png' : 'jpg'}`, { type: blob.type })
+}
+
+// Reads the picked file into a fully in-memory File as early as possible —
+// called right when the file input's change event fires (TokenForm.tsx),
+// before the crop modal even opens. The sooner we read a content://-backed
+// file's bytes, the less time there is for the OS's transient URI grant to
+// race or expire; the File this returns is plain in-memory data with no tie
+// back to that URI, so everything downstream (the crop modal's preview,
+// cropImageFile, resizeImageFile) works with it unconditionally.
+export async function stabilizeImageFile(file: File): Promise<File> {
+  const blob = await readAsStableBlob(file)
+  return new File([blob], file.name || 'logo', { type: blob.type })
 }
 
 export async function resizeImageFile(file: File): Promise<File> {
