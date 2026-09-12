@@ -5,7 +5,6 @@ import type { ApiV3PoolInfoStandardItemCpmm, CpmmKeys } from '@raydium-io/raydiu
 import {
   NATIVE_SOL_MINT,
   addCpmmLiquidity,
-  chargePoolCreationFee,
   createCpmmPool,
   getMintInfo,
   getPoolById,
@@ -293,10 +292,6 @@ function PoolCreate({
   // must explicitly press "Create Anyway" (setting the ref below) to proceed.
   const [existingPoolWarning, setExistingPoolWarning] = useState('')
   const skipDuplicateCheckRef = useRef(false)
-  // Set only if the pool was created successfully but the separate fee
-  // transaction afterward failed — the pool itself cannot be undone, so this
-  // is a soft warning shown alongside the result, not a blocking error.
-  const [feeWarning, setFeeWarning] = useState('')
 
   // After a pool is created, is EITHER of its two mints one that was created
   // with this site's sell-lock Transfer Hook (see src/lib/sellLock.ts)? If so
@@ -354,13 +349,13 @@ function PoolCreate({
     e.preventDefault()
     setError('')
     setExistingPoolWarning('')
-    setFeeWarning('')
     setResult(null)
 
     if (!wallet.connected || !wallet.publicKey) {
       setError('Connect your wallet first to continue.')
       return
     }
+    const payer = wallet.publicKey
     if (!mintAAddr.trim() || !mintBAddr.trim()) {
       setError('Enter both token mint addresses.')
       return
@@ -413,28 +408,21 @@ function PoolCreate({
       }
       skipDuplicateCheckRef.current = false
 
-      // The fee is charged AFTER the pool is actually created, not before: it
-      // is a separate transaction from the Raydium-built pool-creation one
-      // (see chargePoolCreationFee's own comment), so the two cannot be made
-      // atomic. Charging first would mean a rejected or failed pool-creation
-      // signature (the wallet's SECOND popup) still costs the user the fee
-      // for a pool that was never created.
-      const res = await createCpmmPool(raydium, network, mintA, mintB, amountA, amountB, setStatus)
+      // The service fee is folded into this same pool-creation transaction
+      // (see buildPoolFeeInstruction's comment in raydium.ts) — one signature
+      // either creates the pool and pays the fee together, or does neither.
+      const res = await createCpmmPool(
+        raydium,
+        network,
+        mintA,
+        mintB,
+        amountA,
+        amountB,
+        payer,
+        setStatus,
+      )
       setResult(res)
       setStatus('')
-
-      try {
-        await chargePoolCreationFee(connection, wallet, setStatus)
-      } catch (feeErr) {
-        // The pool already exists at this point — that cannot be undone, so
-        // this is a warning about the fee, not a failure of the operation.
-        console.error('Pool creation fee error:', feeErr)
-        setFeeWarning(
-          feeErr instanceof Error
-            ? `The pool was created, but the service fee could not be charged: ${feeErr.message}`
-            : 'The pool was created, but the service fee could not be charged.',
-        )
-      }
     } catch (err) {
       console.error(err)
       setError(err instanceof Error ? err.message : 'Something went wrong while creating the pool.')
@@ -510,7 +498,6 @@ function PoolCreate({
         <div className="result-card__icon">✅</div>
         <h2>Pool Created!</h2>
         <p>Your liquidity pool was created on chain and the amounts you entered were deposited.</p>
-        {feeWarning && <div className="alert alert--warning">{feeWarning}</div>}
         <div className="result-card__row">
           <span>Pool ID</span>
           <code>{result.poolId}</code>
@@ -667,8 +654,8 @@ function PoolCreate({
 
       {FEE_WALLET && (
         <div className="fee-note">
-          Service fee: <strong>{POOL_FEE_AMOUNT_SOL} SOL</strong>, charged as a separate small transaction right
-          after the pool is successfully created (never before — if pool creation fails, you are not charged).
+          Service fee: <strong>{POOL_FEE_AMOUNT_SOL} SOL</strong>, bundled into the same transaction as the pool
+          creation itself — one signature either creates the pool and pays the fee together, or does neither.
           On top of that, Solana itself charges a small network fee plus rent for the pool's accounts — a few
           thousandths of a SOL, on top of the service fee above. Your wallet shows the exact total before you
           approve anything.

@@ -12,7 +12,13 @@ import {
   type CpmmKeys,
   type ApiV3Token,
 } from '@raydium-io/raydium-sdk-v2'
-import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram } from '@solana/web3.js'
+import {
+  Connection,
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  type TransactionInstruction,
+} from '@solana/web3.js'
 import {
   getAssociatedTokenAddressSync,
   getMint,
@@ -23,7 +29,6 @@ import BN from 'bn.js'
 import Decimal from 'decimal.js'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
 import { FEE_WALLET, POOL_FEE_AMOUNT_SOL, type NetworkId } from '../config'
-import { sendInstructions } from './sendTx'
 
 export const NATIVE_SOL_MINT = 'So11111111111111111111111111111111111111112'
 
@@ -209,40 +214,30 @@ export interface CreatePoolResult {
   vaultB: string
 }
 
-/**
- * The optional service fee for using this site's Liquidity Pool tool (see the
- * "Service fee" comment on FEE_WALLET/POOL_FEE_AMOUNT_SOL in config.ts).
- *
- * Sent as its own small transaction BEFORE pool creation, rather than bundled
- * into the pool-creation transaction the way the Create Token fee is: that
- * transaction is built and signed by the Raydium SDK's own `cpmm.createPool()`
- * call, so there is no single hand-built `Transaction` here to append a
- * transfer instruction to. A short extra wallet approval is a small price for
- * not reaching into the SDK's internals.
- */
-export async function chargePoolCreationFee(
-  connection: Connection,
-  wallet: WalletContextState,
-  onStatus?: (status: string) => void,
-): Promise<void> {
-  if (!FEE_WALLET || POOL_FEE_AMOUNT_SOL <= 0) return
-  if (!wallet.publicKey || !wallet.signTransaction) {
-    throw new Error('Connect your wallet first to continue.')
-  }
-  onStatus?.('Waiting for approval of the service fee...')
-  await sendInstructions(
-    connection,
-    { publicKey: wallet.publicKey, signTransaction: wallet.signTransaction },
-    [
-      SystemProgram.transfer({
-        fromPubkey: wallet.publicKey,
-        toPubkey: new PublicKey(FEE_WALLET),
-        lamports: Math.round(POOL_FEE_AMOUNT_SOL * LAMPORTS_PER_SOL),
-      }),
-    ],
-    onStatus,
-    { confirmMessage: 'Waiting for approval of the service fee...' },
-  )
+// The optional service fee for using this site's Liquidity Pool tool (see the
+// "Service fee" comment on FEE_WALLET/POOL_FEE_AMOUNT_SOL in config.ts).
+//
+// This used to be sent as its OWN, separate transaction right after pool
+// creation succeeded — deliberately after, so a failed pool-creation signature
+// would never cost the user a fee for a pool that was never created. But that
+// meant the fee transaction was a SECOND, independent wallet approval: a user
+// could simply approve the pool-creation signature and then close/reject the
+// fee prompt, walking away with a fully working pool and paying nothing —
+// caught by live testing.
+//
+// Fixed by folding this instruction into the SAME transaction the Raydium SDK
+// builds for pool creation, using the `builder` it returns (see
+// createCpmmPool below): one signature now either creates the pool AND pays
+// the fee together, or (if rejected, or if the transaction fails on chain)
+// does neither. There is no longer a state where the pool exists without the
+// fee having been paid.
+function buildPoolFeeInstruction(payer: PublicKey): TransactionInstruction | null {
+  if (!FEE_WALLET || POOL_FEE_AMOUNT_SOL <= 0) return null
+  return SystemProgram.transfer({
+    fromPubkey: payer,
+    toPubkey: new PublicKey(FEE_WALLET),
+    lamports: Math.round(POOL_FEE_AMOUNT_SOL * LAMPORTS_PER_SOL),
+  })
 }
 
 export async function createCpmmPool(
@@ -252,6 +247,7 @@ export async function createCpmmPool(
   mintB: MintRef,
   uiAmountA: string,
   uiAmountB: string,
+  payer: PublicKey,
   onStatus?: (status: string) => void,
 ): Promise<CreatePoolResult> {
   onStatus?.('Fetching the fee settings...')
@@ -266,7 +262,7 @@ export async function createCpmmPool(
   const mintBAmount = new BN(new Decimal(uiAmountB).mul(10 ** mintB.decimals).toFixed(0))
 
   onStatus?.('Preparing the pool transaction...')
-  const { execute } = await raydium.cpmm.createPool({
+  const { builder, buildProps } = await raydium.cpmm.createPool({
     programId,
     poolFeeAccount,
     mintA: toApiToken(mintA),
@@ -281,7 +277,20 @@ export async function createCpmmPool(
     txVersion: TxVersion.V0,
   })
 
-  onStatus?.('Waiting for approval in your wallet...')
+  // Append the service-fee transfer to the SAME builder before it is turned
+  // into a transaction, rather than building a second one — see
+  // buildPoolFeeInstruction's comment above for why this has to be atomic.
+  const feeIx = buildPoolFeeInstruction(payer)
+  if (feeIx) {
+    builder.addInstruction({ instructions: [feeIx] })
+  }
+  const { execute } = await builder.buildV0(buildProps)
+
+  onStatus?.(
+    feeIx
+      ? 'Waiting for approval in your wallet (pool creation + service fee, one transaction)...'
+      : 'Waiting for approval in your wallet...',
+  )
   const { txId } = await execute({ sendAndConfirm: true })
 
   onStatus?.('Verifying the transaction result...')
