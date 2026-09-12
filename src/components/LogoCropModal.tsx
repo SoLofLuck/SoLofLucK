@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { cropImageFile } from '../lib/image'
+import { cropImageFile, readAsStableBlob } from '../lib/image'
 
 // A square-crop tool for the token logo — drag to reposition, the slider to
 // zoom. Deliberately plain CSS transforms + pointer events rather than a
@@ -32,9 +32,30 @@ export function LogoCropModal({ file, onCancel, onConfirm }: Props) {
   )
 
   useEffect(() => {
-    const url = URL.createObjectURL(file)
-    setPreviewUrl(url)
-    return () => URL.revokeObjectURL(url)
+    let url = ''
+    let cancelled = false
+    setError('')
+    // Building the object URL from the raw File directly (URL.createObjectURL(file))
+    // is exactly the fragile path src/lib/image.ts's own comment warns about: on
+    // Android, a file picked from the gallery can be backed by a content:// URI that
+    // fails to render when handed to <img> this way, even though its bytes are
+    // perfectly readable — which is what a live user hit ("This image could not be
+    // opened") with a plain JPEG screenshot. Reading it into a stable, in-memory Blob
+    // first (the same stabilization the actual crop/resize step already used) fixes it.
+    ;(async () => {
+      try {
+        const stableBlob = await readAsStableBlob(file)
+        if (cancelled) return
+        url = URL.createObjectURL(stableBlob)
+        setPreviewUrl(url)
+      } catch {
+        if (!cancelled) setError('This file could not be read. Try a different image.')
+      }
+    })()
+    return () => {
+      cancelled = true
+      if (url) URL.revokeObjectURL(url)
+    }
   }, [file])
 
   // baseScale: the zoom level at which the image's SHORTER side exactly fills

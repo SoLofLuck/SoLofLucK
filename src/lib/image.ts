@@ -111,8 +111,13 @@ async function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality
 }
 
 // Reads a File's bytes into memory immediately (see the Android content://
-// note above), independent of what happens to it afterwards.
-async function readAsStableBlob(file: File): Promise<Blob> {
+// note above), independent of what happens to it afterwards. Exported so the
+// crop modal's own preview <img> (LogoCropModal.tsx) can go through the same
+// stabilization instead of calling URL.createObjectURL directly on the raw
+// File — that direct path is exactly the fragile one described above, and a
+// content://-backed gallery pick failing to render there (rather than in the
+// resize/crop step, which already used this function) was reported live.
+export async function readAsStableBlob(file: File): Promise<Blob> {
   const buffer = await file.arrayBuffer()
   if (buffer.byteLength === 0) {
     throw new Error('The selected file could not be read (it came back empty).')
