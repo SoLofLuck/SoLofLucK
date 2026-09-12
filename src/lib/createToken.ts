@@ -297,6 +297,26 @@ export async function createToken(
     )
   }
 
+  // Anti-Snipe Sell Lock: permanently revoke the Transfer Hook's own
+  // authority (never a user choice — this always happens when the hook is
+  // enabled). This costs nothing: nothing in this app ever calls the "Update
+  // Transfer Hook" instruction, so an unrevoked authority was never doing
+  // anything for us. What it WAS doing is blocking every Meteora DLMM pool
+  // creation attempt for the token: Meteora only allows a Transfer Hook
+  // permissionlessly (no manual "token badge" approval from their team) when
+  // its authority is revoked — confirmed by an on-chain
+  // "UnsupportedMintExtension" rejection from a token created before this
+  // fix (authority was left set to the creator's wallet), and by Meteora's
+  // own docs. Revoking it here, in the very same transaction that creates
+  // the hook, means every sell-lock token is Meteora-pool-eligible from the
+  // moment it exists — no separate step, and no window where it is not yet
+  // revoked.
+  if (sellLockEnabled) {
+    tx.add(
+      createSetAuthorityInstruction(mint, payer, AuthorityType.TransferHookProgramId, null, [], tokenProgramId),
+    )
+  }
+
   // 7) The optional service fee (added only if the site owner has set FEE_WALLET) —
   // the base fee plus a per-authority charge for each checkbox turned on; see
   // computeTokenFeeSol above.
