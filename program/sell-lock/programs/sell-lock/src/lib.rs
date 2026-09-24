@@ -115,14 +115,33 @@ pub mod sell_lock {
             }
         }
 
-        // Verify that the vaults really belong to this mint and to the
-        // Token-2022/Token program — this stops a fake or random "vault" address
-        // being passed in and leaving the lock blocking nothing at all.
+        // Verify that BOTH vaults really belong to this mint and to the
+        // Token-2022/Token program — this stops a fake or random "vault"
+        // address being passed in and leaving the lock blocking nothing at
+        // all. Both sides of a DLMM pool (reserveX/reserveY) are token
+        // accounts of the mint they hold, WSOL included, so checking both the
+        // same way is correct — there is no "the B side might be raw
+        // lamports" case to special-case here.
         require_keys_eq!(
             ctx.accounts.pool_vault_a.mint,
             ctx.accounts.mint.key(),
             SellLockError::VaultMintMismatch
         );
+        require_keys_eq!(
+            ctx.accounts.pool_vault_b.mint,
+            ctx.accounts.mint.key(),
+            SellLockError::VaultMintMismatch
+        );
+
+        // Neither check above proves these are the SPECIFIC pool's vaults
+        // (as opposed to any two token accounts of this mint the signer
+        // happens to control) — that would require hardcoding one DEX
+        // program's PDA derivation here, which would break the moment a
+        // second venue is supported. The real guarantee is upstream: only
+        // this mint's mint authority may call this instruction (checked
+        // above), and the website calls it from the same flow that just
+        // created the pool, with the addresses that flow returned — never
+        // from user-typed input. See SECURITY.md for this trust boundary.
 
         let config = &mut ctx.accounts.launch_config;
         config.mint = ctx.accounts.mint.key();
@@ -143,11 +162,24 @@ pub mod sell_lock {
     ///   the period has not elapsed -> reject the transaction.
     /// - Otherwise (a purchase, or a wallet-to-wallet transfer) -> allow it.
     ///
-    /// If the LaunchConfig account has not been created yet (the pool has not
-    /// been set up), this function is never called at all, because the
-    /// extra_account_meta_list resolution fails; in that case the transfer
-    /// proceeds normally (unrestricted) — so this does not affect ordinary token
-    /// transfers made before the pool exists (a gift between wallets, say).
+    /// CORRECTED (an earlier version of this comment claimed the opposite):
+    /// extra_account_meta_list is created once at mint creation, before any
+    /// pool exists, and its entry always resolves to this mint's LaunchConfig
+    /// PDA address regardless of whether that PDA has been initialized yet —
+    /// so this function DOES still get called on every transfer of this
+    /// mint, pool or no pool. If LaunchConfig has not been created yet (i.e.
+    /// register_launch has not run), deserializing it below fails and the
+    /// WHOLE TRANSFER REVERTS — every transfer of this mint is blocked, not
+    /// merely unrestricted, until register_launch runs.
+    ///
+    /// This is why the website (see createDlmmPool in src/lib/meteora.ts)
+    /// calls register_launch immediately after creating the (still-empty)
+    /// pool but BEFORE the transaction that seeds it with liquidity — that
+    /// seeding deposit is itself a transfer of this mint, and would revert
+    /// against a not-yet-existing LaunchConfig otherwise. Registering later
+    /// (e.g. from a separate, optional post-creation button) is not just a
+    /// risk window — it never had a chance to run at all, because the
+    /// seeding step ahead of it would already have failed.
     ///
     /// Token-2022's transfer hook interface uses its own raw discriminator format
     /// rather than Anchor's standard 8-byte sighash discriminator. That is why
@@ -252,9 +284,10 @@ pub struct RegisterLaunch<'info> {
     pub mint: InterfaceAccount<'info, Mint>,
 
     pub pool_vault_a: InterfaceAccount<'info, TokenAccount>,
-    /// CHECK: stored only as an address; because the B side is usually a
-    /// SOL/WSOL vault it can be of a different type.
-    pub pool_vault_b: UncheckedAccount<'info>,
+    // The B side is WSOL (wrapped, never raw lamports) on every DEX this
+    // program integrates with, so it is a real token account too — see the
+    // mint check on both vaults above.
+    pub pool_vault_b: InterfaceAccount<'info, TokenAccount>,
 
     pub system_program: Program<'info, System>,
 }

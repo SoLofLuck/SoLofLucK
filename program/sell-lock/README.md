@@ -7,16 +7,42 @@ that pool for a chosen period (15 min / 1 hour / 5 hours / 24 hours) — buying
 stays open the whole time. When the period is over, selling opens up for everyone
 automatically, with no transaction needed.
 
-## Status: deployed to Devnet ✅
+## Status: deployed to Devnet, but STALE — redeploy required before further testing ⚠️
 
 **Program ID (Devnet):** `3SgfMbBMbsaB21QaZgcGmRYbUTGGEyErJipxM8u2Uqy5`
 
 It was built and deployed to Devnet step by step together with the user through
 Solana Playground (beta.solpg.io) — with no local computer or Rust/Anchor/Solana
-CLI installation, entirely from a phone browser. It has not been integrated into
-the website yet (the TokenForm / Create Pool flows) — that is the next step.
+CLI installation, entirely from a phone browser.
+
+**The bytecode currently live at that address predates several fixes now in
+this source file** (the `NotMintAuthority`/`NoMintAuthority` front-running
+guard on `register_launch`, the `pool_vault_b` mint check, and the corrected
+`fallback` doc comment) — a Meteora reviewer confirmed this by inspecting the
+on-chain binary's error strings. **Redeploy from this source before running
+any further devnet tests or reapplying for a Token Badge.** Steps: repeat the
+Solana Playground flow below with the current `lib.rs`, or build+deploy
+locally with the Anchor CLI (same program ID, since it is a redeploy of the
+same upgradeable program, not a fresh one).
 
 It has **not been deployed to mainnet**.
+
+### The upgrade authority
+
+This program is upgradeable, and unlike `luck-game`/`luck-distributor` (see
+the root `SECURITY.md`), it was NOT deployed through the CI pipeline that
+records a source→bytecode sha256 match on every deploy — it was deployed
+by hand through Solana Playground, so there is currently no way for a third
+party to verify the live bytecode matches this source at all (this is
+exactly the gap the Meteora review above caught). Until this is folded into
+the same CI-verified deploy path as the other two programs, treat the
+upgrade authority as an open, undocumented centralization risk: whoever
+holds it can replace this program's logic for every token that uses it —
+revoking a token's own Transfer Hook authority does NOT protect against
+this, since the program ID (and therefore what every mint's hook points to)
+stays the same while the code behind it changes. This must be resolved
+(either verifiable CI deploys, or the authority set to `None` once the code
+is trusted) before mainnet.
 
 ## Problems solved during the build (in case a redeploy is ever needed)
 
@@ -73,15 +99,25 @@ It has **not been deployed to mainnet**.
 
 ## Known, not yet addressed matters (v1 limitations)
 
-- `register_launch` can currently be called **whoever the signer is** (there is
-  only a duration and vault address check). In theory somebody could try to make
-  that call in your place (with a shorter duration, say) just before or after the
-  real pool is created. In the website integration this will be done inside the
-  same transaction/flow (back to back with creating the pool), so the practical
-  risk is low, but it can be tightened up later.
-- Whether Raydium CPMM triggers our Transfer Hook correctly on swaps has **not
-  been tested yet** — this will be verified with the website integration plus a
-  real mint/pool/swap attempt.
+- `register_launch` requires the signer to be the mint's own mint authority
+  (fixed — see the "gate initialize()/register_launch() to their real owner"
+  commit), so a third party can no longer front-run it. It is still a
+  **trust-based** vault check: the program verifies `pool_vault_a`/
+  `pool_vault_b` belong to the right mint, not that they are cryptographically
+  proven to be one specific DEX's real pool accounts (that would require
+  hardcoding one DEX's PDA derivation here). The real guarantee is that only
+  this mint's own mint authority can call it, and the website always calls it
+  with the addresses the pool-creation call itself just returned — never from
+  free-form user input.
+- A second pool for the same mint on any venue (including a second Meteora
+  pool) is **not covered** by the lock — `LaunchConfig` is a one-shot,
+  per-mint account tied to the ONE pair of vaults it was registered with.
+- Whether Meteora DLMM's swap path triggers our Transfer Hook correctly has
+  **not been tested end to end yet** — blocked on the Meteora Token Badge
+  approval for this mint's TransferHook extension (see the root project's
+  Meteora application).
+- The devnet deploy is currently stale — see "Status" above. Redeploy before
+  any further testing.
 - It has not been deployed to mainnet.
 
 ## The next step

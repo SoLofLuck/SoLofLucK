@@ -11,6 +11,7 @@ import Decimal from 'decimal.js'
 import { FEE_WALLET, POOL_FEE_AMOUNT_SOL, type NetworkId } from '../config'
 import { sendInstructions } from './sendTx'
 import type { CreatePoolResult, MintRef } from './raydium'
+import { registerLaunch } from './sellLock'
 
 // Raydium's CPMM program explicitly rejects any Token-2022 mint carrying a
 // Transfer Hook extension (confirmed by reading raydium-cp-swap's own
@@ -85,6 +86,13 @@ export async function createDlmmPool(
   uiAmountB: string,
   payer: PublicKey,
   onStatus?: (status: string) => void,
+  // When the pair includes a sell-lock-enabled (Transfer Hook) mint, its
+  // launch MUST be registered here, between creating the (still-empty) pool
+  // and seeding it — never after. The hook's fallback rejects EVERY transfer
+  // of that mint (this seeding deposit included) until LaunchConfig exists;
+  // registering afterward would be too late; the seeding transfer below
+  // would already have failed by then. See program/sell-lock's fallback().
+  sellLock?: { mint: PublicKey; durationSeconds: number },
 ): Promise<CreatePoolResult> {
   if (!wallet.publicKey || !wallet.signTransaction) {
     throw new Error('Connect your wallet first to continue.')
@@ -131,6 +139,19 @@ export async function createDlmmPool(
 
   onStatus?.('Loading the new pool...')
   const dlmmPool = await DLMM.create(connection, lbPairPubkey)
+
+  if (sellLock) {
+    onStatus?.(`Locking selling for ${sellLock.durationSeconds}s before seeding liquidity...`)
+    await registerLaunch(
+      connection,
+      wallet,
+      sellLock.mint,
+      dlmmPool.lbPair.reserveX,
+      dlmmPool.lbPair.reserveY,
+      sellLock.durationSeconds,
+      onStatus,
+    )
+  }
 
   const positionKeypair = Keypair.generate()
   onStatus?.('Preparing to seed liquidity...')

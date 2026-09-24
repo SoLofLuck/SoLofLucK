@@ -316,7 +316,24 @@ while.
 
 On every deploy the on-chain bytecode's sha256 is compared against the build's
 and written to the log, so the question "did the on-chain program come from this
-source?" can be answered.
+source?" can be answered — for `luck-game` and `luck-distributor`, which are
+deployed through that CI pipeline.
+
+**`sell-lock` is the exception**: it was deployed by hand through Solana
+Playground (see `program/sell-lock/README.md`), not through CI, so there is
+currently no recorded proof that its on-chain bytecode matches this source —
+and in fact, as of this writing it does **not**: a security review (via
+Meteora's Token Badge process) found the deployed binary predates the
+`register_launch` front-running fix. Its upgrade authority
+(`5SUVry2vnDe1A2Rz1jpDyTWiQx6rNB15Q5FNop2qiBqP`) is a real, undocumented-until-now
+centralization point: whoever holds it can rewrite the sell-lock logic for
+every token using it — including making sells fail forever (a honeypot) or
+silently exempting a chosen wallet from the lock — and revoking a token's own
+Transfer Hook authority does **not** protect against this, since the hook
+still points at the same program ID, only its code changes. This must be
+folded into the same CI-verified deploy path (or have its authority set to
+`None`) before mainnet; until then, treat any sell-lock-enabled pool as
+trusting whoever holds that key, in addition to trusting the code itself.
 
 ### 4. The Raffle Operator page
 

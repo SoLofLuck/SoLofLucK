@@ -18,12 +18,7 @@ import {
 } from '../lib/raydium'
 import { createDlmmPool } from '../lib/meteora'
 import { LOCK_DURATION_OPTIONS, lockLpTokens, type LockResult } from '../lib/lock'
-import {
-  SELL_LOCK_DURATION_OPTIONS,
-  formatSellLockDuration,
-  hasSellLockHook,
-  registerLaunch,
-} from '../lib/sellLock'
+import { SELL_LOCK_DURATION_OPTIONS, formatSellLockDuration, hasSellLockHook } from '../lib/sellLock'
 import { burnTokens, type BurnResult } from '../lib/burnToken'
 import { listAllWalletTokens, type WalletTokenBalance } from '../lib/walletTokens'
 import { getTokenMetadata, type TokenMeta } from '../lib/tokenMetadata'
@@ -294,17 +289,20 @@ function PoolCreate({
   const [existingPoolWarning, setExistingPoolWarning] = useState('')
   const skipDuplicateCheckRef = useRef(false)
 
-  // After a pool is created, is EITHER of its two mints one that was created
-  // with this site's sell-lock Transfer Hook (see src/lib/sellLock.ts)? If so
-  // the "lock selling into this pool" step below actually does something —
-  // for an ordinary mint (no hook registered) register_launch would either
-  // fail or silently protect nothing, so it is only offered when relevant.
-  const [sellLockMint, setSellLockMint] = useState<PublicKey | null>(null)
+  // Which of the two mints being paired (if either) is a sell-lock-enabled
+  // one — checked live as the user picks tokens, BEFORE the pool is created.
+  // This has to be known up front now: register_launch must run before the
+  // very first transfer of that mint into the pool (the liquidity-seeding
+  // step of createDlmmPool itself), not after — the hook's fallback rejects
+  // ANY transfer of that mint while no LaunchConfig exists yet for it, so a
+  // duration chosen only after the pool already exists would be too late
+  // (the seeding transfer that "created" it would already have failed).
+  const [preSellLockMint, setPreSellLockMint] = useState<PublicKey | null>(null)
   const [lockDuration, setLockDuration] = useState(SELL_LOCK_DURATION_OPTIONS[1].seconds)
-  const [lockStatus, setLockStatus] = useState('')
-  const [lockError, setLockError] = useState('')
-  const [lockSignature, setLockSignature] = useState('')
-  const [lockLoading, setLockLoading] = useState(false)
+  // Set once a freshly-created pool's sell lock was registered as part of the
+  // SAME createDlmmPool call (see meteora.ts) — purely informational here.
+  const [lockedMint, setLockedMint] = useState<PublicKey | null>(null)
+  const [lockedDuration, setLockedDuration] = useState(0)
 
   useEffect(() => {
     if (!mintAAddr) {
@@ -345,6 +343,31 @@ function PoolCreate({
       cancelled = true
     }
   }, [connection, mintBAddr])
+
+  useEffect(() => {
+    if (!mintAAddr.trim() && !mintBAddr.trim()) {
+      setPreSellLockMint(null)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [aHasHook, bHasHook] = await Promise.all([
+          mintAAddr.trim() ? hasSellLockHook(connection, new PublicKey(mintAAddr.trim())) : Promise.resolve(false),
+          mintBAddr.trim() ? hasSellLockHook(connection, new PublicKey(mintBAddr.trim())) : Promise.resolve(false),
+        ])
+        if (cancelled) return
+        if (aHasHook) setPreSellLockMint(new PublicKey(mintAAddr.trim()))
+        else if (bHasHook) setPreSellLockMint(new PublicKey(mintBAddr.trim()))
+        else setPreSellLockMint(null)
+      } catch {
+        if (!cancelled) setPreSellLockMint(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [connection, mintAAddr, mintBAddr])
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
@@ -393,13 +416,28 @@ function PoolCreate({
       // result card, the "lock selling into this pool" step below) is
       // unchanged either way.
       setStatus('Checking the token for Anti-Snipe Sell Lock...')
-      const usesSellLock =
-        (await hasSellLockHook(connection, new PublicKey(mintAAddr.trim()))) ||
-        (await hasSellLockHook(connection, new PublicKey(mintBAddr.trim())))
+      const [aHasHook, bHasHook] = await Promise.all([
+        hasSellLockHook(connection, new PublicKey(mintAAddr.trim())),
+        hasSellLockHook(connection, new PublicKey(mintBAddr.trim())),
+      ])
+      const sellLockMint = aHasHook ? mintA : bHasHook ? mintB : null
 
-      if (usesSellLock) {
-        const res = await createDlmmPool(connection, wallet, network, mintA, mintB, amountA, amountB, payer, setStatus)
+      if (sellLockMint) {
+        const res = await createDlmmPool(
+          connection,
+          wallet,
+          network,
+          mintA,
+          mintB,
+          amountA,
+          amountB,
+          payer,
+          setStatus,
+          { mint: new PublicKey(sellLockMint.address), durationSeconds: lockDuration },
+        )
         setResult(res)
+        setLockedMint(new PublicKey(sellLockMint.address))
+        setLockedDuration(lockDuration)
         setStatus('')
         setLoading(false)
         return
@@ -460,59 +498,6 @@ function PoolCreate({
     void handleCreate({ preventDefault() {} } as FormEvent)
   }
 
-  useEffect(() => {
-    if (!result) {
-      setSellLockMint(null)
-      return
-    }
-    let cancelled = false
-    ;(async () => {
-      try {
-        const [aHasHook, bHasHook] = await Promise.all([
-          hasSellLockHook(connection, new PublicKey(mintAAddr.trim())),
-          hasSellLockHook(connection, new PublicKey(mintBAddr.trim())),
-        ])
-        if (cancelled) return
-        if (aHasHook) setSellLockMint(new PublicKey(mintAAddr.trim()))
-        else if (bHasHook) setSellLockMint(new PublicKey(mintBAddr.trim()))
-        else setSellLockMint(null)
-      } catch {
-        if (!cancelled) setSellLockMint(null)
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-    // mintAAddr/mintBAddr are captured at the moment the pool was created —
-    // this only needs to run once per successful creation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result])
-
-  async function handleRegisterLaunch() {
-    if (!sellLockMint || !result) return
-    setLockError('')
-    setLockLoading(true)
-    try {
-      const sig = await registerLaunch(
-        connection,
-        wallet,
-        sellLockMint,
-        new PublicKey(result.vaultA),
-        new PublicKey(result.vaultB),
-        lockDuration,
-        setLockStatus,
-      )
-      setLockSignature(sig)
-      setLockStatus('')
-    } catch (err) {
-      console.error(err)
-      setLockError(err instanceof Error ? err.message : 'Something went wrong while locking the pool.')
-      setLockStatus('')
-    } finally {
-      setLockLoading(false)
-    }
-  }
-
   if (result) {
     const cluster = NETWORKS[network].explorerCluster
     return (
@@ -539,43 +524,11 @@ function PoolCreate({
           </a>
         </div>
 
-        {sellLockMint && !lockSignature && (
-          <div className="alert alert--warning" style={{ textAlign: 'left' }}>
-            <strong>🛡️ Anti-Snipe Sell Lock available</strong>
-            <p style={{ margin: '6px 0' }}>
-              {sellLockMint.toBase58()} was created with the sell-lock hook. Lock selling into this pool
-              now, before announcing it publicly — buying is never affected.
-            </p>
-            <label className="field" style={{ marginBottom: 10 }}>
-              <span>Lock Duration</span>
-              <select
-                value={lockDuration}
-                onChange={(e) => setLockDuration(Number(e.target.value))}
-                disabled={lockLoading}
-              >
-                {SELL_LOCK_DURATION_OPTIONS.filter((o) => o.seconds > 0).map((o) => (
-                  <option key={o.seconds} value={o.seconds}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {lockError && <div className="alert alert--error">{lockError}</div>}
-            {lockStatus && !lockError && <div className="alert alert--info">{lockStatus}</div>}
-            <button
-              type="button"
-              className="btn btn--primary"
-              onClick={handleRegisterLaunch}
-              disabled={lockLoading}
-            >
-              {lockLoading ? 'Locking...' : `Lock Selling For ${formatSellLockDuration(lockDuration)}`}
-            </button>
-          </div>
-        )}
-        {lockSignature && (
+        {lockedMint && (
           <div className="alert alert--info">
-            🛡️ Sell lock registered for {formatSellLockDuration(lockDuration)}. Signature:{' '}
-            <code>{lockSignature}</code>
+            🛡️ Anti-Snipe Sell Lock registered for {formatSellLockDuration(lockedDuration)} — nobody
+            (creator included) can sell {lockedMint.toBase58()} into this pool until it expires. Buying was
+            never affected.
           </div>
         )}
 
@@ -583,9 +536,8 @@ function PoolCreate({
           className="btn btn--primary"
           onClick={() => {
             setResult(null)
-            setSellLockMint(null)
-            setLockSignature('')
-            setLockError('')
+            setLockedMint(null)
+            setLockedDuration(0)
             setMintAAddr('')
             setMintBAddr('')
             setAmountA('')
@@ -681,6 +633,28 @@ function PoolCreate({
           On top of that, Solana itself charges a small network fee plus rent for the pool's accounts — a few
           thousandths of a SOL, on top of the service fee above. Your wallet shows the exact total before you
           approve anything.
+        </div>
+      )}
+
+      {preSellLockMint && (
+        <div className="alert alert--warning" style={{ textAlign: 'left' }}>
+          <strong>🛡️ Anti-Snipe Sell Lock</strong>
+          <p style={{ margin: '6px 0' }}>
+            {preSellLockMint.toBase58()} was created with the sell-lock hook. Choose how long selling into
+            this pool stays locked for everyone (creator included) once it's created — buying is never
+            affected. This is registered automatically as part of creating the pool below, before it can be
+            announced or traded.
+          </p>
+          <label className="field" style={{ marginBottom: 0 }}>
+            <span>Lock Duration</span>
+            <select value={lockDuration} onChange={(e) => setLockDuration(Number(e.target.value))}>
+              {SELL_LOCK_DURATION_OPTIONS.filter((o) => o.seconds > 0).map((o) => (
+                <option key={o.seconds} value={o.seconds}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       )}
 
