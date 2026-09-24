@@ -190,6 +190,50 @@ jobs:
           node scripts/check-onchain-deps.mjs --selftest
           node scripts/check-onchain-deps.mjs
 
+  xray:
+    name: Sec3 X-Ray (static analysis)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [luck-game, luck-distributor, sell-lock]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sec3's X-Ray (github.com/sec3-product/x-ray): free, open-source static
+      # analysis for Solana/Anchor programs (integer overflow, unchecked
+      # account data, PDA/CPI misuse, etc.) — this is the report a Meteora
+      # Token Badge reviewer asked for and confirmed as acceptable for the
+      # sell-lock TransferHook program. Run here rather than on a
+      # contributor's own machine: Docker's virtualization requirement isn't
+      # guaranteed on an arbitrary laptop (it wasn't on the one this was first
+      # tried on), while every GitHub-hosted runner has it built in.
+      #
+      # `|| true` and `if: always()` below are deliberate: an unfamiliar
+      # third-party tool erroring out (bad exit code, unexpected repo layout)
+      # must not swallow whatever partial output it did produce, and must not
+      # be confused with "the code has a vulnerability" — continue-on-error
+      # keeps this informational, same as the cargo-audit/cargo-deny steps
+      # above.
+      - name: Run Sec3 X-Ray
+        continue-on-error: true
+        run: |
+          mkdir -p xray-report
+          docker run --rm --volume "${{ github.workspace }}:/workspace" \
+            ghcr.io/sec3-product/x-ray:latest \
+            /workspace/program/${{ matrix.program }} \
+            2>&1 | tee xray-report/${{ matrix.program }}-xray-output.txt || true
+
+      - name: Upload X-Ray report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xray-report-${{ matrix.program }}
+          path: |
+            xray-report/${{ matrix.program }}-xray-output.txt
+            program/${{ matrix.program }}/.xray/**
+          if-no-files-found: warn
+
   audits:
     name: repository audits
     runs-on: ubuntu-latest
